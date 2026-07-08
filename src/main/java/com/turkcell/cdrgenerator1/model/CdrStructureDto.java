@@ -1,4 +1,4 @@
-package com.turkcell.cdrgenerator1.model; // Kendi paket ismine göre düzenle
+package com.turkcell.cdrgenerator1.model;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
