@@ -2,26 +2,32 @@ package com.turkcell.cdrgenerator1.controller;
 
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
+import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/cdr")
 @RequiredArgsConstructor
+
 @Slf4j
 public class CdrStructureController {
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
+    private final CdrFileWriterService cdrFileWriterService;
 
     @GetMapping("/structures")
     public ResponseEntity<List<String>> getAllStructureNames() {
@@ -46,6 +52,30 @@ public class CdrStructureController {
             return ResponseEntity.ok(mockRecord);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
+        }
+    }
+    @PostMapping("/generate")
+    public ResponseEntity<Resource> generateAndDownloadCdr(
+            @RequestParam String structureName,
+            @RequestParam(defaultValue = "1") int recordCount) {
+
+        try {
+            List<Map<String, String>> records = new ArrayList<>();
+            for (int i = 0; i < recordCount; i++) {
+                records.add(cdrRecordBuilder.buildRecord(structureName, null));
+            }
+
+            Path filePath = cdrFileWriterService.writeCdrFile(structureName, records);
+            Resource resource = new UrlResource(filePath.toUri());
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + structureName + ".dat\"")
+                    .body(resource);
+
+        } catch (Exception e) {
+            log.error("Error generating CDR file", e);
+            return ResponseEntity.internalServerError().build();
         }
     }
 }
