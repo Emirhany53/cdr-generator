@@ -16,4 +16,6 @@ public class GenerateRequest {
     private String structureName;
     private Map<String, String> fieldValues;
     private Integer recordCount;
+
+    private String content;
 }

@@ -76,6 +76,23 @@ public class StructureParserService {
         }
     }
 
+
+    public AsnStructure parseFromContents(String structureName, String contents) {
+        Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(contents);
+        if (registry.isEmpty()) {
+            return null;
+        }
+
+        String rootTypeName = registry.keySet().iterator().next();
+        List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, rootTypeName);
+
+        String name = (structureName != null && !structureName.isBlank()) ? structureName : rootTypeName;
+        return AsnStructure.builder()
+                .structureName(name)
+                .fields(fields)
+                .build();
+    }
+
     public Map<String, AsnStructure> getAllParsedStructures() {
         return parsedStructures;
     }

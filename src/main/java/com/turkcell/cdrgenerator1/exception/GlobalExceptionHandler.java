@@ -27,6 +27,13 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
     }
 
+    @ExceptionHandler(BerEncodingException.class)
+    public ResponseEntity<ErrorResponse> handleBerEncoding(BerEncodingException ex,
+                                                           HttpServletRequest request) {
+        log.warn("BER encoding failed: {}", ex.getMessage());
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex,
                                                                HttpServletRequest request) {

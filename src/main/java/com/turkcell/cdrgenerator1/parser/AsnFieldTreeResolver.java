@@ -12,10 +12,13 @@ import java.util.regex.Pattern;
 @Slf4j
 public class AsnFieldTreeResolver {
 
+    // Groups: 1=field name, 2=tag number (optional), 3=EXPLICIT/IMPLICIT keyword (optional), 4=type expression.
+    // The tag number and tagging mode are captured because BER encoding needs both.
     private static final Pattern FIELD_LINE = Pattern.compile(
-            "^\\s*([A-Za-z_][\\w-]*)\\s*(?:\\[\\d+\\]\\s*)?(?:EXPLICIT\\s+|IMPLICIT\\s+)?(.+?)\\s*,?\\s*$"
+            "^\\s*([A-Za-z_][\\w-]*)\\s*(?:\\[(\\d+)\\]\\s*)?(EXPLICIT\\s+|IMPLICIT\\s+)?(.+?)\\s*,?\\s*$"
     );
     private static final int MAX_DEPTH = 15;
+    private static final String EXPLICIT_KEYWORD = "EXPLICIT";
 
 
     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName) {
@@ -128,6 +131,8 @@ public class AsnFieldTreeResolver {
                     .fieldType(innerType)
                     .optional(parsed.isOptional())
                     .repeated(repeated)
+                    .tagNumber(parsed.getTagNumber())
+                    .explicit(parsed.isExplicit())
                     .children(children.isEmpty() ? null : children)
                     .build());
         }
@@ -147,7 +152,10 @@ public class AsnFieldTreeResolver {
             return null;
         }
         String fieldName = matcher.group(1);
-        String typeExpr = stripConstraint(matcher.group(2)).replace("OPTIONAL", "").trim();
+        Integer tagNumber = matcher.group(2) != null ? Integer.valueOf(matcher.group(2)) : null;
+        boolean explicit = matcher.group(3) != null
+                && matcher.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD);
+        String typeExpr = stripConstraint(matcher.group(4)).replace("OPTIONAL", "").trim();
 
         boolean repeated = isRepeatedExpression(typeExpr);
         String fieldType = repeated ? extractRepeatedInnerType(typeExpr) : normalize(typeExpr);
@@ -157,6 +165,8 @@ public class AsnFieldTreeResolver {
                 .fieldType(fieldType)
                 .optional(optional)
                 .repeated(repeated)
+                .tagNumber(tagNumber)
+                .explicit(explicit)
                 .build();
     }
 

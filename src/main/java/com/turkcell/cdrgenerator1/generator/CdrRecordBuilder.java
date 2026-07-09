@@ -38,6 +38,14 @@ public class CdrRecordBuilder {
         return buildFields(structure.getFields(), userValues);
     }
 
+    /**
+     * Builds a record directly from an already-resolved field list, without a
+     * registry lookup. Used for structures parsed from inline request content.
+     */
+    public Map<String, Object> buildRecordFromFields(List<AsnField> fields, Map<String, String> userValues) {
+        return buildFields(fields, userValues);
+    }
+
     private Map<String, Object> buildFields(List<AsnField> fields, Map<String, String> userValues) {
         Map<String, Object> record = new LinkedHashMap<>();
 
