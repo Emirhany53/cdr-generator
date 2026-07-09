@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -12,5 +14,7 @@ import lombok.NoArgsConstructor;
 public class AsnField {
     private String fieldName;
     private String fieldType;
-    private boolean isOptional;
+    private boolean optional;
+    private boolean repeated;
+    private List<AsnField> children;
 }

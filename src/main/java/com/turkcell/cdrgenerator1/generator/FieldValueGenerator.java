@@ -36,7 +36,7 @@ public class FieldValueGenerator {
             return String.valueOf(random.nextInt(100));
         }
         else if (upperType.contains("BOOLEAN")) {
-            return random.nextBoolean() ? "TRUE" : "FALSE";
+            return random.nextBoolean() ? "1" : "0";
         }
         else if (upperType.contains("IA5STRING") || upperType.contains("OCTET STRING") || upperType.contains("TBCD STRING")) {
             return generateRandomString(8);

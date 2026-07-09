@@ -45,10 +45,10 @@ public class CdrStructureController {
     }
 
     @GetMapping("/generate-test/{structureName}")
-    public ResponseEntity<Map<String, String>> generateTestRecord(@PathVariable String structureName) {
+    public ResponseEntity<Map<String, Object>> generateTestRecord(@PathVariable String structureName) {
         log.info("Incoming test request to generate mock data for: {}", structureName);
         try {
-            Map<String, String> mockRecord = cdrRecordBuilder.buildRecord(structureName, null);
+            Map<String, Object> mockRecord = cdrRecordBuilder.buildRecord(structureName, null);
             return ResponseEntity.ok(mockRecord);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.notFound().build();
@@ -60,7 +60,7 @@ public class CdrStructureController {
             @RequestParam(defaultValue = "1") int recordCount) {
 
         try {
-            List<Map<String, String>> records = new ArrayList<>();
+            List<Map<String, Object>> records = new ArrayList<>();
             for (int i = 0; i < recordCount; i++) {
                 records.add(cdrRecordBuilder.buildRecord(structureName, null));
             }
