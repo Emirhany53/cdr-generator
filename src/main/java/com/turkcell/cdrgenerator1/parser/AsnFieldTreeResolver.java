@@ -24,14 +24,24 @@ public class AsnFieldTreeResolver {
 
     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName,
                                             Map<String, String> choiceSelections) {
-        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0);
+
+        Map<String, List<AsnField>> resolutionCache = new HashMap<>();
+        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0, resolutionCache);
     }
 
     private List<AsnField> resolveByTypeName(Map<String, AsnTypeDefinition> registry, String typeName,
-                                             Map<String, String> choiceSelections, Set<String> visiting, int depth) {
+                                             Map<String, String> choiceSelections, Set<String> visiting, int depth,
+                                             Map<String, List<AsnField>> cache) {
         if (typeName == null) {
             return List.of();
         }
+
+        String cacheKey = buildCacheKey(typeName, choiceSelections);
+        List<AsnField> cached = cache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
         AsnTypeDefinition definition = registry.get(typeName);
         if (definition == null) {
             return List.of();
@@ -44,24 +54,33 @@ public class AsnFieldTreeResolver {
         Set<String> nextVisiting = new HashSet<>(visiting);
         nextVisiting.add(typeName);
 
-        return switch (definition.getKind()) {
+        List<AsnField> result = switch (definition.getKind()) {
             case ENUMERATED -> List.of();
-            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth);
-            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth);
-            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth);
+            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache);
+            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
+            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
         };
+
+        cache.put(cacheKey, result);
+        return result;
+    }
+
+    private String buildCacheKey(String typeName, Map<String, String> choiceSelections) {
+        return choiceSelections.isEmpty() ? typeName : typeName + "::" + choiceSelections;
     }
 
     private List<AsnField> resolveAlias(Map<String, AsnTypeDefinition> registry, AsnTypeDefinition definition,
-                                        Map<String, String> choiceSelections, Set<String> visiting, int depth) {
+                                        Map<String, String> choiceSelections, Set<String> visiting, int depth,
+                                        Map<String, List<AsnField>> cache) {
         String target = stripConstraint(definition.getAliasTarget());
         String innerType = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
-        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1);
+        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
     }
 
     private List<AsnField> resolveChoiceAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
                                                     String rawBody, Map<String, String> choiceSelections,
-                                                    Set<String> visiting, int depth) {
+                                                    Set<String> visiting, int depth,
+                                                    Map<String, List<AsnField>> cache) {
         String preferredAlternative = choiceSelections.get(choiceTypeName);
         AsnField firstAlternative = null;
 
@@ -75,7 +94,7 @@ public class AsnFieldTreeResolver {
                 firstAlternative = alternative;
             }
             if (alternative.getFieldName().equals(preferredAlternative)) {
-                return resolveByTypeName(registry, alternative.getFieldType(), choiceSelections, visiting, depth + 1);
+                return resolveByTypeName(registry, alternative.getFieldType(), choiceSelections, visiting, depth + 1, cache);
             }
         }
 
@@ -84,13 +103,14 @@ public class AsnFieldTreeResolver {
                 log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
                         preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
             }
-            return resolveByTypeName(registry, firstAlternative.getFieldType(), choiceSelections, visiting, depth + 1);
+            return resolveByTypeName(registry, firstAlternative.getFieldType(), choiceSelections, visiting, depth + 1, cache);
         }
         return List.of();
     }
 
     private List<AsnField> parseFieldLines(Map<String, AsnTypeDefinition> registry, String rawBody,
-                                           Map<String, String> choiceSelections, Set<String> visiting, int depth) {
+                                           Map<String, String> choiceSelections, Set<String> visiting, int depth,
+                                           Map<String, List<AsnField>> cache) {
         List<AsnField> fields = new ArrayList<>();
         for (String line : rawBody.split("\\r?\\n")) {
             String trimmed = line.trim();
@@ -101,7 +121,7 @@ public class AsnFieldTreeResolver {
 
             String innerType = parsed.getFieldType();
             boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
-            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1);
+            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
 
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())

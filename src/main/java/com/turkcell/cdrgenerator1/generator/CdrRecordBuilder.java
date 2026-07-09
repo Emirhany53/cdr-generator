@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.generator;
 
+import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
@@ -31,7 +32,7 @@ public class CdrRecordBuilder {
         AsnStructure structure = structureParserService.getStructureByName(structureName);
         if (structure == null) {
             log.error("Structure not found: {}", structureName);
-            throw new IllegalArgumentException("Structure not found: " + structureName);
+            throw new StructureNotFoundException(structureName);
         }
 
         return buildFields(structure.getFields(), userValues);

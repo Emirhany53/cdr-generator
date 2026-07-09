@@ -10,5 +10,7 @@ import org.springframework.stereotype.Component;
 public class CdrConfigProperties {
 
     private String dataStructurePath;
+    private int defaultRecordCount;
+    private int maxRecordCount;
 
 }

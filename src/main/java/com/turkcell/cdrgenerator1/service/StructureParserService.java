@@ -21,6 +21,8 @@ import java.util.Map;
 @Slf4j
 public class StructureParserService {
 
+    private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
+
     private final CdrStructureReaderService cdrStructureReaderService;
     private final AsnTypeRegistryBuilder registryBuilder;
     private final AsnFieldTreeResolver fieldTreeResolver;
@@ -30,6 +32,7 @@ public class StructureParserService {
     @PostConstruct
     public void init() {
         log.info("Starting to parse ASN.1 structures from JSON...");
+        long startedAt = System.currentTimeMillis();
         List<CdrStructureDto> rawStructures = cdrStructureReaderService.readAllStructures();
 
         for (CdrStructureDto dto : rawStructures) {
@@ -40,10 +43,13 @@ public class StructureParserService {
             }
         }
 
-        log.info("Successfully parsed {} structures.", parsedStructures.size());
+        long elapsedMs = System.currentTimeMillis() - startedAt;
+        log.info("Successfully parsed {} structures in {} ms.", parsedStructures.size(), elapsedMs);
     }
 
     private void parseSingleModule(CdrStructureDto dto) {
+        long moduleStartedAt = System.currentTimeMillis();
+
         Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(dto.getContents());
         if (registry.isEmpty()) {
             return;
@@ -60,6 +66,14 @@ public class StructureParserService {
                 .build();
 
         parsedStructures.put(structureName, structure);
+
+        long moduleElapsedMs = System.currentTimeMillis() - moduleStartedAt;
+        if (moduleElapsedMs > SLOW_MODULE_THRESHOLD_MS) {
+            log.warn("Module '{}' took {} ms to resolve ({} type definitions) - consider investigating",
+                    structureName, moduleElapsedMs, registry.size());
+        } else {
+            log.debug("Module '{}' resolved in {} ms", structureName, moduleElapsedMs);
+        }
     }
 
     public Map<String, AsnStructure> getAllParsedStructures() {
