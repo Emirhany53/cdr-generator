@@ -8,6 +8,8 @@ import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateRequest;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ByteArrayResource;
@@ -24,19 +26,13 @@ import java.io.ByteArrayOutputStream;
 import java.util.Map;
 import java.util.Objects;
 
-/**
- * Reverse flow endpoint: the caller supplies field values (or lets the
- * generator fill them), and the service returns the record encoded in
- * binary BER as a downloadable .ber file.
- *
- * <p>Reuses the existing GenerateRequest body and CdrRecordBuilder, so the
- * API mirrors POST /api/cdr/generate: any field missing from fieldValues is
- * auto-generated, and recordCount produces multiple concatenated records.</p>
- */
 @RestController
 @RequestMapping("/api/cdr")
 @RequiredArgsConstructor
 @Slf4j
+@Tag(name = "BER Generation",
+        description = "Generate binary BER-encoded (.ber) CDR files from a named structure "
+                + "or from inline ASN.1 content.")
 public class BerGeneratorController {
 
     private static final String BER_FILE_EXTENSION = ".ber";
@@ -47,6 +43,10 @@ public class BerGeneratorController {
     private final BerEncoderService berEncoderService;
     private final CdrConfigProperties cdrConfigProperties;
 
+    @Operation(summary = "Generate and download a BER CDR file",
+            description = "Encodes one or more records in binary BER and returns a downloadable "
+                    + ".ber file. Works either from a registered structureName or from inline "
+                    + "ASN.1 supplied in the 'content' field of the request body.")
     @PostMapping("/generate-ber")
     public ResponseEntity<Resource> generateBerFile(@RequestBody GenerateRequest request) {
         boolean inlineMode = Objects.nonNull(request.getContent()) && !request.getContent().isBlank();
@@ -85,11 +85,7 @@ public class BerGeneratorController {
                 .body(new ByteArrayResource(fileBytes));
     }
 
-    /**
-     * Resolves the structure to encode against. In inline mode the ASN.1 module
-     * from the request body is parsed on the spot; otherwise the structure is
-     * looked up by name in the pre-loaded registry.
-     */
+
     private AsnStructure resolveStructure(GenerateRequest request, boolean inlineMode) {
         if (inlineMode) {
             AsnStructure structure =

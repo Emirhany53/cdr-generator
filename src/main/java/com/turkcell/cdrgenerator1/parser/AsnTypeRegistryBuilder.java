@@ -20,6 +20,10 @@ public class AsnTypeRegistryBuilder {
     private static final Pattern DEFINITION_START = Pattern.compile("([A-Za-z][\\w-]*)\\s*::=");
     private static final Pattern STRUCTURED_KIND = Pattern.compile("(SEQUENCE|SET|CHOICE|ENUMERATED)");
     private static final String MODULE_HEADER_KEYWORD = "DEFINITIONS";
+    // The module header may end with a tagging-mode keyword, e.g.
+    // "ModuleName DEFINITIONS IMPLICIT TAGS ::=". In that case the token right
+    // before ::= is "TAGS", not a real type name, so it must be skipped too.
+    private static final String TAGS_KEYWORD = "TAGS";
 
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
@@ -38,8 +42,14 @@ public class AsnTypeRegistryBuilder {
             // Skip the module header line "ModuleName DEFINITIONS ::=" - the token
             // right before ::= is the DEFINITIONS keyword, not a real type name.
             String precedingToken = cleaned.substring(0, starts.start(1)).trim();
-            if (precedingToken.endsWith(MODULE_HEADER_KEYWORD)
-                    || MODULE_HEADER_KEYWORD.equals(starts.group(1))) {
+            String candidateName = starts.group(1);
+            boolean isModuleHeader = precedingToken.endsWith(MODULE_HEADER_KEYWORD)
+                    || MODULE_HEADER_KEYWORD.equals(candidateName);
+            // Handles "DEFINITIONS IMPLICIT TAGS ::=", "DEFINITIONS EXPLICIT TAGS ::=",
+            // "DEFINITIONS AUTOMATIC TAGS ::=" - the name captured before ::= is "TAGS".
+            boolean isTaggingMode = TAGS_KEYWORD.equals(candidateName)
+                    && precedingToken.contains(MODULE_HEADER_KEYWORD);
+            if (isModuleHeader || isTaggingMode) {
                 continue;
             }
             names.add(starts.group(1));
