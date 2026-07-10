@@ -7,6 +7,7 @@ import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateRequest;
 import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
+import com.turkcell.cdrgenerator1.service.AsnLiteralFormatter;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -53,7 +54,7 @@ public class CdrStructureController {
     public ResponseEntity<Map<String, Object>> generateTestRecord(@PathVariable String structureName) {
         log.info("Incoming test request to generate mock data for: {}", structureName);
         Map<String, Object> mockRecord = cdrRecordBuilder.buildRecord(structureName, null);
-        return ResponseEntity.ok(mockRecord);
+        return ResponseEntity.ok(AsnLiteralFormatter.stripRecord(mockRecord));
     }
 
     @PostMapping("/generate")
