@@ -14,8 +14,12 @@ import java.util.regex.Pattern;
 @Slf4j
 public class AsnTypeRegistryBuilder {
 
-    private static final Pattern DEFINITION_START = Pattern.compile("(?m)^\\s*([A-Za-z][\\w-]*)\\s*::=");
+    // Matches a type definition head "TypeName ::=". The name is captured wherever
+    // it appears (not only at line start), so inline single-line modules parse too.
+    // The ASN.1 module header "ModuleName DEFINITIONS ::=" is skipped explicitly.
+    private static final Pattern DEFINITION_START = Pattern.compile("([A-Za-z][\\w-]*)\\s*::=");
     private static final Pattern STRUCTURED_KIND = Pattern.compile("(SEQUENCE|SET|CHOICE|ENUMERATED)");
+    private static final String MODULE_HEADER_KEYWORD = "DEFINITIONS";
 
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
@@ -31,6 +35,13 @@ public class AsnTypeRegistryBuilder {
 
         Matcher starts = DEFINITION_START.matcher(cleaned);
         while (starts.find()) {
+            // Skip the module header line "ModuleName DEFINITIONS ::=" - the token
+            // right before ::= is the DEFINITIONS keyword, not a real type name.
+            String precedingToken = cleaned.substring(0, starts.start(1)).trim();
+            if (precedingToken.endsWith(MODULE_HEADER_KEYWORD)
+                    || MODULE_HEADER_KEYWORD.equals(starts.group(1))) {
+                continue;
+            }
             names.add(starts.group(1));
             nameStarts.add(starts.start());
             bodyStarts.add(starts.end());

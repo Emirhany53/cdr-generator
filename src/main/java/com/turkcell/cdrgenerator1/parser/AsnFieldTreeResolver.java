@@ -87,7 +87,7 @@ public class AsnFieldTreeResolver {
         String preferredAlternative = choiceSelections.get(choiceTypeName);
         AsnField firstAlternative = null;
 
-        for (String line : rawBody.split("\\r?\\n")) {
+        for (String line : splitFieldEntries(rawBody)) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
             AsnField alternative = parseFieldLine(trimmed);
@@ -111,11 +111,47 @@ public class AsnFieldTreeResolver {
         return List.of();
     }
 
+    /**
+     * Splits a SEQUENCE/SET/CHOICE body into individual field entries.
+     * Fields are separated by newlines and/or commas, but commas inside
+     * brackets or parentheses (e.g. INTEGER ( CODE("DEC"))) are NOT separators.
+     * This lets the same parser handle both multi-line and single-line
+     * (inline request) ASN.1 modules.
+     */
+    private List<String> splitFieldEntries(String rawBody) {
+        List<String> entries = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < rawBody.length(); i++) {
+            char c = rawBody.charAt(i);
+            if (c == '(' || c == '[' || c == '{') {
+                depth++;
+                current.append(c);
+            } else if (c == ')' || c == ']' || c == '}') {
+                depth--;
+                current.append(c);
+            } else if ((c == '\n' || c == ',') && depth == 0) {
+                String entry = current.toString().trim();
+                if (!entry.isEmpty()) {
+                    entries.add(entry);
+                }
+                current.setLength(0);
+            } else {
+                current.append(c);
+            }
+        }
+        String last = current.toString().trim();
+        if (!last.isEmpty()) {
+            entries.add(last);
+        }
+        return entries;
+    }
+
     private List<AsnField> parseFieldLines(Map<String, AsnTypeDefinition> registry, String rawBody,
                                            Map<String, String> choiceSelections, Set<String> visiting, int depth,
                                            Map<String, List<AsnField>> cache) {
         List<AsnField> fields = new ArrayList<>();
-        for (String line : rawBody.split("\\r?\\n")) {
+        for (String line : splitFieldEntries(rawBody)) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
 
