@@ -105,12 +105,11 @@ public class CdrRecordBuilder {
         if (Objects.isNull(fieldType)) {
             return "\"" + rawValue + "\"";
         }
-        String upperType = fieldType.toUpperCase();
+        String upperType = fieldType.toUpperCase(java.util.Locale.ENGLISH);
         if (upperType.contains("INTEGER")) {
             return "'" + rawValue + "'D";
         }
-        // BOOLEAN stays a quoted "1"/"0" so the BER encoder can emit the
-        // canonical BOOLEAN content bytes instead of an INTEGER literal.
+
         return "\"" + rawValue + "\"";
     }
 }

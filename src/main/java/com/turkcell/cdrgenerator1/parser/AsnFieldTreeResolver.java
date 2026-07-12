@@ -179,9 +179,11 @@ public class AsnFieldTreeResolver {
             boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
 
+            String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
+
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())
-                    .fieldType(innerType)
+                    .fieldType(fieldType)
                     .optional(parsed.isOptional())
                     .repeated(repeated)
                     .tagNumber(parsed.getTagNumber())
@@ -191,6 +193,26 @@ public class AsnFieldTreeResolver {
                     .build());
         }
         return fields;
+    }
+
+    private String resolveLeafBaseType(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = typeName;
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition definition = registry.get(current);
+            if (definition == null) {
+                return current;
+            }
+            if (definition.getKind() == AsnTypeKind.ENUMERATED) {
+                return AsnTypeKind.ENUMERATED.name();
+            }
+            if (definition.getKind() != AsnTypeKind.ALIAS) {
+                return current;
+            }
+            String target = stripConstraint(definition.getAliasTarget());
+            current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+        }
+        return current;
     }
 
     private boolean isAliasRepeated(Map<String, AsnTypeDefinition> registry, String typeName) {
