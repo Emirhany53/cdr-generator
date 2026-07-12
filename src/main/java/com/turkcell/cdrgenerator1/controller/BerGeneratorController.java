@@ -36,6 +36,9 @@ import java.util.Objects;
 public class BerGeneratorController {
 
     private static final String BER_FILE_EXTENSION = ".ber";
+    /** Characters allowed in a download file name; everything else becomes '_'. */
+    private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
+    private static final String FILE_NAME_REPLACEMENT = "_";
     private static final int MIN_RECORD_COUNT = 1;
 
     private final StructureParserService structureParserService;
@@ -77,7 +80,9 @@ public class BerGeneratorController {
         log.info("Generated BER file for '{}': {} record(s), {} bytes",
                 structure.getStructureName(), effectiveRecordCount, fileBytes.length);
 
-        String fileName = structure.getStructureName() + BER_FILE_EXTENSION;
+        String safeName = structure.getStructureName()
+                .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
+        String fileName = safeName + BER_FILE_EXTENSION;
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")

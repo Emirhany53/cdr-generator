@@ -1,6 +1,7 @@
 package com.turkcell.cdrgenerator1.parser;
 
 import com.turkcell.cdrgenerator1.model.AsnField;
+import com.turkcell.cdrgenerator1.model.BerTagClass;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -12,10 +13,11 @@ import java.util.regex.Pattern;
 @Slf4j
 public class AsnFieldTreeResolver {
 
-    // Groups: 1=field name, 2=tag number (optional), 3=EXPLICIT/IMPLICIT keyword (optional), 4=type expression.
-    // The tag number and tagging mode are captured because BER encoding needs both.
+    // Groups: 1=field name, 2=tag class keyword (optional), 3=tag number (optional),
+    // 4=EXPLICIT/IMPLICIT keyword (optional), 5=type expression.
+    // Handles both "[5]" and class-qualified tags like "[APPLICATION 0]".
     private static final Pattern FIELD_LINE = Pattern.compile(
-            "^\\s*([A-Za-z_][\\w-]*)\\s*(?:\\[(\\d+)\\]\\s*)?(EXPLICIT\\s+|IMPLICIT\\s+)?(.+?)\\s*,?\\s*$"
+            "^\\s*([A-Za-z_][\\w-]*)\\s*(?:\\[\\s*(?:(UNIVERSAL|APPLICATION|PRIVATE)\\s+)?(\\d+)\\s*\\]\\s*)?(EXPLICIT\\s+|IMPLICIT\\s+)?(.+?)\\s*,?\\s*$"
     );
     private static final int MAX_DEPTH = 15;
     private static final String EXPLICIT_KEYWORD = "EXPLICIT";
@@ -97,7 +99,7 @@ public class AsnFieldTreeResolver {
                 firstAlternative = alternative;
             }
             if (alternative.getFieldName().equals(preferredAlternative)) {
-                return resolveByTypeName(registry, alternative.getFieldType(), choiceSelections, visiting, depth + 1, cache);
+                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache);
             }
         }
 
@@ -106,9 +108,24 @@ public class AsnFieldTreeResolver {
                 log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
                         preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
             }
-            return resolveByTypeName(registry, firstAlternative.getFieldType(), choiceSelections, visiting, depth + 1, cache);
+            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache);
         }
         return List.of();
+    }
+
+    /**
+     * Resolves the chosen CHOICE alternative. When the alternative's type is a
+     * structured type, its fields are returned as before. When it is a
+     * primitive (e.g. {@code cdrFormatField [1] IMPLICIT OCTET STRING}), the
+     * alternative itself is kept as a single leaf field - otherwise the whole
+     * CHOICE would silently resolve to an empty structure.
+     */
+    private List<AsnField> resolveAlternative(Map<String, AsnTypeDefinition> registry, AsnField alternative,
+                                              Map<String, String> choiceSelections, Set<String> visiting, int depth,
+                                              Map<String, List<AsnField>> cache) {
+        List<AsnField> resolved = resolveByTypeName(registry, alternative.getFieldType(),
+                choiceSelections, visiting, depth + 1, cache);
+        return resolved.isEmpty() ? List.of(alternative) : resolved;
     }
 
     /**
@@ -168,6 +185,7 @@ public class AsnFieldTreeResolver {
                     .optional(parsed.isOptional())
                     .repeated(repeated)
                     .tagNumber(parsed.getTagNumber())
+                    .tagClass(parsed.getTagClass())
                     .explicit(parsed.isExplicit())
                     .children(children.isEmpty() ? null : children)
                     .build());
@@ -188,10 +206,13 @@ public class AsnFieldTreeResolver {
             return null;
         }
         String fieldName = matcher.group(1);
-        Integer tagNumber = matcher.group(2) != null ? Integer.valueOf(matcher.group(2)) : null;
-        boolean explicit = matcher.group(3) != null
-                && matcher.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD);
-        String typeExpr = stripConstraint(matcher.group(4)).replace("OPTIONAL", "").trim();
+        BerTagClass tagClass = matcher.group(2) != null
+                ? BerTagClass.valueOf(matcher.group(2))
+                : BerTagClass.CONTEXT;
+        Integer tagNumber = matcher.group(3) != null ? Integer.valueOf(matcher.group(3)) : null;
+        boolean explicit = matcher.group(4) != null
+                && matcher.group(4).trim().equalsIgnoreCase(EXPLICIT_KEYWORD);
+        String typeExpr = stripConstraint(matcher.group(5)).replace("OPTIONAL", "").trim();
 
         boolean repeated = isRepeatedExpression(typeExpr);
         String fieldType = repeated ? extractRepeatedInnerType(typeExpr) : normalize(typeExpr);
@@ -202,6 +223,7 @@ public class AsnFieldTreeResolver {
                 .optional(optional)
                 .repeated(repeated)
                 .tagNumber(tagNumber)
+                .tagClass(tagClass)
                 .explicit(explicit)
                 .build();
     }

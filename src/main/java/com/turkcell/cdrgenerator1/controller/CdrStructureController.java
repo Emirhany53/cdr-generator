@@ -21,6 +21,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
+import java.util.Objects;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +35,12 @@ import java.util.Map;
         description = "List ASN.1 structures, inspect their fields, and generate "
                 + "Token-Separated-ASCII (.dat) CDR files.")
 public class CdrStructureController {
+
+    private static final int MIN_RECORD_COUNT = 1;
+    private static final String DAT_FILE_EXTENSION = ".dat";
+    /** Characters allowed in a download file name; everything else becomes '_'. */
+    private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
+    private static final String FILE_NAME_REPLACEMENT = "_";
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
@@ -56,7 +63,7 @@ public class CdrStructureController {
     public ResponseEntity<AsnStructure> getStructureDetails(@PathVariable String structureName) {
         log.info("Fetching field definitions for structure: {}", structureName);
         AsnStructure structure = structureParserService.getStructureByName(structureName);
-        if (structure == null) {
+        if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(structureName);
         }
         return ResponseEntity.ok(structure);
@@ -80,18 +87,20 @@ public class CdrStructureController {
     public ResponseEntity<Resource> generateAndDownloadCdr(@RequestBody GenerateRequest request) throws IOException {
 
         log.info("Incoming ASCII CDR generate request for structure: {}", request.getStructureName());
-        if (request.getStructureName() == null || request.getStructureName().isBlank()) {
+        if (Objects.isNull(request.getStructureName()) || request.getStructureName().isBlank()) {
             throw new IllegalArgumentException("structureName is required");
         }
 
         Integer recordCount = request.getRecordCount();
-        int effectiveRecordCount = (recordCount != null) ? recordCount : cdrConfigProperties.getDefaultRecordCount();
+        int effectiveRecordCount = Objects.nonNull(recordCount)
+                ? recordCount
+                : cdrConfigProperties.getDefaultRecordCount();
 
         if (effectiveRecordCount > cdrConfigProperties.getMaxRecordCount()) {
             throw new RecordCountExceededException(effectiveRecordCount, cdrConfigProperties.getMaxRecordCount());
         }
-        if (effectiveRecordCount < 1) {
-            throw new IllegalArgumentException("recordCount must be at least 1");
+        if (effectiveRecordCount < MIN_RECORD_COUNT) {
+            throw new IllegalArgumentException("recordCount must be at least " + MIN_RECORD_COUNT);
         }
 
         List<Map<String, Object>> records = new ArrayList<>();
@@ -100,11 +109,12 @@ public class CdrStructureController {
         }
 
         Path filePath = cdrFileWriterService.writeCdrFile(request.getStructureName(), records);
+        String safeName = request.getStructureName().replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
         Resource resource = new UrlResource(filePath.toUri());
 
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + request.getStructureName() + ".dat\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safeName + DAT_FILE_EXTENSION + "\"")
                 .body(resource);
     }
 }

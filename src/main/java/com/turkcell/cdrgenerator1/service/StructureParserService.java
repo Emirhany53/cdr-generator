@@ -12,7 +12,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -27,7 +28,7 @@ public class StructureParserService {
     private final AsnTypeRegistryBuilder registryBuilder;
     private final AsnFieldTreeResolver fieldTreeResolver;
 
-    private final Map<String, AsnStructure> parsedStructures = new HashMap<>();
+    private final Map<String, AsnStructure> parsedStructures = new LinkedHashMap<>();
 
     @PostConstruct
     public void init() {
@@ -55,14 +56,17 @@ public class StructureParserService {
             return;
         }
 
-        String rootTypeName = registry.keySet().iterator().next(); // modüldeki ilk tanımlı tip = kök yapı
-        List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, rootTypeName);
+        ResolvedRoot root = resolveRootStructure(registry);
 
-        String structureName = (dto.getName() != null && !dto.getName().isBlank()) ? dto.getName() : rootTypeName;
+        String structureName = (dto.getName() != null && !dto.getName().isBlank()) ? dto.getName() : root.typeName();
+        if (root.fields().isEmpty()) {
+            log.warn("Module '{}' produced no resolvable fields for any of its {} type definitions",
+                    structureName, registry.size());
+        }
 
         AsnStructure structure = AsnStructure.builder()
                 .structureName(structureName)
-                .fields(fields)
+                .fields(root.fields())
                 .build();
 
         parsedStructures.put(structureName, structure);
@@ -83,18 +87,37 @@ public class StructureParserService {
             return null;
         }
 
-        String rootTypeName = registry.keySet().iterator().next();
-        List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, rootTypeName);
+        ResolvedRoot root = resolveRootStructure(registry);
 
-        String name = (structureName != null && !structureName.isBlank()) ? structureName : rootTypeName;
+        String name = (structureName != null && !structureName.isBlank()) ? structureName : root.typeName();
         return AsnStructure.builder()
                 .structureName(name)
-                .fields(fields)
+                .fields(root.fields())
                 .build();
     }
 
+    /**
+     * Picks the module's root structure: the first defined type whose field
+     * tree resolves to at least one field. Modules often open with primitive
+     * aliases (e.g. {@code Number ::= OCTET STRING}) before the actual record
+     * type, so blindly taking the first definition would yield an empty root.
+     */
+    private ResolvedRoot resolveRootStructure(Map<String, AsnTypeDefinition> registry) {
+        String firstTypeName = registry.keySet().iterator().next();
+        for (String candidate : registry.keySet()) {
+            List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, candidate);
+            if (!fields.isEmpty()) {
+                return new ResolvedRoot(candidate, fields);
+            }
+        }
+        return new ResolvedRoot(firstTypeName, List.of());
+    }
+
+    private record ResolvedRoot(String typeName, List<AsnField> fields) {
+    }
+
     public Map<String, AsnStructure> getAllParsedStructures() {
-        return parsedStructures;
+        return Collections.unmodifiableMap(parsedStructures);
     }
 
     public AsnStructure getStructureByName(String name) {

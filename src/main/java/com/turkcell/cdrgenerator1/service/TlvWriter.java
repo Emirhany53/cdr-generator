@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -15,8 +16,12 @@ import java.util.List;
 @Component
 public class TlvWriter {
 
-    /** Context class bit pattern (10xxxxxx) for [n] tagged fields. */
-    private static final int CONTEXT_CLASS = 0x80;
+    /** Sign bit of a value byte; drives the two's-complement padding rules. */
+    private static final int SIGN_BIT = 0x80;
+    /** Two's-complement padding byte prepended to negative INTEGER values. */
+    private static final int NEGATIVE_PAD_BYTE = 0xFF;
+    /** BER BOOLEAN content byte for TRUE (any non-zero is valid; 0xFF is canonical). */
+    private static final int BOOLEAN_TRUE_BYTE = 0xFF;
     /** Constructed bit (bit 6) set on top of the class for SEQUENCE/SET/EXPLICIT. */
     private static final int CONSTRUCTED_BIT = 0x20;
     /** Marker in the first tag byte meaning "tag number continues in following bytes". */
@@ -40,7 +45,15 @@ public class TlvWriter {
      * @param constructed true for SEQUENCE/SET or an EXPLICIT wrapper
      */
     public byte[] encodeTag(int tagNumber, boolean constructed) {
-        int firstByteClass = CONTEXT_CLASS | (constructed ? CONSTRUCTED_BIT : 0);
+        return encodeTag(BerTagClass.CONTEXT, tagNumber, constructed);
+    }
+
+    /**
+     * Builds the identifier (tag) bytes for a field of any tag class
+     * (UNIVERSAL, APPLICATION, CONTEXT or PRIVATE).
+     */
+    public byte[] encodeTag(BerTagClass tagClass, int tagNumber, boolean constructed) {
+        int firstByteClass = tagClass.getClassBits() | (constructed ? CONSTRUCTED_BIT : 0);
 
         if (tagNumber <= MAX_SINGLE_BYTE_TAG) {
             return new byte[]{(byte) (firstByteClass | tagNumber)};
@@ -84,9 +97,14 @@ public class TlvWriter {
         return out;
     }
 
-    /** Assembles a full TLV: tag + length + value. */
+    /** Assembles a full TLV with the context tag class: tag + length + value. */
     public byte[] buildTlv(int tagNumber, boolean constructed, byte[] value) {
-        byte[] tag = encodeTag(tagNumber, constructed);
+        return buildTlv(BerTagClass.CONTEXT, tagNumber, constructed, value);
+    }
+
+    /** Assembles a full TLV for the given tag class: tag + length + value. */
+    public byte[] buildTlv(BerTagClass tagClass, int tagNumber, boolean constructed, byte[] value) {
+        byte[] tag = encodeTag(tagClass, tagNumber, constructed);
         byte[] length = encodeLength(value.length);
 
         ByteArrayOutputStream buffer = new ByteArrayOutputStream(tag.length + length.length + value.length);
@@ -96,7 +114,15 @@ public class TlvWriter {
         return buffer.toByteArray();
     }
 
-    /** Minimal two's-complement INTEGER value encoding. */
+    /**
+     * Minimal two's-complement INTEGER value encoding.
+     *
+     * <p>BER decodes INTEGER content as two's complement, so the sign bit of
+     * the first content byte must match the sign of the value: positive
+     * values whose leading byte has the sign bit set get a 0x00 pad byte,
+     * and negative values whose leading byte lacks it get a 0xFF pad byte
+     * (e.g. 128 -&gt; 00 80, -129 -&gt; FF 7F).</p>
+     */
     public byte[] encodeInteger(long value) {
         List<Integer> bytes = new ArrayList<>();
         long remaining = value;
@@ -105,11 +131,23 @@ public class TlvWriter {
             remaining >>= BITS_PER_BYTE;
         } while (remaining != 0 && remaining != -1);
 
+        boolean leadingSignBitSet = (bytes.get(0) & SIGN_BIT) != 0;
+        if (value >= 0 && leadingSignBitSet) {
+            bytes.add(0, 0);
+        } else if (value < 0 && !leadingSignBitSet) {
+            bytes.add(0, NEGATIVE_PAD_BYTE);
+        }
+
         byte[] out = new byte[bytes.size()];
         for (int i = 0; i < bytes.size(); i++) {
             out[i] = (byte) (int) bytes.get(i);
         }
         return out;
+    }
+
+    /** BER BOOLEAN content: a single byte, 0x00 for FALSE and 0xFF for TRUE. */
+    public byte[] encodeBoolean(boolean value) {
+        return new byte[]{(byte) (value ? BOOLEAN_TRUE_BYTE : 0)};
     }
 
     /** Text value bytes (IA5String / UTF8String). */

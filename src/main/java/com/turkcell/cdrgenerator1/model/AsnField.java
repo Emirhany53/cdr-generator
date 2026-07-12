@@ -20,6 +20,9 @@ public class AsnField {
 
     private Integer tagNumber;
 
+    /** BER tag class from the [..] annotation; CONTEXT when only a number is given. */
+    private BerTagClass tagClass;
+
     private boolean explicit;
 
     private List<AsnField> children;

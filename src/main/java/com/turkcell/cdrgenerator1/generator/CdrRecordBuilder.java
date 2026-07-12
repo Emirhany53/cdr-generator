@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Random;
 
 @Service
@@ -30,7 +31,7 @@ public class CdrRecordBuilder {
         log.debug("Building record for structure: {}", structureName);
 
         AsnStructure structure = structureParserService.getStructureByName(structureName);
-        if (structure == null) {
+        if (Objects.isNull(structure)) {
             log.error("Structure not found: {}", structureName);
             throw new StructureNotFoundException(structureName);
         }
@@ -52,10 +53,14 @@ public class CdrRecordBuilder {
         for (AsnField field : fields) {
             String fieldName = field.getFieldName();
 
-            if (field.getChildren() != null && !field.getChildren().isEmpty()) {
+            if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
                 record.put(fieldName, field.isRepeated()
                         ? buildRepeatedGroup(field, userValues)
                         : buildFields(field.getChildren(), userValues));
+            } else if (field.isRepeated()) {
+                // SEQUENCE OF <primitive>: emit a real list so both the BER
+                // encoder and the flattened ASCII writer see the elements.
+                record.put(fieldName, buildRepeatedLeaf(field, userValues));
             } else {
                 record.put(fieldName, resolveLeafValue(field, userValues));
             }
@@ -72,22 +77,40 @@ public class CdrRecordBuilder {
         return items;
     }
 
+    /**
+     * Builds the value list for a repeated primitive field. A user-supplied
+     * value becomes a single-element list; otherwise 1-2 values are generated.
+     */
+    private List<String> buildRepeatedLeaf(AsnField field, Map<String, String> userValues) {
+        if (Objects.nonNull(userValues) && userValues.containsKey(field.getFieldName())) {
+            return List.of(resolveLeafValue(field, userValues));
+        }
+        int repeatCount = MIN_REPEAT_COUNT + random.nextInt(MAX_REPEAT_COUNT - MIN_REPEAT_COUNT + 1);
+        List<String> values = new ArrayList<>(repeatCount);
+        for (int i = 0; i < repeatCount; i++) {
+            values.add(resolveLeafValue(field, null));
+        }
+        return values;
+    }
+
     private String resolveLeafValue(AsnField field, Map<String, String> userValues) {
         String fieldName = field.getFieldName();
-        String rawValue = (userValues != null && userValues.containsKey(fieldName))
+        String rawValue = (Objects.nonNull(userValues) && userValues.containsKey(fieldName))
                 ? userValues.get(fieldName)
                 : fieldValueGenerator.generateValue(fieldName, field.getFieldType());
         return formatAsnLiteral(rawValue, field.getFieldType());
     }
 
     private String formatAsnLiteral(String rawValue, String fieldType) {
-        if (fieldType == null) {
+        if (Objects.isNull(fieldType)) {
             return "\"" + rawValue + "\"";
         }
         String upperType = fieldType.toUpperCase();
-        if (upperType.contains("INTEGER") || upperType.contains("BOOLEAN")) {
+        if (upperType.contains("INTEGER")) {
             return "'" + rawValue + "'D";
         }
+        // BOOLEAN stays a quoted "1"/"0" so the BER encoder can emit the
+        // canonical BOOLEAN content bytes instead of an INTEGER literal.
         return "\"" + rawValue + "\"";
     }
 }

@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 
 /**
  * Writes generated CDR records to a Token-Separated-ASCII (.dat) file.
@@ -45,11 +47,19 @@ public class CdrFileWriterService {
             flatRecords.add(flat);
         }
 
-        // Column order is taken from the first record; all records share the
-        // same structure, so their flattened key sets are identical.
-        List<String> columns = flatRecords.isEmpty()
-                ? List.of()
-                : new ArrayList<>(flatRecords.get(0).keySet());
+        // Column set is the ordered union across all records: repeated groups
+        // have a random element count per record, so one record may contain
+        // e.g. partials[1].volume while another does not. Taking only the
+        // first record's keys would silently drop or misalign such columns.
+        List<String> columns = new ArrayList<>();
+        Set<String> seenColumns = new HashSet<>();
+        for (LinkedHashMap<String, String> flat : flatRecords) {
+            for (String key : flat.keySet()) {
+                if (seenColumns.add(key)) {
+                    columns.add(key);
+                }
+            }
+        }
 
         StringBuilder sb = new StringBuilder();
         for (LinkedHashMap<String, String> flat : flatRecords) {
@@ -62,6 +72,8 @@ public class CdrFileWriterService {
 
         Path tempFile = Files.createTempFile(structureName + FILE_NAME_JOINER, DAT_FILE_SUFFIX);
         Files.writeString(tempFile, sb.toString());
+        // Temp .dat files are one-shot downloads; make sure they do not pile up.
+        tempFile.toFile().deleteOnExit();
 
         log.info("CDR file successfully written to: {}", tempFile.toAbsolutePath());
         return tempFile;
@@ -82,7 +94,13 @@ public class CdrFileWriterService {
                 flatten(path, (Map<String, Object>) nested, out);
             } else if (value instanceof List<?> items) {
                 for (int i = 0; i < items.size(); i++) {
-                    flatten(path + "[" + i + "]", (Map<String, Object>) items.get(i), out);
+                    Object item = items.get(i);
+                    if (item instanceof Map<?, ?> nestedItem) {
+                        flatten(path + "[" + i + "]", (Map<String, Object>) nestedItem, out);
+                    } else {
+                        // Repeated primitive (SEQUENCE OF OCTET STRING etc.)
+                        out.put(path + "[" + i + "]", AsnLiteralFormatter.strip(item));
+                    }
                 }
             } else {
                 out.put(path, AsnLiteralFormatter.strip(value));

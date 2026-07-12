@@ -1,0 +1,28 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /cdr-generator
+
+spring:
+  application:
+    name: cdr-generator1
+
+app:
+  cdr:
+    data-structure-path: "datastructure.json"
+    default-record-count: 1
+    max-record-count: 100
+
+logging:
+  level:
+    com.turkcell.cdrgenerator1: DEBUG
+  file:
+    name: logs/cdr-generator.log
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: alpha
+    tagsSorter: alpha
+  api-docs:
+    path: /v3/api-docs
