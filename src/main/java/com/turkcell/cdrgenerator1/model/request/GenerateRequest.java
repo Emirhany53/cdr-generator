@@ -1,21 +1,16 @@
 package com.turkcell.cdrgenerator1.model.request;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.util.Map;
 
+/**
+ * /api/cdr/generate istegi (JSON'da VAR olan bir yapidan .dat uretir).
+ * Girdi = yapinin adi.
+ */
 @Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class GenerateRequest {
-
-    private String structureName;
-    private Map<String, String> fieldValues;
-    private Integer recordCount;
-
-    private String content;
+    private String structureName;          // datastructure.json'daki yapi adi
+    private Map<String, String> fieldValues; // opsiyonel manuel degerler
+    private Integer recordCount;           // opsiyonel kayit sayisi
 }
