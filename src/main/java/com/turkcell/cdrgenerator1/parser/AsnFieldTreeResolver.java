@@ -21,7 +21,16 @@ public class AsnFieldTreeResolver {
     );
     private static final int MAX_DEPTH = 15;
     private static final String EXPLICIT_KEYWORD = "EXPLICIT";
+    private static final String IMPLICIT_KEYWORD = "IMPLICIT";
 
+    /** Root resolution result: the root type's kind plus its resolved fields. */
+    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
+    }
+
+    // ---------------------------------------------------------------------
+    // Legacy field-list API (implicit-default tagging). Kept for callers and
+    // tests that only need a SEQUENCE/SET field list without root-kind info.
+    // ---------------------------------------------------------------------
 
     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName) {
         return resolveRootFields(registry, rootTypeName, Map.of());
@@ -29,14 +38,56 @@ public class AsnFieldTreeResolver {
 
     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName,
                                             Map<String, String> choiceSelections) {
+        return resolveRootFields(registry, rootTypeName, choiceSelections, AsnTaggingMode.IMPLICIT);
+    }
 
+    public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName,
+                                            Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
         Map<String, List<AsnField>> resolutionCache = new HashMap<>();
-        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0, resolutionCache);
+        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0,
+                resolutionCache, taggingMode);
+    }
+
+    // ---------------------------------------------------------------------
+    // Root API that preserves the root kind. For a CHOICE root it returns the
+    // selected alternative as a single field (tag preserved), so the encoder
+    // can emit it directly instead of wrapping it in an artificial SEQUENCE.
+    // ---------------------------------------------------------------------
+
+    public ResolvedRoot resolveRoot(Map<String, AsnTypeDefinition> registry, String rootTypeName,
+                                    Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
+        Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
+
+        // Follow alias chains down to the underlying structured type.
+        String resolvedName = rootTypeName;
+        AsnTypeDefinition current = registry.get(resolvedName);
+        Set<String> aliasGuard = new HashSet<>();
+        while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
+            String target = stripConstraint(current.getAliasTarget());
+            target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+            resolvedName = target;
+            current = registry.get(target);
+        }
+        if (current == null) {
+            return new ResolvedRoot(null, List.of());
+        }
+
+        Map<String, List<AsnField>> cache = new HashMap<>();
+        if (current.getKind() == AsnTypeKind.CHOICE) {
+            AsnField alternative = resolveChoiceRootAlternative(registry, resolvedName, current.getRawBody(),
+                    selections, new HashSet<>(), 0, cache, taggingMode);
+            return new ResolvedRoot(AsnTypeKind.CHOICE,
+                    alternative == null ? List.of() : List.of(alternative));
+        }
+
+        List<AsnField> fields = resolveByTypeName(registry, resolvedName, selections, new HashSet<>(), 0,
+                cache, taggingMode);
+        return new ResolvedRoot(current.getKind(), fields);
     }
 
     private List<AsnField> resolveByTypeName(Map<String, AsnTypeDefinition> registry, String typeName,
                                              Map<String, String> choiceSelections, Set<String> visiting, int depth,
-                                             Map<String, List<AsnField>> cache) {
+                                             Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
         if (typeName == null) {
             return List.of();
         }
@@ -61,9 +112,9 @@ public class AsnFieldTreeResolver {
 
         List<AsnField> result = switch (definition.getKind()) {
             case ENUMERATED -> List.of();
-            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache);
-            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
-            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
+            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache, taggingMode);
+            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
         };
 
         cache.put(cacheKey, result);
@@ -76,30 +127,31 @@ public class AsnFieldTreeResolver {
 
     private List<AsnField> resolveAlias(Map<String, AsnTypeDefinition> registry, AsnTypeDefinition definition,
                                         Map<String, String> choiceSelections, Set<String> visiting, int depth,
-                                        Map<String, List<AsnField>> cache) {
+                                        Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
         String target = stripConstraint(definition.getAliasTarget());
         String innerType = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
-        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
+        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache, taggingMode);
     }
 
+    /** Legacy CHOICE resolution used for nested CHOICE types: flattens to the chosen alternative's fields. */
     private List<AsnField> resolveChoiceAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
                                                     String rawBody, Map<String, String> choiceSelections,
                                                     Set<String> visiting, int depth,
-                                                    Map<String, List<AsnField>> cache) {
+                                                    Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
         String preferredAlternative = choiceSelections.get(choiceTypeName);
         AsnField firstAlternative = null;
 
         for (String line : splitFieldEntries(rawBody)) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
-            AsnField alternative = parseFieldLine(trimmed);
+            AsnField alternative = parseFieldLine(trimmed, taggingMode);
             if (alternative == null) continue;
 
             if (firstAlternative == null) {
                 firstAlternative = alternative;
             }
             if (alternative.getFieldName().equals(preferredAlternative)) {
-                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache);
+                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache, taggingMode);
             }
         }
 
@@ -108,23 +160,82 @@ public class AsnFieldTreeResolver {
                 log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
                         preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
             }
-            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache);
+            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache, taggingMode);
         }
         return List.of();
     }
 
     /**
-     * Resolves the chosen CHOICE alternative. When the alternative's type is a
-     * structured type, its fields are returned as before. When it is a
-     * primitive (e.g. {@code cdrFormatField [1] IMPLICIT OCTET STRING}), the
-     * alternative itself is kept as a single leaf field - otherwise the whole
-     * CHOICE would silently resolve to an empty structure.
+     * Root-level CHOICE resolution: returns the selected alternative as a SINGLE
+     * field with its own tag preserved and its children resolved. Unlike the
+     * nested variant this does NOT flatten, so the encoder can emit the
+     * alternative directly (e.g. {@code commandRecord [APPLICATION 0] ...}).
+     */
+    private AsnField resolveChoiceRootAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
+                                                  String rawBody, Map<String, String> choiceSelections,
+                                                  Set<String> visiting, int depth,
+                                                  Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+        String preferredAlternative = choiceSelections.get(choiceTypeName);
+        Set<String> nextVisiting = new HashSet<>(visiting);
+        nextVisiting.add(choiceTypeName);
+
+        AsnField firstAlternative = null;
+        for (String line : splitFieldEntries(rawBody)) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            AsnField alternative = parseFieldLine(trimmed, taggingMode);
+            if (alternative == null) continue;
+
+            if (firstAlternative == null) {
+                firstAlternative = alternative;
+            }
+            if (alternative.getFieldName().equals(preferredAlternative)) {
+                return attachChildren(registry, alternative, choiceSelections, nextVisiting, depth, cache, taggingMode);
+            }
+        }
+
+        if (firstAlternative != null) {
+            if (preferredAlternative != null) {
+                log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
+                        preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
+            }
+            return attachChildren(registry, firstAlternative, choiceSelections, nextVisiting, depth, cache, taggingMode);
+        }
+        return null;
+    }
+
+    /** Resolves a field's referenced type into children and finalises its leaf/base type. */
+    private AsnField attachChildren(Map<String, AsnTypeDefinition> registry, AsnField field,
+                                    Map<String, String> choiceSelections, Set<String> visiting, int depth,
+                                    Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+        String innerType = field.getFieldType();
+        boolean repeated = field.isRepeated() || isAliasRepeated(registry, innerType);
+        List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
+                cache, taggingMode);
+        String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
+
+        return AsnField.builder()
+                .fieldName(field.getFieldName())
+                .fieldType(fieldType)
+                .optional(field.isOptional())
+                .repeated(repeated)
+                .tagNumber(field.getTagNumber())
+                .tagClass(field.getTagClass())
+                .explicit(field.isExplicit())
+                .children(children.isEmpty() ? null : children)
+                .build();
+    }
+
+    /**
+     * Resolves the chosen CHOICE alternative (nested case). When the alternative
+     * is structured its fields are returned; when it is primitive the alternative
+     * itself is kept as a single leaf field so the CHOICE never resolves empty.
      */
     private List<AsnField> resolveAlternative(Map<String, AsnTypeDefinition> registry, AsnField alternative,
                                               Map<String, String> choiceSelections, Set<String> visiting, int depth,
-                                              Map<String, List<AsnField>> cache) {
+                                              Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
         List<AsnField> resolved = resolveByTypeName(registry, alternative.getFieldType(),
-                choiceSelections, visiting, depth + 1, cache);
+                choiceSelections, visiting, depth + 1, cache, taggingMode);
         return resolved.isEmpty() ? List.of(alternative) : resolved;
     }
 
@@ -132,8 +243,6 @@ public class AsnFieldTreeResolver {
      * Splits a SEQUENCE/SET/CHOICE body into individual field entries.
      * Fields are separated by newlines and/or commas, but commas inside
      * brackets or parentheses (e.g. INTEGER ( CODE("DEC"))) are NOT separators.
-     * This lets the same parser handle both multi-line and single-line
-     * (inline request) ASN.1 modules.
      */
     private List<String> splitFieldEntries(String rawBody) {
         List<String> entries = new ArrayList<>();
@@ -166,18 +275,36 @@ public class AsnFieldTreeResolver {
 
     private List<AsnField> parseFieldLines(Map<String, AsnTypeDefinition> registry, String rawBody,
                                            Map<String, String> choiceSelections, Set<String> visiting, int depth,
-                                           Map<String, List<AsnField>> cache) {
-        List<AsnField> fields = new ArrayList<>();
+                                           Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+        // First pass: parse the raw field heads so AUTOMATIC tagging can decide
+        // whether to auto-number (it applies only when NO field is manually tagged).
+        List<AsnField> parsedLeaves = new ArrayList<>();
         for (String line : splitFieldEntries(rawBody)) {
             String trimmed = line.trim();
             if (trimmed.isEmpty()) continue;
+            AsnField parsed = parseFieldLine(trimmed, taggingMode);
+            if (parsed != null) {
+                parsedLeaves.add(parsed);
+            }
+        }
 
-            AsnField parsed = parseFieldLine(trimmed);
-            if (parsed == null) continue;
+        boolean autoAssignTags = taggingMode == AsnTaggingMode.AUTOMATIC
+                && parsedLeaves.stream().allMatch(f -> f.getTagNumber() == null);
+
+        // Second pass: assign automatic tags if applicable, then resolve children.
+        List<AsnField> fields = new ArrayList<>();
+        for (int index = 0; index < parsedLeaves.size(); index++) {
+            AsnField parsed = parsedLeaves.get(index);
+            if (autoAssignTags) {
+                parsed.setTagNumber(index);
+                parsed.setTagClass(BerTagClass.CONTEXT);
+                parsed.setExplicit(false);
+            }
 
             String innerType = parsed.getFieldType();
             boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
-            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
+            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
+                    cache, taggingMode);
 
             String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
 
@@ -221,7 +348,15 @@ public class AsnFieldTreeResolver {
                 && isRepeatedExpression(stripConstraint(def.getAliasTarget()));
     }
 
-    private AsnField parseFieldLine(String line) {
+    /**
+     * Parses a single field/alternative line into an AsnField.
+     *
+     * <p>The {@code explicit} flag is decided as follows: a per-field
+     * {@code EXPLICIT}/{@code IMPLICIT} keyword always wins; otherwise the module
+     * default {@code taggingMode} is applied (EXPLICIT default -&gt; explicit,
+     * IMPLICIT/AUTOMATIC -&gt; implicit).</p>
+     */
+    private AsnField parseFieldLine(String line, AsnTaggingMode taggingMode) {
         boolean optional = line.contains("OPTIONAL");
         Matcher matcher = FIELD_LINE.matcher(line);
         if (!matcher.find()) {
@@ -232,8 +367,10 @@ public class AsnFieldTreeResolver {
                 ? BerTagClass.valueOf(matcher.group(2))
                 : BerTagClass.CONTEXT;
         Integer tagNumber = matcher.group(3) != null ? Integer.valueOf(matcher.group(3)) : null;
-        boolean explicit = matcher.group(4) != null
-                && matcher.group(4).trim().equalsIgnoreCase(EXPLICIT_KEYWORD);
+
+        String taggingKeyword = matcher.group(4) != null ? matcher.group(4).trim() : null;
+        boolean explicit = resolveExplicit(taggingKeyword, taggingMode);
+
         String typeExpr = stripConstraint(matcher.group(5)).replace("OPTIONAL", "").trim();
 
         boolean repeated = isRepeatedExpression(typeExpr);
@@ -248,6 +385,17 @@ public class AsnFieldTreeResolver {
                 .tagClass(tagClass)
                 .explicit(explicit)
                 .build();
+    }
+
+    private boolean resolveExplicit(String taggingKeyword, AsnTaggingMode taggingMode) {
+        if (EXPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
+            return true;
+        }
+        if (IMPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
+            return false;
+        }
+        // No per-field keyword: fall back to the module default (X.680: EXPLICIT).
+        return taggingMode == AsnTaggingMode.EXPLICIT;
     }
 
     private boolean isRepeatedExpression(String typeExpr) {
