@@ -105,7 +105,8 @@ public class CdrStructureController {
 
         List<Map<String, Object>> records = new ArrayList<>();
         for (int i = 0; i < effectiveRecordCount; i++) {
-            records.add(cdrRecordBuilder.buildRecord(request.getStructureName(), request.getFieldValues()));
+            records.add(cdrRecordBuilder.buildRecord(request.getStructureName(),
+                    request.getFieldValues(), request.getChoiceSelections()));
         }
 
         Path filePath = cdrFileWriterService.writeCdrFile(request.getStructureName(), records);

@@ -31,6 +31,8 @@ public class FieldValueGenerator {
     private static final long PHONE_POSTFIX_RANGE = 8_999_999L;
     private static final String GENERIC_VALUE_PREFIX = "VAL";
     private static final String RANDOM_STRING_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    /** Uppercase hex alphabet for OCTET STRING / TBCD values (even length keeps them valid hex). */
+    private static final String HEX_ALPHABET = "0123456789ABCDEF";
     private static final String UNKNOWN_TYPE_VALUE = "UNKNOWN";
     private static final String BOOLEAN_TRUE_VALUE = "1";
     private static final String BOOLEAN_FALSE_VALUE = "0";
@@ -72,8 +74,14 @@ public class FieldValueGenerator {
         if (Objects.isNull(fieldType)) {
             return UNKNOWN_TYPE_VALUE;
         }
-        if (upperType.contains("IA5STRING") || upperType.contains("OCTET STRING")
-                || upperType.contains("TBCD STRING")) {
+        // OCTET STRING / TBCD values are emitted as unambiguous even-length hex so
+        // the BER encoder always interprets them as raw octets. Text types stay
+        // alphanumeric text. This removes the earlier ambiguity where a random
+        // OCTET STRING value was hex or text depending on which letters it drew.
+        if (upperType.contains("OCTET STRING") || upperType.contains("TBCD STRING")) {
+            return generateHexString(RANDOM_STRING_LENGTH);
+        }
+        if (upperType.contains("IA5STRING")) {
             return generateRandomString(RANDOM_STRING_LENGTH);
         }
 
@@ -93,6 +101,16 @@ public class FieldValueGenerator {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < length; i++) {
             sb.append(RANDOM_STRING_ALPHABET.charAt(random.nextInt(RANDOM_STRING_ALPHABET.length())));
+        }
+        return sb.toString();
+    }
+
+    /** Even-length uppercase hex string, used for OCTET STRING / TBCD values. */
+    private String generateHexString(int length) {
+        int evenLength = (length % 2 == 0) ? length : length + 1;
+        StringBuilder sb = new StringBuilder(evenLength);
+        for (int i = 0; i < evenLength; i++) {
+            sb.append(HEX_ALPHABET.charAt(random.nextInt(HEX_ALPHABET.length())));
         }
         return sb.toString();
     }

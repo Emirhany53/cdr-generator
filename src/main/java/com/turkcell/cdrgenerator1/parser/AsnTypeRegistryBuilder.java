@@ -24,6 +24,9 @@ public class AsnTypeRegistryBuilder {
     // "ModuleName DEFINITIONS IMPLICIT TAGS ::=". In that case the token right
     // before ::= is "TAGS", not a real type name, so it must be skipped too.
     private static final String TAGS_KEYWORD = "TAGS";
+    // Captures the module-level tagging mode from the header, when present.
+    private static final Pattern TAGGING_MODE_PATTERN = Pattern.compile(
+            MODULE_HEADER_KEYWORD + "\\s+(IMPLICIT|EXPLICIT|AUTOMATIC)\\s+" + TAGS_KEYWORD);
 
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
@@ -65,6 +68,23 @@ public class AsnTypeRegistryBuilder {
 
         log.debug("Parsed {} ASN.1 type definitions", registry.size());
         return registry;
+    }
+
+    /**
+     * Reads the module-level tagging mode from the header. Returns
+     * {@link AsnTaggingMode#EXPLICIT} when the header omits the keyword, which
+     * is the ASN.1 standard default (X.680) - previously the code always assumed
+     * IMPLICIT, mis-encoding the majority of modules that rely on the default.
+     */
+    public AsnTaggingMode detectTaggingMode(String contents) {
+        if (contents == null || contents.isBlank()) {
+            return AsnTaggingMode.EXPLICIT;
+        }
+        Matcher matcher = TAGGING_MODE_PATTERN.matcher(stripLineComments(contents));
+        if (matcher.find()) {
+            return AsnTaggingMode.valueOf(matcher.group(1));
+        }
+        return AsnTaggingMode.EXPLICIT;
     }
 
     private AsnTypeDefinition parseStatement(String typeName, String statement) {

@@ -1,0 +1,1240 @@
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/controller/BerGeneratorController.java b/src/main/java/com/turkcell/cdrgenerator1/controller/BerGeneratorController.java
+index 3174ca1..908bb0d 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/controller/BerGeneratorController.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/controller/BerGeneratorController.java
+@@ -63,7 +63,7 @@ public class BerGeneratorController {
+         for (int i = 0; i < effectiveRecordCount; i++) {
+             Map<String, Object> record =
+                     cdrRecordBuilder.buildRecordFromFields(structure.getFields(), request.getFieldValues());
+-            fileBuffer.writeBytes(berEncoderService.encodeRecord(structure.getFields(), record));
++            fileBuffer.writeBytes(berEncoderService.encodeRecord(structure, record));
+         }
+         byte[] fileBytes = fileBuffer.toByteArray();
+         log.info("Generated BER file for '{}': {} record(s), {} bytes",
+@@ -97,7 +97,8 @@ public class BerGeneratorController {
+     private AsnStructure resolveStructure(GenerateBerRequest request, boolean inlineMode) {
+         if (inlineMode) {
+             AsnStructure structure =
+-                    structureParserService.parseFromContents(request.getStructureName(), request.getContents());
++                    structureParserService.parseFromContents(request.getStructureName(),
++                    request.getContents(), request.getChoiceSelections());
+             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
+                     || structure.getFields().isEmpty()) {
+                 throw new IllegalArgumentException(
+@@ -108,7 +109,8 @@ public class BerGeneratorController {
+         if (Objects.isNull(request.getStructureName()) || request.getStructureName().isBlank()) {
+             throw new IllegalArgumentException("structureName is required when no content is provided");
+         }
+-        AsnStructure structure = structureParserService.getStructureByName(request.getStructureName());
++        AsnStructure structure = structureParserService.getStructureByName(
++                request.getStructureName(), request.getChoiceSelections());
+         if (Objects.isNull(structure)) {
+             throw new StructureNotFoundException(request.getStructureName());
+         }
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/controller/CdrStructureController.java b/src/main/java/com/turkcell/cdrgenerator1/controller/CdrStructureController.java
+index cdf3502..ff7c128 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/controller/CdrStructureController.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/controller/CdrStructureController.java
+@@ -105,7 +105,8 @@ public class CdrStructureController {
+ 
+         List<Map<String, Object>> records = new ArrayList<>();
+         for (int i = 0; i < effectiveRecordCount; i++) {
+-            records.add(cdrRecordBuilder.buildRecord(request.getStructureName(), request.getFieldValues()));
++            records.add(cdrRecordBuilder.buildRecord(request.getStructureName(),
++                    request.getFieldValues(), request.getChoiceSelections()));
+         }
+ 
+         Path filePath = cdrFileWriterService.writeCdrFile(request.getStructureName(), records);
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/generator/CdrRecordBuilder.java b/src/main/java/com/turkcell/cdrgenerator1/generator/CdrRecordBuilder.java
+index 5d9129f..62fc0c2 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/generator/CdrRecordBuilder.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/generator/CdrRecordBuilder.java
+@@ -22,6 +22,9 @@ public class CdrRecordBuilder {
+ 
+     private static final int MIN_REPEAT_COUNT = 1;
+     private static final int MAX_REPEAT_COUNT = 2;
++    private static final String PATH_SEPARATOR = ".";
++    private static final String INDEX_OPEN = "[";
++    private static final String INDEX_CLOSE = "]";
+ 
+     private final StructureParserService structureParserService;
+     private final FieldValueGenerator fieldValueGenerator;
+@@ -36,7 +39,26 @@ public class CdrRecordBuilder {
+             throw new StructureNotFoundException(structureName);
+         }
+ 
+-        return buildFields(structure.getFields(), userValues);
++        return buildFields(structure.getFields(), userValues, "");
++    }
++
++    /**
++     * Builds a record honouring an explicit CHOICE selection. With an empty
++     * selection this behaves exactly like {@link #buildRecord(String, Map)}.
++     */
++    public Map<String, Object> buildRecord(String structureName, Map<String, String> userValues,
++                                           Map<String, String> choiceSelections) {
++        if (Objects.isNull(choiceSelections) || choiceSelections.isEmpty()) {
++            return buildRecord(structureName, userValues);
++        }
++
++        AsnStructure structure = structureParserService.getStructureByName(structureName, choiceSelections);
++        if (Objects.isNull(structure)) {
++            log.error("Structure not found: {}", structureName);
++            throw new StructureNotFoundException(structureName);
++        }
++
++        return buildFields(structure.getFields(), userValues, "");
+     }
+ 
+     /**
+@@ -44,63 +66,97 @@ public class CdrRecordBuilder {
+      * registry lookup. Used for structures parsed from inline request content.
+      */
+     public Map<String, Object> buildRecordFromFields(List<AsnField> fields, Map<String, String> userValues) {
+-        return buildFields(fields, userValues);
++        return buildFields(fields, userValues, "");
+     }
+ 
+-    private Map<String, Object> buildFields(List<AsnField> fields, Map<String, String> userValues) {
++    private Map<String, Object> buildFields(List<AsnField> fields, Map<String, String> userValues,
++                                            String pathPrefix) {
+         Map<String, Object> record = new LinkedHashMap<>();
+ 
+         for (AsnField field : fields) {
+             String fieldName = field.getFieldName();
++            String fieldPath = buildPath(pathPrefix, fieldName);
+ 
+             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
+                 record.put(fieldName, field.isRepeated()
+-                        ? buildRepeatedGroup(field, userValues)
+-                        : buildFields(field.getChildren(), userValues));
++                        ? buildRepeatedGroup(field, userValues, fieldPath)
++                        : buildFields(field.getChildren(), userValues, fieldPath));
+             } else if (field.isRepeated()) {
+                 // SEQUENCE OF <primitive>: emit a real list so both the BER
+                 // encoder and the flattened ASCII writer see the elements.
+-                record.put(fieldName, buildRepeatedLeaf(field, userValues));
++                record.put(fieldName, buildRepeatedLeaf(field, userValues, fieldPath));
+             } else {
+-                record.put(fieldName, resolveLeafValue(field, userValues));
++                record.put(fieldName, resolveLeafValue(field, userValues, fieldPath));
+             }
+         }
+         return record;
+     }
+ 
+-    private List<Map<String, Object>> buildRepeatedGroup(AsnField field, Map<String, String> userValues) {
+-        int repeatCount = MIN_REPEAT_COUNT + random.nextInt(MAX_REPEAT_COUNT - MIN_REPEAT_COUNT + 1);
++    private List<Map<String, Object>> buildRepeatedGroup(AsnField field, Map<String, String> userValues,
++                                                         String fieldPath) {
++        int repeatCount = randomRepeatCount();
+         List<Map<String, Object>> items = new ArrayList<>();
+         for (int i = 0; i < repeatCount; i++) {
+-            items.add(buildFields(field.getChildren(), userValues));
++            String elementPath = fieldPath + INDEX_OPEN + i + INDEX_CLOSE;
++            items.add(buildFields(field.getChildren(), userValues, elementPath));
+         }
+         return items;
+     }
+ 
+     /**
+      * Builds the value list for a repeated primitive field. A user-supplied
+-     * value becomes a single-element list; otherwise 1-2 values are generated.
++     * value (matched by full path or bare field name) becomes a single-element
++     * list; otherwise 1-2 values are generated.
+      */
+-    private List<String> buildRepeatedLeaf(AsnField field, Map<String, String> userValues) {
+-        if (Objects.nonNull(userValues) && userValues.containsKey(field.getFieldName())) {
+-            return List.of(resolveLeafValue(field, userValues));
++    private List<String> buildRepeatedLeaf(AsnField field, Map<String, String> userValues, String fieldPath) {
++        String userValue = lookupUserValue(userValues, fieldPath, field.getFieldName());
++        if (Objects.nonNull(userValue)) {
++            return List.of(formatAsnLiteral(userValue, field.getFieldType()));
+         }
+-        int repeatCount = MIN_REPEAT_COUNT + random.nextInt(MAX_REPEAT_COUNT - MIN_REPEAT_COUNT + 1);
++        int repeatCount = randomRepeatCount();
+         List<String> values = new ArrayList<>(repeatCount);
+         for (int i = 0; i < repeatCount; i++) {
+-            values.add(resolveLeafValue(field, null));
++            String generated = fieldValueGenerator.generateValue(field.getFieldName(), field.getFieldType());
++            values.add(formatAsnLiteral(generated, field.getFieldType()));
+         }
+         return values;
+     }
+ 
+-    private String resolveLeafValue(AsnField field, Map<String, String> userValues) {
+-        String fieldName = field.getFieldName();
+-        String rawValue = (Objects.nonNull(userValues) && userValues.containsKey(fieldName))
+-                ? userValues.get(fieldName)
+-                : fieldValueGenerator.generateValue(fieldName, field.getFieldType());
++    private String resolveLeafValue(AsnField field, Map<String, String> userValues, String fieldPath) {
++        String userValue = lookupUserValue(userValues, fieldPath, field.getFieldName());
++        String rawValue = Objects.nonNull(userValue)
++                ? userValue
++                : fieldValueGenerator.generateValue(field.getFieldName(), field.getFieldType());
+         return formatAsnLiteral(rawValue, field.getFieldType());
+     }
+ 
++    /**
++     * Looks up a user-supplied value first by its full dotted/indexed path
++     * (e.g. {@code addr.msisdn}) and then by the bare field name. The path form
++     * lets callers disambiguate nested or duplicated leaf names; the bare name
++     * stays supported for convenience and backward compatibility.
++     */
++    private String lookupUserValue(Map<String, String> userValues, String fieldPath, String fieldName) {
++        if (Objects.isNull(userValues)) {
++            return null;
++        }
++        if (userValues.containsKey(fieldPath)) {
++            return userValues.get(fieldPath);
++        }
++        if (userValues.containsKey(fieldName)) {
++            return userValues.get(fieldName);
++        }
++        return null;
++    }
++
++    private int randomRepeatCount() {
++        return MIN_REPEAT_COUNT + random.nextInt(MAX_REPEAT_COUNT - MIN_REPEAT_COUNT + 1);
++    }
++
++    private String buildPath(String prefix, String fieldName) {
++        return prefix.isEmpty() ? fieldName : prefix + PATH_SEPARATOR + fieldName;
++    }
++
+     private String formatAsnLiteral(String rawValue, String fieldType) {
+         if (Objects.isNull(fieldType)) {
+             return "\"" + rawValue + "\"";
+@@ -109,7 +165,6 @@ public class CdrRecordBuilder {
+         if (upperType.contains("INTEGER")) {
+             return "'" + rawValue + "'D";
+         }
+-
+         return "\"" + rawValue + "\"";
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/generator/FieldValueGenerator.java b/src/main/java/com/turkcell/cdrgenerator1/generator/FieldValueGenerator.java
+index 89d7f02..85abbbf 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/generator/FieldValueGenerator.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/generator/FieldValueGenerator.java
+@@ -31,6 +31,8 @@ public class FieldValueGenerator {
+     private static final long PHONE_POSTFIX_RANGE = 8_999_999L;
+     private static final String GENERIC_VALUE_PREFIX = "VAL";
+     private static final String RANDOM_STRING_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
++    /** Uppercase hex alphabet for OCTET STRING / TBCD values (even length keeps them valid hex). */
++    private static final String HEX_ALPHABET = "0123456789ABCDEF";
+     private static final String UNKNOWN_TYPE_VALUE = "UNKNOWN";
+     private static final String BOOLEAN_TRUE_VALUE = "1";
+     private static final String BOOLEAN_FALSE_VALUE = "0";
+@@ -72,8 +74,14 @@ public class FieldValueGenerator {
+         if (Objects.isNull(fieldType)) {
+             return UNKNOWN_TYPE_VALUE;
+         }
+-        if (upperType.contains("IA5STRING") || upperType.contains("OCTET STRING")
+-                || upperType.contains("TBCD STRING")) {
++        // OCTET STRING / TBCD values are emitted as unambiguous even-length hex so
++        // the BER encoder always interprets them as raw octets. Text types stay
++        // alphanumeric text. This removes the earlier ambiguity where a random
++        // OCTET STRING value was hex or text depending on which letters it drew.
++        if (upperType.contains("OCTET STRING") || upperType.contains("TBCD STRING")) {
++            return generateHexString(RANDOM_STRING_LENGTH);
++        }
++        if (upperType.contains("IA5STRING")) {
+             return generateRandomString(RANDOM_STRING_LENGTH);
+         }
+ 
+@@ -96,4 +104,14 @@ public class FieldValueGenerator {
+         }
+         return sb.toString();
+     }
++
++    /** Even-length uppercase hex string, used for OCTET STRING / TBCD values. */
++    private String generateHexString(int length) {
++        int evenLength = (length % 2 == 0) ? length : length + 1;
++        StringBuilder sb = new StringBuilder(evenLength);
++        for (int i = 0; i < evenLength; i++) {
++            sb.append(HEX_ALPHABET.charAt(random.nextInt(HEX_ALPHABET.length())));
++        }
++        return sb.toString();
++    }
+ }
+\ No newline at end of file
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/model/AsnStructure.java b/src/main/java/com/turkcell/cdrgenerator1/model/AsnStructure.java
+index e4eef18..5650727 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/model/AsnStructure.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/model/AsnStructure.java
+@@ -14,4 +14,11 @@ import java.util.List;
+ public class AsnStructure {
+     private String structureName;
+     private List<AsnField> fields;
+-}
+\ No newline at end of file
++
++    /**
++     * True when the module's root type is a CHOICE. In that case {@code fields}
++     * holds exactly one element - the selected alternative, carrying its own
++     * tag - and the record must NOT be wrapped in an artificial SEQUENCE.
++     */
++    private boolean choiceRoot;
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateBerRequest.java b/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateBerRequest.java
+index 394c3e8..5875303 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateBerRequest.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateBerRequest.java
+@@ -5,14 +5,25 @@ import lombok.Data;
+ import java.util.Map;
+ 
+ /**
+- * /api/cdr/generate-ber istegi (JSON'da OLMAYAN yapilar icin .ber uretir).
+- * Girdi = yapinin adi DEGIL, ham ASN.1 contents metnidir.
+- * Kullanici contents'i dogrudan istekte gonderir.
++ * /api/cdr/generate-ber request (produces a .ber, incl. structures NOT in the JSON).
++ * Either give a registered {@code structureName} (named mode) or the raw ASN.1
++ * {@code contents} text directly (inline mode).
+  */
+ @Data
+ public class GenerateBerRequest {
+-    private String structureName;           // JSON'daki yapi adi (named mod)
+-    private String contents;               // ham ASN.1 metni (inline mod)
+-    private Map<String, String> fieldValues; // opsiyonel manuel degerler
+-    private Integer recordCount;           // opsiyonel kayit sayisi
+-}
+\ No newline at end of file
++    private String structureName;            // structure name from the JSON (named mode)
++    private String contents;                 // raw ASN.1 text (inline mode)
++    private Map<String, String> fieldValues; // optional manual values; keys may be a bare
++                                             // field name or a dotted/indexed path
++    private Map<String, String> choiceSelections; // optional CHOICE branch per CHOICE type name
++    private Integer recordCount;             // optional record count
++
++    /**
++     * Convenience alias so a request body using the JSON key {@code "content"}
++     * (singular) still populates {@code contents}. Jackson binds the "content"
++     * property to this setter.
++     */
++    public void setContent(String content) {
++        this.contents = content;
++    }
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateRequest.java b/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateRequest.java
+index 292fd2f..e15d987 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateRequest.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/model/request/GenerateRequest.java
+@@ -5,12 +5,15 @@ import lombok.Data;
+ import java.util.Map;
+ 
+ /**
+- * /api/cdr/generate istegi (JSON'da VAR olan bir yapidan .dat uretir).
+- * Girdi = yapinin adi.
++ * /api/cdr/generate request (produces a .dat from a structure that EXISTS in the JSON).
++ * Input = the structure name.
+  */
+ @Data
+ public class GenerateRequest {
+-    private String structureName;          // datastructure.json'daki yapi adi
+-    private Map<String, String> fieldValues; // opsiyonel manuel degerler
+-    private Integer recordCount;           // opsiyonel kayit sayisi
+-}
+\ No newline at end of file
++    private String structureName;            // structure name from datastructure.json
++    private Map<String, String> fieldValues; // optional manual values; keys may be a bare
++                                             // field name or a dotted/indexed path such as
++                                             // "location.cellId" or "partials[0].volume"
++    private Map<String, String> choiceSelections; // optional CHOICE branch per CHOICE type name
++    private Integer recordCount;             // optional record count
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/parser/AsnFieldTreeResolver.java b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnFieldTreeResolver.java
+index d676758..ce0c56b 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/parser/AsnFieldTreeResolver.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnFieldTreeResolver.java
+@@ -21,7 +21,16 @@ public class AsnFieldTreeResolver {
+     );
+     private static final int MAX_DEPTH = 15;
+     private static final String EXPLICIT_KEYWORD = "EXPLICIT";
++    private static final String IMPLICIT_KEYWORD = "IMPLICIT";
+ 
++    /** Root resolution result: the root type's kind plus its resolved fields. */
++    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
++    }
++
++    // ---------------------------------------------------------------------
++    // Legacy field-list API (implicit-default tagging). Kept for callers and
++    // tests that only need a SEQUENCE/SET field list without root-kind info.
++    // ---------------------------------------------------------------------
+ 
+     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName) {
+         return resolveRootFields(registry, rootTypeName, Map.of());
+@@ -29,14 +38,56 @@ public class AsnFieldTreeResolver {
+ 
+     public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName,
+                                             Map<String, String> choiceSelections) {
++        return resolveRootFields(registry, rootTypeName, choiceSelections, AsnTaggingMode.IMPLICIT);
++    }
+ 
++    public List<AsnField> resolveRootFields(Map<String, AsnTypeDefinition> registry, String rootTypeName,
++                                            Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
+         Map<String, List<AsnField>> resolutionCache = new HashMap<>();
+-        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0, resolutionCache);
++        return resolveByTypeName(registry, rootTypeName, choiceSelections, new HashSet<>(), 0,
++                resolutionCache, taggingMode);
++    }
++
++    // ---------------------------------------------------------------------
++    // Root API that preserves the root kind. For a CHOICE root it returns the
++    // selected alternative as a single field (tag preserved), so the encoder
++    // can emit it directly instead of wrapping it in an artificial SEQUENCE.
++    // ---------------------------------------------------------------------
++
++    public ResolvedRoot resolveRoot(Map<String, AsnTypeDefinition> registry, String rootTypeName,
++                                    Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
++        Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
++
++        // Follow alias chains down to the underlying structured type.
++        String resolvedName = rootTypeName;
++        AsnTypeDefinition current = registry.get(resolvedName);
++        Set<String> aliasGuard = new HashSet<>();
++        while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
++            String target = stripConstraint(current.getAliasTarget());
++            target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
++            resolvedName = target;
++            current = registry.get(target);
++        }
++        if (current == null) {
++            return new ResolvedRoot(null, List.of());
++        }
++
++        Map<String, List<AsnField>> cache = new HashMap<>();
++        if (current.getKind() == AsnTypeKind.CHOICE) {
++            AsnField alternative = resolveChoiceRootAlternative(registry, resolvedName, current.getRawBody(),
++                    selections, new HashSet<>(), 0, cache, taggingMode);
++            return new ResolvedRoot(AsnTypeKind.CHOICE,
++                    alternative == null ? List.of() : List.of(alternative));
++        }
++
++        List<AsnField> fields = resolveByTypeName(registry, resolvedName, selections, new HashSet<>(), 0,
++                cache, taggingMode);
++        return new ResolvedRoot(current.getKind(), fields);
+     }
+ 
+     private List<AsnField> resolveByTypeName(Map<String, AsnTypeDefinition> registry, String typeName,
+                                              Map<String, String> choiceSelections, Set<String> visiting, int depth,
+-                                             Map<String, List<AsnField>> cache) {
++                                             Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+         if (typeName == null) {
+             return List.of();
+         }
+@@ -61,9 +112,9 @@ public class AsnFieldTreeResolver {
+ 
+         List<AsnField> result = switch (definition.getKind()) {
+             case ENUMERATED -> List.of();
+-            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache);
+-            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
+-            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache);
++            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache, taggingMode);
++            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
++            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+         };
+ 
+         cache.put(cacheKey, result);
+@@ -76,30 +127,31 @@ public class AsnFieldTreeResolver {
+ 
+     private List<AsnField> resolveAlias(Map<String, AsnTypeDefinition> registry, AsnTypeDefinition definition,
+                                         Map<String, String> choiceSelections, Set<String> visiting, int depth,
+-                                        Map<String, List<AsnField>> cache) {
++                                        Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+         String target = stripConstraint(definition.getAliasTarget());
+         String innerType = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+-        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
++        return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache, taggingMode);
+     }
+ 
++    /** Legacy CHOICE resolution used for nested CHOICE types: flattens to the chosen alternative's fields. */
+     private List<AsnField> resolveChoiceAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
+                                                     String rawBody, Map<String, String> choiceSelections,
+                                                     Set<String> visiting, int depth,
+-                                                    Map<String, List<AsnField>> cache) {
++                                                    Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+         String preferredAlternative = choiceSelections.get(choiceTypeName);
+         AsnField firstAlternative = null;
+ 
+         for (String line : splitFieldEntries(rawBody)) {
+             String trimmed = line.trim();
+             if (trimmed.isEmpty()) continue;
+-            AsnField alternative = parseFieldLine(trimmed);
++            AsnField alternative = parseFieldLine(trimmed, taggingMode);
+             if (alternative == null) continue;
+ 
+             if (firstAlternative == null) {
+                 firstAlternative = alternative;
+             }
+             if (alternative.getFieldName().equals(preferredAlternative)) {
+-                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache);
++                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache, taggingMode);
+             }
+         }
+ 
+@@ -108,23 +160,82 @@ public class AsnFieldTreeResolver {
+                 log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
+                         preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
+             }
+-            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache);
++            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache, taggingMode);
+         }
+         return List.of();
+     }
+ 
+     /**
+-     * Resolves the chosen CHOICE alternative. When the alternative's type is a
+-     * structured type, its fields are returned as before. When it is a
+-     * primitive (e.g. {@code cdrFormatField [1] IMPLICIT OCTET STRING}), the
+-     * alternative itself is kept as a single leaf field - otherwise the whole
+-     * CHOICE would silently resolve to an empty structure.
++     * Root-level CHOICE resolution: returns the selected alternative as a SINGLE
++     * field with its own tag preserved and its children resolved. Unlike the
++     * nested variant this does NOT flatten, so the encoder can emit the
++     * alternative directly (e.g. {@code commandRecord [APPLICATION 0] ...}).
++     */
++    private AsnField resolveChoiceRootAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
++                                                  String rawBody, Map<String, String> choiceSelections,
++                                                  Set<String> visiting, int depth,
++                                                  Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
++        String preferredAlternative = choiceSelections.get(choiceTypeName);
++        Set<String> nextVisiting = new HashSet<>(visiting);
++        nextVisiting.add(choiceTypeName);
++
++        AsnField firstAlternative = null;
++        for (String line : splitFieldEntries(rawBody)) {
++            String trimmed = line.trim();
++            if (trimmed.isEmpty()) continue;
++            AsnField alternative = parseFieldLine(trimmed, taggingMode);
++            if (alternative == null) continue;
++
++            if (firstAlternative == null) {
++                firstAlternative = alternative;
++            }
++            if (alternative.getFieldName().equals(preferredAlternative)) {
++                return attachChildren(registry, alternative, choiceSelections, nextVisiting, depth, cache, taggingMode);
++            }
++        }
++
++        if (firstAlternative != null) {
++            if (preferredAlternative != null) {
++                log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
++                        preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
++            }
++            return attachChildren(registry, firstAlternative, choiceSelections, nextVisiting, depth, cache, taggingMode);
++        }
++        return null;
++    }
++
++    /** Resolves a field's referenced type into children and finalises its leaf/base type. */
++    private AsnField attachChildren(Map<String, AsnTypeDefinition> registry, AsnField field,
++                                    Map<String, String> choiceSelections, Set<String> visiting, int depth,
++                                    Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
++        String innerType = field.getFieldType();
++        boolean repeated = field.isRepeated() || isAliasRepeated(registry, innerType);
++        List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
++                cache, taggingMode);
++        String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
++
++        return AsnField.builder()
++                .fieldName(field.getFieldName())
++                .fieldType(fieldType)
++                .optional(field.isOptional())
++                .repeated(repeated)
++                .tagNumber(field.getTagNumber())
++                .tagClass(field.getTagClass())
++                .explicit(field.isExplicit())
++                .children(children.isEmpty() ? null : children)
++                .build();
++    }
++
++    /**
++     * Resolves the chosen CHOICE alternative (nested case). When the alternative
++     * is structured its fields are returned; when it is primitive the alternative
++     * itself is kept as a single leaf field so the CHOICE never resolves empty.
+      */
+     private List<AsnField> resolveAlternative(Map<String, AsnTypeDefinition> registry, AsnField alternative,
+                                               Map<String, String> choiceSelections, Set<String> visiting, int depth,
+-                                              Map<String, List<AsnField>> cache) {
++                                              Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
+         List<AsnField> resolved = resolveByTypeName(registry, alternative.getFieldType(),
+-                choiceSelections, visiting, depth + 1, cache);
++                choiceSelections, visiting, depth + 1, cache, taggingMode);
+         return resolved.isEmpty() ? List.of(alternative) : resolved;
+     }
+ 
+@@ -132,8 +243,6 @@ public class AsnFieldTreeResolver {
+      * Splits a SEQUENCE/SET/CHOICE body into individual field entries.
+      * Fields are separated by newlines and/or commas, but commas inside
+      * brackets or parentheses (e.g. INTEGER ( CODE("DEC"))) are NOT separators.
+-     * This lets the same parser handle both multi-line and single-line
+-     * (inline request) ASN.1 modules.
+      */
+     private List<String> splitFieldEntries(String rawBody) {
+         List<String> entries = new ArrayList<>();
+@@ -166,18 +275,36 @@ public class AsnFieldTreeResolver {
+ 
+     private List<AsnField> parseFieldLines(Map<String, AsnTypeDefinition> registry, String rawBody,
+                                            Map<String, String> choiceSelections, Set<String> visiting, int depth,
+-                                           Map<String, List<AsnField>> cache) {
+-        List<AsnField> fields = new ArrayList<>();
++                                           Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
++        // First pass: parse the raw field heads so AUTOMATIC tagging can decide
++        // whether to auto-number (it applies only when NO field is manually tagged).
++        List<AsnField> parsedLeaves = new ArrayList<>();
+         for (String line : splitFieldEntries(rawBody)) {
+             String trimmed = line.trim();
+             if (trimmed.isEmpty()) continue;
++            AsnField parsed = parseFieldLine(trimmed, taggingMode);
++            if (parsed != null) {
++                parsedLeaves.add(parsed);
++            }
++        }
+ 
+-            AsnField parsed = parseFieldLine(trimmed);
+-            if (parsed == null) continue;
++        boolean autoAssignTags = taggingMode == AsnTaggingMode.AUTOMATIC
++                && parsedLeaves.stream().allMatch(f -> f.getTagNumber() == null);
++
++        // Second pass: assign automatic tags if applicable, then resolve children.
++        List<AsnField> fields = new ArrayList<>();
++        for (int index = 0; index < parsedLeaves.size(); index++) {
++            AsnField parsed = parsedLeaves.get(index);
++            if (autoAssignTags) {
++                parsed.setTagNumber(index);
++                parsed.setTagClass(BerTagClass.CONTEXT);
++                parsed.setExplicit(false);
++            }
+ 
+             String innerType = parsed.getFieldType();
+             boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
+-            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache);
++            List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
++                    cache, taggingMode);
+ 
+             String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
+ 
+@@ -221,7 +348,15 @@ public class AsnFieldTreeResolver {
+                 && isRepeatedExpression(stripConstraint(def.getAliasTarget()));
+     }
+ 
+-    private AsnField parseFieldLine(String line) {
++    /**
++     * Parses a single field/alternative line into an AsnField.
++     *
++     * <p>The {@code explicit} flag is decided as follows: a per-field
++     * {@code EXPLICIT}/{@code IMPLICIT} keyword always wins; otherwise the module
++     * default {@code taggingMode} is applied (EXPLICIT default -&gt; explicit,
++     * IMPLICIT/AUTOMATIC -&gt; implicit).</p>
++     */
++    private AsnField parseFieldLine(String line, AsnTaggingMode taggingMode) {
+         boolean optional = line.contains("OPTIONAL");
+         Matcher matcher = FIELD_LINE.matcher(line);
+         if (!matcher.find()) {
+@@ -232,8 +367,10 @@ public class AsnFieldTreeResolver {
+                 ? BerTagClass.valueOf(matcher.group(2))
+                 : BerTagClass.CONTEXT;
+         Integer tagNumber = matcher.group(3) != null ? Integer.valueOf(matcher.group(3)) : null;
+-        boolean explicit = matcher.group(4) != null
+-                && matcher.group(4).trim().equalsIgnoreCase(EXPLICIT_KEYWORD);
++
++        String taggingKeyword = matcher.group(4) != null ? matcher.group(4).trim() : null;
++        boolean explicit = resolveExplicit(taggingKeyword, taggingMode);
++
+         String typeExpr = stripConstraint(matcher.group(5)).replace("OPTIONAL", "").trim();
+ 
+         boolean repeated = isRepeatedExpression(typeExpr);
+@@ -250,6 +387,17 @@ public class AsnFieldTreeResolver {
+                 .build();
+     }
+ 
++    private boolean resolveExplicit(String taggingKeyword, AsnTaggingMode taggingMode) {
++        if (EXPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
++            return true;
++        }
++        if (IMPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
++            return false;
++        }
++        // No per-field keyword: fall back to the module default (X.680: EXPLICIT).
++        return taggingMode == AsnTaggingMode.EXPLICIT;
++    }
++
+     private boolean isRepeatedExpression(String typeExpr) {
+         return typeExpr.startsWith("SEQUENCE OF") || typeExpr.startsWith("SET OF");
+     }
+@@ -271,4 +419,4 @@ public class AsnFieldTreeResolver {
+         } while (!current.equals(previous));
+         return current;
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTaggingMode.java b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTaggingMode.java
+new file mode 100644
+index 0000000..55a82d5
+--- /dev/null
++++ b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTaggingMode.java
+@@ -0,0 +1,16 @@
++package com.turkcell.cdrgenerator1.parser;
++
++/**
++ * The three ASN.1 module-level tagging modes, declared in the module header
++ * ({@code ... DEFINITIONS <mode> TAGS ::=}). When the header omits the keyword,
++ * the ASN.1 standard default is {@link #EXPLICIT}.
++ *
++ * <p>The mode decides how a field that carries a {@code [n]} tag but no
++ * per-field {@code IMPLICIT}/{@code EXPLICIT} keyword must be encoded, and (for
++ * {@link #AUTOMATIC}) whether untagged fields receive sequential context tags.</p>
++ */
++public enum AsnTaggingMode {
++    IMPLICIT,
++    EXPLICIT,
++    AUTOMATIC
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTypeRegistryBuilder.java b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTypeRegistryBuilder.java
+index 54b448c..4a17565 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTypeRegistryBuilder.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/parser/AsnTypeRegistryBuilder.java
+@@ -24,6 +24,9 @@ public class AsnTypeRegistryBuilder {
+     // "ModuleName DEFINITIONS IMPLICIT TAGS ::=". In that case the token right
+     // before ::= is "TAGS", not a real type name, so it must be skipped too.
+     private static final String TAGS_KEYWORD = "TAGS";
++    // Captures the module-level tagging mode from the header, when present.
++    private static final Pattern TAGGING_MODE_PATTERN = Pattern.compile(
++            MODULE_HEADER_KEYWORD + "\\s+(IMPLICIT|EXPLICIT|AUTOMATIC)\\s+" + TAGS_KEYWORD);
+ 
+     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
+         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
+@@ -67,6 +70,23 @@ public class AsnTypeRegistryBuilder {
+         return registry;
+     }
+ 
++    /**
++     * Reads the module-level tagging mode from the header. Returns
++     * {@link AsnTaggingMode#EXPLICIT} when the header omits the keyword, which
++     * is the ASN.1 standard default (X.680) - previously the code always assumed
++     * IMPLICIT, mis-encoding the majority of modules that rely on the default.
++     */
++    public AsnTaggingMode detectTaggingMode(String contents) {
++        if (contents == null || contents.isBlank()) {
++            return AsnTaggingMode.EXPLICIT;
++        }
++        Matcher matcher = TAGGING_MODE_PATTERN.matcher(stripLineComments(contents));
++        if (matcher.find()) {
++            return AsnTaggingMode.valueOf(matcher.group(1));
++        }
++        return AsnTaggingMode.EXPLICIT;
++    }
++
+     private AsnTypeDefinition parseStatement(String typeName, String statement) {
+         Matcher kindMatcher = STRUCTURED_KIND.matcher(statement);
+         int braceIndex = statement.indexOf('{');
+@@ -112,4 +132,4 @@ public class AsnTypeRegistryBuilder {
+         }
+         return sb.toString();
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/service/BerEncoderService.java b/src/main/java/com/turkcell/cdrgenerator1/service/BerEncoderService.java
+index 4854c68..8713590 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/service/BerEncoderService.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/service/BerEncoderService.java
+@@ -2,6 +2,7 @@ package com.turkcell.cdrgenerator1.service;
+ 
+ import com.turkcell.cdrgenerator1.exception.BerEncodingException;
+ import com.turkcell.cdrgenerator1.model.AsnField;
++import com.turkcell.cdrgenerator1.model.AsnStructure;
+ import com.turkcell.cdrgenerator1.model.BerTagClass;
+ import lombok.RequiredArgsConstructor;
+ import lombok.extern.slf4j.Slf4j;
+@@ -52,6 +53,36 @@ public class BerEncoderService {
+ 
+     private final TlvWriter tlvWriter;
+ 
++    /**
++     * Encodes one record according to its root kind.
++     *
++     * <p>For a normal SEQUENCE/SET root the record is wrapped in a universal
++     * SEQUENCE TLV. For a CHOICE root the record IS the selected alternative, so
++     * it is encoded directly with the alternative's own tag (e.g.
++     * {@code commandRecord [APPLICATION 0] ...}) and is NOT wrapped in an
++     * artificial SEQUENCE - which would produce BER that no longer matches the
++     * ASN.1 schema.</p>
++     */
++    public byte[] encodeRecord(AsnStructure structure, Map<String, Object> record) {
++        Objects.requireNonNull(structure, "structure must not be null");
++        Objects.requireNonNull(record, "record must not be null");
++
++        if (!structure.isChoiceRoot()) {
++            return encodeRecord(structure.getFields(), record);
++        }
++
++        List<AsnField> fields = structure.getFields();
++        if (Objects.isNull(fields) || fields.isEmpty()) {
++            throw new BerEncodingException(
++                    "CHOICE structure '" + structure.getStructureName() + "' has no selectable alternative");
++        }
++        AsnField alternative = fields.get(0);
++        byte[] encoded = encodeField(alternative, record.get(alternative.getFieldName()));
++        log.debug("Encoded CHOICE record ('{}') into {} BER bytes",
++                alternative.getFieldName(), encoded.length);
++        return encoded;
++    }
++
+     /**
+      * Encodes one record as a single universal SEQUENCE TLV whose content is
+      * the concatenation of the encoded top-level fields.
+diff --git a/src/main/java/com/turkcell/cdrgenerator1/service/StructureParserService.java b/src/main/java/com/turkcell/cdrgenerator1/service/StructureParserService.java
+index 8ab2c54..fafce89 100644
+--- a/src/main/java/com/turkcell/cdrgenerator1/service/StructureParserService.java
++++ b/src/main/java/com/turkcell/cdrgenerator1/service/StructureParserService.java
+@@ -1,10 +1,11 @@
+ package com.turkcell.cdrgenerator1.service;
+ 
+-import com.turkcell.cdrgenerator1.model.AsnField;
+ import com.turkcell.cdrgenerator1.model.AsnStructure;
+ import com.turkcell.cdrgenerator1.model.CdrStructureDto;
+ import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
++import com.turkcell.cdrgenerator1.parser.AsnTaggingMode;
+ import com.turkcell.cdrgenerator1.parser.AsnTypeDefinition;
++import com.turkcell.cdrgenerator1.parser.AsnTypeKind;
+ import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
+ import jakarta.annotation.PostConstruct;
+ import lombok.RequiredArgsConstructor;
+@@ -13,9 +14,12 @@ import org.springframework.stereotype.Service;
+ 
+ import java.util.ArrayList;
+ import java.util.Collections;
++import java.util.HashSet;
+ import java.util.LinkedHashMap;
+ import java.util.List;
+ import java.util.Map;
++import java.util.Objects;
++import java.util.Set;
+ 
+ @Service
+ @RequiredArgsConstructor
+@@ -23,12 +27,16 @@ import java.util.Map;
+ public class StructureParserService {
+ 
+     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
++    private static final String TYPE_TOKEN_DELIMITER = "[^A-Za-z0-9_-]+";
+ 
+     private final CdrStructureReaderService cdrStructureReaderService;
+     private final AsnTypeRegistryBuilder registryBuilder;
+     private final AsnFieldTreeResolver fieldTreeResolver;
+ 
+     private final Map<String, AsnStructure> parsedStructures = new LinkedHashMap<>();
++    // Raw ASN.1 contents kept per structure so a request can re-resolve the
++    // structure with a specific CHOICE selection (see getStructureByName(name, selections)).
++    private final Map<String, String> rawContentsByName = new LinkedHashMap<>();
+ 
+     @PostConstruct
+     public void init() {
+@@ -51,69 +59,120 @@ public class StructureParserService {
+     private void parseSingleModule(CdrStructureDto dto) {
+         long moduleStartedAt = System.currentTimeMillis();
+ 
+-        Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(dto.getContents());
+-        if (registry.isEmpty()) {
++        AsnStructure structure = buildStructure(dto.getName(), dto.getContents(), Map.of());
++        if (Objects.isNull(structure)) {
+             return;
+         }
+ 
+-        ResolvedRoot root = resolveRootStructure(registry);
+-
+-        String structureName = (dto.getName() != null && !dto.getName().isBlank()) ? dto.getName() : root.typeName();
+-        if (root.fields().isEmpty()) {
+-            log.warn("Module '{}' produced no resolvable fields for any of its {} type definitions",
+-                    structureName, registry.size());
++        if (structure.getFields().isEmpty()) {
++            log.warn("Module '{}' produced no resolvable fields", structure.getStructureName());
+         }
+ 
+-        AsnStructure structure = AsnStructure.builder()
+-                .structureName(structureName)
+-                .fields(root.fields())
+-                .build();
+-
+-        parsedStructures.put(structureName, structure);
++        parsedStructures.put(structure.getStructureName(), structure);
++        rawContentsByName.put(structure.getStructureName(), dto.getContents());
+ 
+         long moduleElapsedMs = System.currentTimeMillis() - moduleStartedAt;
+         if (moduleElapsedMs > SLOW_MODULE_THRESHOLD_MS) {
+-            log.warn("Module '{}' took {} ms to resolve ({} type definitions) - consider investigating",
+-                    structureName, moduleElapsedMs, registry.size());
++            log.warn("Module '{}' took {} ms to resolve - consider investigating",
++                    structure.getStructureName(), moduleElapsedMs);
+         } else {
+-            log.debug("Module '{}' resolved in {} ms", structureName, moduleElapsedMs);
++            log.debug("Module '{}' resolved in {} ms (choiceRoot={})",
++                    structure.getStructureName(), moduleElapsedMs, structure.isChoiceRoot());
+         }
+     }
+ 
+-
++    /** Parses inline ASN.1 content without any CHOICE selection. */
+     public AsnStructure parseFromContents(String structureName, String contents) {
++        return parseFromContents(structureName, contents, Map.of());
++    }
++
++    /** Parses inline ASN.1 content, honouring the caller's CHOICE selection. */
++    public AsnStructure parseFromContents(String structureName, String contents,
++                                          Map<String, String> choiceSelections) {
++        return buildStructure(structureName, contents, choiceSelections);
++    }
++
++    private AsnStructure buildStructure(String suppliedName, String contents,
++                                        Map<String, String> choiceSelections) {
+         Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(contents);
+         if (registry.isEmpty()) {
+             return null;
+         }
+ 
+-        ResolvedRoot root = resolveRootStructure(registry);
++        AsnTaggingMode taggingMode = registryBuilder.detectTaggingMode(contents);
++        Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
++
++        String rootTypeName = selectRootTypeName(registry, selections, taggingMode);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
+ 
+-        String name = (structureName != null && !structureName.isBlank()) ? structureName : root.typeName();
++        String name = (suppliedName != null && !suppliedName.isBlank()) ? suppliedName : rootTypeName;
+         return AsnStructure.builder()
+                 .structureName(name)
+                 .fields(root.fields())
++                .choiceRoot(root.kind() == AsnTypeKind.CHOICE)
+                 .build();
+     }
+ 
+     /**
+-     * Picks the module's root structure: the first defined type whose field
+-     * tree resolves to at least one field. Modules often open with primitive
+-     * aliases (e.g. {@code Number ::= OCTET STRING}) before the actual record
+-     * type, so blindly taking the first definition would yield an empty root.
++     * Chooses the module's root type. A CDR module's real record is the top
++     * structured type that no other type references, so we prefer the first
++     * structured (SEQUENCE/SET/CHOICE) type that is not referenced elsewhere and
++     * resolves to at least one field. This is far more robust than blindly taking
++     * the first non-empty definition (helper sub-records defined before the root
++     * would otherwise win). Falls back to the first resolvable type, then the
++     * first defined type.
+      */
+-    private ResolvedRoot resolveRootStructure(Map<String, AsnTypeDefinition> registry) {
+-        String firstTypeName = registry.keySet().iterator().next();
++    private String selectRootTypeName(Map<String, AsnTypeDefinition> registry,
++                                      Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
++        Set<String> referenced = collectReferencedTypeNames(registry);
++
++        for (String candidate : registry.keySet()) {
++            AsnTypeDefinition definition = registry.get(candidate);
++            if (isStructured(definition.getKind()) && !referenced.contains(candidate)
++                    && !fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
++                            .fields().isEmpty()) {
++                log.debug("Selected root type '{}' (unreferenced structured type)", candidate);
++                return candidate;
++            }
++        }
++
+         for (String candidate : registry.keySet()) {
+-            List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, candidate);
+-            if (!fields.isEmpty()) {
+-                return new ResolvedRoot(candidate, fields);
++            if (!fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
++                    .fields().isEmpty()) {
++                log.debug("Selected root type '{}' (first resolvable fallback)", candidate);
++                return candidate;
++            }
++        }
++
++        String firstType = registry.keySet().iterator().next();
++        log.debug("Selected root type '{}' (first defined, none resolvable)", firstType);
++        return firstType;
++    }
++
++    private Set<String> collectReferencedTypeNames(Map<String, AsnTypeDefinition> registry) {
++        Set<String> typeNames = registry.keySet();
++        Set<String> referenced = new HashSet<>();
++        for (Map.Entry<String, AsnTypeDefinition> entry : registry.entrySet()) {
++            AsnTypeDefinition definition = entry.getValue();
++            String text = Objects.nonNull(definition.getRawBody())
++                    ? definition.getRawBody()
++                    : definition.getAliasTarget();
++            if (Objects.isNull(text)) {
++                continue;
++            }
++            for (String token : text.split(TYPE_TOKEN_DELIMITER)) {
++                // A self-reference does not make a type a non-root candidate.
++                if (typeNames.contains(token) && !token.equals(entry.getKey())) {
++                    referenced.add(token);
++                }
+             }
+         }
+-        return new ResolvedRoot(firstTypeName, List.of());
++        return referenced;
+     }
+ 
+-    private record ResolvedRoot(String typeName, List<AsnField> fields) {
++    private boolean isStructured(AsnTypeKind kind) {
++        return kind == AsnTypeKind.SEQUENCE || kind == AsnTypeKind.SET || kind == AsnTypeKind.CHOICE;
+     }
+ 
+     public Map<String, AsnStructure> getAllParsedStructures() {
+@@ -124,7 +183,24 @@ public class StructureParserService {
+         return parsedStructures.get(name);
+     }
+ 
++    /**
++     * Returns the structure for {@code name}. When a non-empty CHOICE selection
++     * is supplied the structure is re-resolved from its stored raw contents so
++     * the requested alternative is chosen; otherwise the pre-parsed structure is
++     * returned unchanged.
++     */
++    public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections) {
++        if (Objects.isNull(choiceSelections) || choiceSelections.isEmpty()) {
++            return parsedStructures.get(name);
++        }
++        String contents = rawContentsByName.get(name);
++        if (Objects.isNull(contents)) {
++            return parsedStructures.get(name);
++        }
++        return buildStructure(name, contents, choiceSelections);
++    }
++
+     public List<String> getAllStructureNames() {
+         return new ArrayList<>(parsedStructures.keySet());
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/src/test/java/com/turkcell/cdrgenerator1/generator/NestedPathValueTest.java b/src/test/java/com/turkcell/cdrgenerator1/generator/NestedPathValueTest.java
+new file mode 100644
+index 0000000..bdd7e2f
+--- /dev/null
++++ b/src/test/java/com/turkcell/cdrgenerator1/generator/NestedPathValueTest.java
+@@ -0,0 +1,53 @@
++package com.turkcell.cdrgenerator1.generator;
++
++import com.turkcell.cdrgenerator1.model.AsnField;
++import com.turkcell.cdrgenerator1.model.BerTagClass;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++
++/** Covers B5: nested leaves can be targeted by dotted path, bare name still works. */
++class NestedPathValueTest {
++
++    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, new FieldValueGenerator());
++
++    private AsnField leaf(String name, String type) {
++        return AsnField.builder().fieldName(name).fieldType(type)
++                .tagNumber(1).tagClass(BerTagClass.CONTEXT).build();
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void dottedPathTargetsNestedLeaf() {
++        AsnField parent = AsnField.builder()
++                .fieldName("addr").fieldType("Address")
++                .tagNumber(0).tagClass(BerTagClass.CONTEXT)
++                .children(List.of(leaf("msisdn", "IA5String")))
++                .build();
++
++        Map<String, Object> record = builder.buildRecordFromFields(
++                List.of(parent), Map.of("addr.msisdn", "905321234567"));
++
++        Map<String, Object> addr = (Map<String, Object>) record.get("addr");
++        assertEquals("\"905321234567\"", addr.get("msisdn"));
++    }
++
++    @Test
++    @SuppressWarnings("unchecked")
++    void bareNameStillWorksAsFallback() {
++        AsnField parent = AsnField.builder()
++                .fieldName("addr").fieldType("Address")
++                .tagNumber(0).tagClass(BerTagClass.CONTEXT)
++                .children(List.of(leaf("msisdn", "IA5String")))
++                .build();
++
++        Map<String, Object> record = builder.buildRecordFromFields(
++                List.of(parent), Map.of("msisdn", "555"));
++
++        Map<String, Object> addr = (Map<String, Object>) record.get("addr");
++        assertEquals("\"555\"", addr.get("msisdn"));
++    }
++}
+diff --git a/src/test/java/com/turkcell/cdrgenerator1/parser/TaggingAndChoiceRootTest.java b/src/test/java/com/turkcell/cdrgenerator1/parser/TaggingAndChoiceRootTest.java
+new file mode 100644
+index 0000000..8969f55
+--- /dev/null
++++ b/src/test/java/com/turkcell/cdrgenerator1/parser/TaggingAndChoiceRootTest.java
+@@ -0,0 +1,102 @@
++package com.turkcell.cdrgenerator1.parser;
++
++import com.turkcell.cdrgenerator1.model.AsnField;
++import com.turkcell.cdrgenerator1.model.BerTagClass;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++/** Covers the B1 (CHOICE roots), B2 (module tagging mode) and B3 fixes. */
++class TaggingAndChoiceRootTest {
++
++    private final AsnTypeRegistryBuilder builder = new AsnTypeRegistryBuilder();
++    private final AsnFieldTreeResolver resolver = new AsnFieldTreeResolver();
++
++    // ---- B2: module-level tagging mode ----
++
++    @Test
++    void detectsTaggingModeFromHeaderAndDefaultsToExplicit() {
++        assertEquals(AsnTaggingMode.EXPLICIT,
++                builder.detectTaggingMode("M DEFINITIONS ::= BEGIN END"));
++        assertEquals(AsnTaggingMode.IMPLICIT,
++                builder.detectTaggingMode("M DEFINITIONS IMPLICIT TAGS ::= BEGIN END"));
++        assertEquals(AsnTaggingMode.AUTOMATIC,
++                builder.detectTaggingMode("M DEFINITIONS AUTOMATIC TAGS ::= BEGIN END"));
++    }
++
++    @Test
++    void keywordlessTagIsExplicitUnderDefaultExplicitModule() {
++        String asn = "M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END";
++        var registry = builder.buildRegistry(asn);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                resolver.resolveRoot(registry, "Root", Map.of(), AsnTaggingMode.EXPLICIT);
++        assertTrue(root.fields().get(0).isExplicit(),
++                "under a default-EXPLICIT module a keyword-less [n] tag must be EXPLICIT");
++    }
++
++    @Test
++    void keywordlessTagIsImplicitUnderImplicitModule() {
++        String asn = "M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END";
++        var registry = builder.buildRegistry(asn);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                resolver.resolveRoot(registry, "Root", Map.of(), AsnTaggingMode.IMPLICIT);
++        assertFalse(root.fields().get(0).isExplicit());
++    }
++
++    @Test
++    void automaticModeAssignsSequentialContextTags() {
++        String asn = "M DEFINITIONS AUTOMATIC TAGS ::= BEGIN "
++                + "Root ::= SEQUENCE { a INTEGER, b IA5String } END";
++        var registry = builder.buildRegistry(asn);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                resolver.resolveRoot(registry, "Root", Map.of(), AsnTaggingMode.AUTOMATIC);
++        assertEquals(0, root.fields().get(0).getTagNumber());
++        assertEquals(1, root.fields().get(1).getTagNumber());
++        assertEquals(BerTagClass.CONTEXT, root.fields().get(0).getTagClass());
++    }
++
++    // ---- B1: CHOICE root preserves the chosen alternative and its tag ----
++
++    private static final String CHOICE_MODULE = """
++            M DEFINITIONS IMPLICIT TAGS ::= BEGIN
++            Sms ::= CHOICE {
++                callRecord CallRecord,
++                cmdRecord [APPLICATION 0] CmdRecord
++            }
++            CallRecord ::= SEQUENCE { a [0] INTEGER }
++            CmdRecord ::= SEQUENCE { b [0] INTEGER }
++            END
++            """;
++
++    @Test
++    void choiceRootReturnsSingleAlternativeWithKind() {
++        var registry = builder.buildRegistry(CHOICE_MODULE);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                resolver.resolveRoot(registry, "Sms", Map.of(), AsnTaggingMode.IMPLICIT);
++
++        assertEquals(AsnTypeKind.CHOICE, root.kind());
++        assertEquals(1, root.fields().size(), "a CHOICE root yields exactly one selected alternative");
++        AsnField alternative = root.fields().get(0);
++        assertEquals("callRecord", alternative.getFieldName(), "first alternative is the default");
++        assertNotNull(alternative.getChildren());
++    }
++
++    @Test
++    void choiceSelectionPicksAlternativeAndKeepsApplicationTag() {
++        var registry = builder.buildRegistry(CHOICE_MODULE);
++        AsnFieldTreeResolver.ResolvedRoot root =
++                resolver.resolveRoot(registry, "Sms", Map.of("Sms", "cmdRecord"), AsnTaggingMode.IMPLICIT);
++
++        AsnField alternative = root.fields().get(0);
++        assertEquals("cmdRecord", alternative.getFieldName());
++        assertEquals(0, alternative.getTagNumber());
++        assertEquals(BerTagClass.APPLICATION, alternative.getTagClass(),
++                "the alternative's own [APPLICATION 0] tag must be preserved, not dropped");
++    }
++}
+diff --git a/src/test/java/com/turkcell/cdrgenerator1/service/BerChoiceRootEncodingTest.java b/src/test/java/com/turkcell/cdrgenerator1/service/BerChoiceRootEncodingTest.java
+new file mode 100644
+index 0000000..7fb1f6f
+--- /dev/null
++++ b/src/test/java/com/turkcell/cdrgenerator1/service/BerChoiceRootEncodingTest.java
+@@ -0,0 +1,51 @@
++package com.turkcell.cdrgenerator1.service;
++
++import com.turkcell.cdrgenerator1.model.AsnField;
++import com.turkcell.cdrgenerator1.model.AsnStructure;
++import com.turkcell.cdrgenerator1.model.BerTagClass;
++import org.junit.jupiter.api.Test;
++
++import java.util.List;
++import java.util.Map;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertNotEquals;
++
++/** Covers B1: a CHOICE root is encoded directly, without an artificial SEQUENCE wrapper. */
++class BerChoiceRootEncodingTest {
++
++    private static final int UNIVERSAL_SEQUENCE_TAG = 0x30;
++    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter());
++
++    @Test
++    void choiceRootEncodesAlternativeWithoutOuterSequence() {
++        AsnField inner = AsnField.builder()
++                .fieldName("b").fieldType("INTEGER").tagNumber(0).tagClass(BerTagClass.CONTEXT).build();
++        AsnField alternative = AsnField.builder()
++                .fieldName("cmdRecord").fieldType("CmdRecord")
++                .tagNumber(0).tagClass(BerTagClass.APPLICATION)
++                .children(List.of(inner)).build();
++
++        AsnStructure structure = AsnStructure.builder()
++                .structureName("Sms").choiceRoot(true).fields(List.of(alternative)).build();
++
++        byte[] out = encoder.encodeRecord(structure, Map.of("cmdRecord", Map.of("b", "'1'D")));
++
++        // Constructed APPLICATION 0 == 0x60, content = 80 01 01. No leading 0x30.
++        assertNotEquals(UNIVERSAL_SEQUENCE_TAG, out[0] & 0xFF,
++                "CHOICE root must not be wrapped in a universal SEQUENCE");
++        assertArrayEquals(new byte[]{0x60, 0x03, (byte) 0x80, 0x01, 0x01}, out);
++    }
++
++    @Test
++    void sequenceRootStillWrapsInUniversalSequence() {
++        AsnField field = AsnField.builder()
++                .fieldName("v").fieldType("INTEGER").tagNumber(1).tagClass(BerTagClass.CONTEXT).build();
++        AsnStructure structure = AsnStructure.builder()
++                .structureName("Rec").choiceRoot(false).fields(List.of(field)).build();
++
++        byte[] out = encoder.encodeRecord(structure, Map.of("v", "'7'D"));
++        assertEquals(UNIVERSAL_SEQUENCE_TAG, out[0] & 0xFF);
++    }
++}

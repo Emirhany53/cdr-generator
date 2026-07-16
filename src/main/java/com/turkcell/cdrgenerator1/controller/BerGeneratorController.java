@@ -63,7 +63,7 @@ public class BerGeneratorController {
         for (int i = 0; i < effectiveRecordCount; i++) {
             Map<String, Object> record =
                     cdrRecordBuilder.buildRecordFromFields(structure.getFields(), request.getFieldValues());
-            fileBuffer.writeBytes(berEncoderService.encodeRecord(structure.getFields(), record));
+            fileBuffer.writeBytes(berEncoderService.encodeRecord(structure, record));
         }
         byte[] fileBytes = fileBuffer.toByteArray();
         log.info("Generated BER file for '{}': {} record(s), {} bytes",
@@ -97,7 +97,8 @@ public class BerGeneratorController {
     private AsnStructure resolveStructure(GenerateBerRequest request, boolean inlineMode) {
         if (inlineMode) {
             AsnStructure structure =
-                    structureParserService.parseFromContents(request.getStructureName(), request.getContents());
+                    structureParserService.parseFromContents(request.getStructureName(),
+                    request.getContents(), request.getChoiceSelections());
             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                     || structure.getFields().isEmpty()) {
                 throw new IllegalArgumentException(
@@ -108,7 +109,8 @@ public class BerGeneratorController {
         if (Objects.isNull(request.getStructureName()) || request.getStructureName().isBlank()) {
             throw new IllegalArgumentException("structureName is required when no content is provided");
         }
-        AsnStructure structure = structureParserService.getStructureByName(request.getStructureName());
+        AsnStructure structure = structureParserService.getStructureByName(
+                request.getStructureName(), request.getChoiceSelections());
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }

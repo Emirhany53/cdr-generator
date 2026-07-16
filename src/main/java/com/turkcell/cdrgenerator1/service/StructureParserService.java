@@ -1,10 +1,11 @@
 package com.turkcell.cdrgenerator1.service;
 
-import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.CdrStructureDto;
 import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
+import com.turkcell.cdrgenerator1.parser.AsnTaggingMode;
 import com.turkcell.cdrgenerator1.parser.AsnTypeDefinition;
+import com.turkcell.cdrgenerator1.parser.AsnTypeKind;
 import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -13,9 +14,12 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -23,12 +27,16 @@ import java.util.Map;
 public class StructureParserService {
 
     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
+    private static final String TYPE_TOKEN_DELIMITER = "[^A-Za-z0-9_-]+";
 
     private final CdrStructureReaderService cdrStructureReaderService;
     private final AsnTypeRegistryBuilder registryBuilder;
     private final AsnFieldTreeResolver fieldTreeResolver;
 
     private final Map<String, AsnStructure> parsedStructures = new LinkedHashMap<>();
+    // Raw ASN.1 contents kept per structure so a request can re-resolve the
+    // structure with a specific CHOICE selection (see getStructureByName(name, selections)).
+    private final Map<String, String> rawContentsByName = new LinkedHashMap<>();
 
     @PostConstruct
     public void init() {
@@ -51,69 +59,120 @@ public class StructureParserService {
     private void parseSingleModule(CdrStructureDto dto) {
         long moduleStartedAt = System.currentTimeMillis();
 
-        Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(dto.getContents());
-        if (registry.isEmpty()) {
+        AsnStructure structure = buildStructure(dto.getName(), dto.getContents(), Map.of());
+        if (Objects.isNull(structure)) {
             return;
         }
 
-        ResolvedRoot root = resolveRootStructure(registry);
-
-        String structureName = (dto.getName() != null && !dto.getName().isBlank()) ? dto.getName() : root.typeName();
-        if (root.fields().isEmpty()) {
-            log.warn("Module '{}' produced no resolvable fields for any of its {} type definitions",
-                    structureName, registry.size());
+        if (structure.getFields().isEmpty()) {
+            log.warn("Module '{}' produced no resolvable fields", structure.getStructureName());
         }
 
-        AsnStructure structure = AsnStructure.builder()
-                .structureName(structureName)
-                .fields(root.fields())
-                .build();
-
-        parsedStructures.put(structureName, structure);
+        parsedStructures.put(structure.getStructureName(), structure);
+        rawContentsByName.put(structure.getStructureName(), dto.getContents());
 
         long moduleElapsedMs = System.currentTimeMillis() - moduleStartedAt;
         if (moduleElapsedMs > SLOW_MODULE_THRESHOLD_MS) {
-            log.warn("Module '{}' took {} ms to resolve ({} type definitions) - consider investigating",
-                    structureName, moduleElapsedMs, registry.size());
+            log.warn("Module '{}' took {} ms to resolve - consider investigating",
+                    structure.getStructureName(), moduleElapsedMs);
         } else {
-            log.debug("Module '{}' resolved in {} ms", structureName, moduleElapsedMs);
+            log.debug("Module '{}' resolved in {} ms (choiceRoot={})",
+                    structure.getStructureName(), moduleElapsedMs, structure.isChoiceRoot());
         }
     }
 
-
+    /** Parses inline ASN.1 content without any CHOICE selection. */
     public AsnStructure parseFromContents(String structureName, String contents) {
+        return parseFromContents(structureName, contents, Map.of());
+    }
+
+    /** Parses inline ASN.1 content, honouring the caller's CHOICE selection. */
+    public AsnStructure parseFromContents(String structureName, String contents,
+                                          Map<String, String> choiceSelections) {
+        return buildStructure(structureName, contents, choiceSelections);
+    }
+
+    private AsnStructure buildStructure(String suppliedName, String contents,
+                                        Map<String, String> choiceSelections) {
         Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(contents);
         if (registry.isEmpty()) {
             return null;
         }
 
-        ResolvedRoot root = resolveRootStructure(registry);
+        AsnTaggingMode taggingMode = registryBuilder.detectTaggingMode(contents);
+        Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
 
-        String name = (structureName != null && !structureName.isBlank()) ? structureName : root.typeName();
+        String rootTypeName = selectRootTypeName(registry, selections, taggingMode);
+        AsnFieldTreeResolver.ResolvedRoot root =
+                fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
+
+        String name = (suppliedName != null && !suppliedName.isBlank()) ? suppliedName : rootTypeName;
         return AsnStructure.builder()
                 .structureName(name)
                 .fields(root.fields())
+                .choiceRoot(root.kind() == AsnTypeKind.CHOICE)
                 .build();
     }
 
     /**
-     * Picks the module's root structure: the first defined type whose field
-     * tree resolves to at least one field. Modules often open with primitive
-     * aliases (e.g. {@code Number ::= OCTET STRING}) before the actual record
-     * type, so blindly taking the first definition would yield an empty root.
+     * Chooses the module's root type. A CDR module's real record is the top
+     * structured type that no other type references, so we prefer the first
+     * structured (SEQUENCE/SET/CHOICE) type that is not referenced elsewhere and
+     * resolves to at least one field. This is far more robust than blindly taking
+     * the first non-empty definition (helper sub-records defined before the root
+     * would otherwise win). Falls back to the first resolvable type, then the
+     * first defined type.
      */
-    private ResolvedRoot resolveRootStructure(Map<String, AsnTypeDefinition> registry) {
-        String firstTypeName = registry.keySet().iterator().next();
+    private String selectRootTypeName(Map<String, AsnTypeDefinition> registry,
+                                      Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
+        Set<String> referenced = collectReferencedTypeNames(registry);
+
         for (String candidate : registry.keySet()) {
-            List<AsnField> fields = fieldTreeResolver.resolveRootFields(registry, candidate);
-            if (!fields.isEmpty()) {
-                return new ResolvedRoot(candidate, fields);
+            AsnTypeDefinition definition = registry.get(candidate);
+            if (isStructured(definition.getKind()) && !referenced.contains(candidate)
+                    && !fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
+                            .fields().isEmpty()) {
+                log.debug("Selected root type '{}' (unreferenced structured type)", candidate);
+                return candidate;
             }
         }
-        return new ResolvedRoot(firstTypeName, List.of());
+
+        for (String candidate : registry.keySet()) {
+            if (!fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
+                    .fields().isEmpty()) {
+                log.debug("Selected root type '{}' (first resolvable fallback)", candidate);
+                return candidate;
+            }
+        }
+
+        String firstType = registry.keySet().iterator().next();
+        log.debug("Selected root type '{}' (first defined, none resolvable)", firstType);
+        return firstType;
     }
 
-    private record ResolvedRoot(String typeName, List<AsnField> fields) {
+    private Set<String> collectReferencedTypeNames(Map<String, AsnTypeDefinition> registry) {
+        Set<String> typeNames = registry.keySet();
+        Set<String> referenced = new HashSet<>();
+        for (Map.Entry<String, AsnTypeDefinition> entry : registry.entrySet()) {
+            AsnTypeDefinition definition = entry.getValue();
+            String text = Objects.nonNull(definition.getRawBody())
+                    ? definition.getRawBody()
+                    : definition.getAliasTarget();
+            if (Objects.isNull(text)) {
+                continue;
+            }
+            for (String token : text.split(TYPE_TOKEN_DELIMITER)) {
+                // A self-reference does not make a type a non-root candidate.
+                if (typeNames.contains(token) && !token.equals(entry.getKey())) {
+                    referenced.add(token);
+                }
+            }
+        }
+        return referenced;
+    }
+
+    private boolean isStructured(AsnTypeKind kind) {
+        return kind == AsnTypeKind.SEQUENCE || kind == AsnTypeKind.SET || kind == AsnTypeKind.CHOICE;
     }
 
     public Map<String, AsnStructure> getAllParsedStructures() {
@@ -122,6 +181,23 @@ public class StructureParserService {
 
     public AsnStructure getStructureByName(String name) {
         return parsedStructures.get(name);
+    }
+
+    /**
+     * Returns the structure for {@code name}. When a non-empty CHOICE selection
+     * is supplied the structure is re-resolved from its stored raw contents so
+     * the requested alternative is chosen; otherwise the pre-parsed structure is
+     * returned unchanged.
+     */
+    public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections) {
+        if (Objects.isNull(choiceSelections) || choiceSelections.isEmpty()) {
+            return parsedStructures.get(name);
+        }
+        String contents = rawContentsByName.get(name);
+        if (Objects.isNull(contents)) {
+            return parsedStructures.get(name);
+        }
+        return buildStructure(name, contents, choiceSelections);
     }
 
     public List<String> getAllStructureNames() {

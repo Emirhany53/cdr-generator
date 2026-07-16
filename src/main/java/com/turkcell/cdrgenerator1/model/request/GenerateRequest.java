@@ -5,12 +5,15 @@ import lombok.Data;
 import java.util.Map;
 
 /**
- * /api/cdr/generate istegi (JSON'da VAR olan bir yapidan .dat uretir).
- * Girdi = yapinin adi.
+ * /api/cdr/generate request (produces a .dat from a structure that EXISTS in the JSON).
+ * Input = the structure name.
  */
 @Data
 public class GenerateRequest {
-    private String structureName;          // datastructure.json'daki yapi adi
-    private Map<String, String> fieldValues; // opsiyonel manuel degerler
-    private Integer recordCount;           // opsiyonel kayit sayisi
+    private String structureName;            // structure name from datastructure.json
+    private Map<String, String> fieldValues; // optional manual values; keys may be a bare
+                                             // field name or a dotted/indexed path such as
+                                             // "location.cellId" or "partials[0].volume"
+    private Map<String, String> choiceSelections; // optional CHOICE branch per CHOICE type name
+    private Integer recordCount;             // optional record count
 }

@@ -2,6 +2,7 @@ package com.turkcell.cdrgenerator1.service;
 
 import com.turkcell.cdrgenerator1.exception.BerEncodingException;
 import com.turkcell.cdrgenerator1.model.AsnField;
+import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +52,36 @@ public class BerEncoderService {
     private static final String BOOLEAN_FALSE_DIGIT = "0";
 
     private final TlvWriter tlvWriter;
+
+    /**
+     * Encodes one record according to its root kind.
+     *
+     * <p>For a normal SEQUENCE/SET root the record is wrapped in a universal
+     * SEQUENCE TLV. For a CHOICE root the record IS the selected alternative, so
+     * it is encoded directly with the alternative's own tag (e.g.
+     * {@code commandRecord [APPLICATION 0] ...}) and is NOT wrapped in an
+     * artificial SEQUENCE - which would produce BER that no longer matches the
+     * ASN.1 schema.</p>
+     */
+    public byte[] encodeRecord(AsnStructure structure, Map<String, Object> record) {
+        Objects.requireNonNull(structure, "structure must not be null");
+        Objects.requireNonNull(record, "record must not be null");
+
+        if (!structure.isChoiceRoot()) {
+            return encodeRecord(structure.getFields(), record);
+        }
+
+        List<AsnField> fields = structure.getFields();
+        if (Objects.isNull(fields) || fields.isEmpty()) {
+            throw new BerEncodingException(
+                    "CHOICE structure '" + structure.getStructureName() + "' has no selectable alternative");
+        }
+        AsnField alternative = fields.get(0);
+        byte[] encoded = encodeField(alternative, record.get(alternative.getFieldName()));
+        log.debug("Encoded CHOICE record ('{}') into {} BER bytes",
+                alternative.getFieldName(), encoded.length);
+        return encoded;
+    }
 
     /**
      * Encodes one record as a single universal SEQUENCE TLV whose content is
