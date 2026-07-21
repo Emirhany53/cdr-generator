@@ -11,12 +11,12 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class OpenApiConfig {
 
-    private static final String API_TITLE = "EMM CDR Generator API";
+    private static final String API_TITLE = "EMM CDR Üretici API";
     private static final String API_VERSION = "1.0.0";
     private static final String API_DESCRIPTION =
-            "REST API that parses ASN.1 structure definitions and generates "
-                    + "Token-Separated-ASCII and BER encoded CDR test files for the "
-                    + "Ericsson Mediation Manager (EMM) platform.";
+            "ASN.1 yapı tanımlarını ayrıştırarak Ericsson Mediation Manager (EMM) "
+                    + "platformu için Token-Separated-ASCII (.dat) ve BER kodlu (.ber) "
+                    + "CDR test dosyaları üreten REST API.";
 
     @Bean
     public OpenAPI cdrGeneratorOpenApi() {

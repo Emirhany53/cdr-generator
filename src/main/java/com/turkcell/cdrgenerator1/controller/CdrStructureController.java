@@ -31,9 +31,9 @@ import java.util.Map;
 @RequestMapping("/api/cdr")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "CDR Structures & ASCII Generation",
-        description = "List ASN.1 structures, inspect their fields, and generate "
-                + "Token-Separated-ASCII (.dat) CDR files.")
+@Tag(name = "CDR Yapıları ve ASCII Üretimi",
+        description = "ASN.1 yapılarını listeler, alanlarını gösterir ve "
+                + "Token-Separated-ASCII (.dat) CDR dosyaları üretir.")
 public class CdrStructureController {
 
     private static final int MIN_RECORD_COUNT = 1;
@@ -47,8 +47,8 @@ public class CdrStructureController {
     private final CdrFileWriterService cdrFileWriterService;
     private final CdrConfigProperties cdrConfigProperties;
 
-    @Operation(summary = "List all structure names",
-            description = "Returns the names of every ASN.1 structure parsed from datastructure.json.")
+    @Operation(summary = "Tüm yapı adlarını listele",
+            description = "datastructure.json içinden ayrıştırılan tüm ASN.1 yapılarının adlarını döner.")
     @GetMapping("/structures")
     public ResponseEntity<List<String>> getAllStructureNames() {
         log.info("Listing all available structure names");
@@ -56,9 +56,9 @@ public class CdrStructureController {
         return ResponseEntity.ok(structureNames);
     }
 
-    @Operation(summary = "Get structure field definitions",
-            description = "Returns the ASN.1 field definitions for the given structure. "
-                    + "Responds with 404 if the structure name is unknown.")
+    @Operation(summary = "Yapının alan tanımlarını getir",
+            description = "Belirtilen yapının ASN.1 alan tanımlarını döner. "
+                    + "Yapı adı bilinmiyorsa 404 döner.")
     @GetMapping("/structures/{structureName}")
     public ResponseEntity<AsnStructure> getStructureDetails(@PathVariable String structureName) {
         log.info("Fetching field definitions for structure: {}", structureName);
@@ -69,9 +69,9 @@ public class CdrStructureController {
         return ResponseEntity.ok(structure);
     }
 
-    @Operation(summary = "Preview a single mock record",
-            description = "Generates one fully auto-filled record for the structure and returns "
-                    + "it as JSON (no file download). Useful for quickly inspecting generated values.")
+    @Operation(summary = "Tek bir örnek kaydı önizle",
+            description = "Yapı için tamamen otomatik doldurulmuş tek bir kayıt üretir ve "
+                    + "JSON olarak döner (dosya indirmez). Üretilen değerleri hızlıca görmek için kullanışlıdır.")
     @GetMapping("/generate-test/{structureName}")
     public ResponseEntity<Map<String, Object>> generateTestRecord(@PathVariable String structureName) {
         log.info("Incoming test request to generate mock data for: {}", structureName);
@@ -79,10 +79,10 @@ public class CdrStructureController {
         return ResponseEntity.ok(AsnLiteralFormatter.stripRecord(mockRecord));
     }
 
-    @Operation(summary = "Generate and download an ASCII CDR file",
-            description = "Produces a Token-Separated-ASCII (.dat) file, one record per line with "
-                    + "fields separated by '|'. Unspecified fields are auto-generated. Honors "
-                    + "recordCount up to the configured maximum.")
+    @Operation(summary = "ASCII CDR dosyası üret ve indir",
+            description = "Token-Separated-ASCII (.dat) dosyası üretir: her satır bir kayıt, "
+                    + "alanlar '|' ile ayrılır. Belirtilmeyen alanlar otomatik üretilir. "
+                    + "recordCount değerini yapılandırılan üst sınıra kadar dikkate alır.")
     @PostMapping("/generate")
     public ResponseEntity<Resource> generateAndDownloadCdr(@RequestBody GenerateRequest request) throws IOException {
 

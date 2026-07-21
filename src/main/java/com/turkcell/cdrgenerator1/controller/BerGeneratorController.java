@@ -27,9 +27,9 @@ import java.util.Objects;
 @RequestMapping("/api/cdr")
 @RequiredArgsConstructor
 @Slf4j
-@Tag(name = "BER Generation",
-        description = "Generate binary BER-encoded (.ber) CDR files from a named structure "
-                + "or from inline ASN.1 content.")
+@Tag(name = "BER Üretimi",
+        description = "Kayıtlı bir yapı adından ya da doğrudan gönderilen (inline) ASN.1 "
+                + "metninden binary BER kodlu (.ber) CDR dosyaları üretir.")
 public class BerGeneratorController {
     private static final String BER_FILE_EXTENSION = ".ber";
     /** Characters allowed in a download file name; everything else becomes '_'. */
@@ -40,10 +40,11 @@ public class BerGeneratorController {
     private final CdrRecordBuilder cdrRecordBuilder;
     private final BerEncoderService berEncoderService;
     private final CdrConfigProperties cdrConfigProperties;
-    @Operation(summary = "Generate and download a BER CDR file",
-            description = "Encodes one or more records in binary BER and returns a downloadable "
-                    + ".ber file. Works either from a registered structureName or from inline "
-                    + "ASN.1 supplied in the 'contents' field of the request body.")
+    @Operation(summary = "BER CDR dosyası üret ve indir",
+            description = "Bir veya daha fazla kaydı binary BER olarak kodlar ve indirilebilir "
+                    + "bir .ber dosyası döner. Kayıtlı bir structureName ile ya da istek gövdesindeki "
+                    + "'contents' alanına konan inline ASN.1 metniyle çalışır. CHOICE yapılarda "
+                    + "'choiceSelections' ile hangi alternatifin üretileceği seçilebilir.")
     @PostMapping("/generate-ber")
     public ResponseEntity<Resource> generateBerFile(@RequestBody GenerateBerRequest request) {
         boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
@@ -77,9 +78,9 @@ public class BerGeneratorController {
                 .contentLength(fileBytes.length)
                 .body(new ByteArrayResource(fileBytes));
     }
-    @Operation(summary = "Generate and download a BER CDR file (RAW TEXT)",
-            description = "Same as /generate-ber but accepts raw ASN.1 text directly in the body "
-                    + "without needing JSON escape. Perfect for copy-pasting from files in Swagger.")
+    @Operation(summary = "BER CDR dosyası üret ve indir (HAM METİN)",
+            description = "/generate-ber ile aynıdır, ancak ASN.1 metnini JSON kaçış karakteri "
+                    + "gerektirmeden doğrudan gövdede alır. Swagger'da dosyadan kopyala-yapıştır için idealdir.")
     @PostMapping(value = "/generate-ber/raw", consumes = MediaType.TEXT_PLAIN_VALUE)
     public ResponseEntity<Resource> generateBerFileRaw(
             @RequestBody String rawAsn1Contents,
@@ -98,7 +99,7 @@ public class BerGeneratorController {
         if (inlineMode) {
             AsnStructure structure =
                     structureParserService.parseFromContents(request.getStructureName(),
-                    request.getContents(), request.getChoiceSelections());
+                            request.getContents(), request.getChoiceSelections());
             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                     || structure.getFields().isEmpty()) {
                 throw new IllegalArgumentException(
