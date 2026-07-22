@@ -85,6 +85,43 @@ public class AsnFieldTreeResolver {
         return new ResolvedRoot(current.getKind(), fields);
     }
 
+    /** Root-level CHOICE metadata: the CHOICE type's own name plus its alternative field names, in declaration order. */
+    public record ChoiceAlternatives(String choiceTypeName, List<String> alternativeNames) {
+    }
+
+    /**
+     * Follows the alias chain from {@code rootTypeName} the same way {@link #resolveRoot} does,
+     * and if the resolved type is a CHOICE, returns its type name plus the list of alternative
+     * field names (in declaration order) WITHOUT resolving their children. Returns {@code null}
+     * when the root does not resolve to a CHOICE. Lets a caller (e.g. a UI) offer a "pick a
+     * branch" control before any alternative-specific fields are generated.
+     */
+    public ChoiceAlternatives listRootChoiceAlternatives(Map<String, AsnTypeDefinition> registry, String rootTypeName) {
+        String resolvedName = rootTypeName;
+        AsnTypeDefinition current = registry.get(resolvedName);
+        Set<String> aliasGuard = new HashSet<>();
+        while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
+            String target = stripConstraint(current.getAliasTarget());
+            target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+            resolvedName = target;
+            current = registry.get(target);
+        }
+        if (current == null || current.getKind() != AsnTypeKind.CHOICE) {
+            return null;
+        }
+
+        List<String> names = new ArrayList<>();
+        for (String line : splitFieldEntries(current.getRawBody())) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            AsnField alternative = parseFieldLine(trimmed, AsnTaggingMode.IMPLICIT);
+            if (alternative != null) {
+                names.add(alternative.getFieldName());
+            }
+        }
+        return new ChoiceAlternatives(resolvedName, names);
+    }
+
     private List<AsnField> resolveByTypeName(Map<String, AsnTypeDefinition> registry, String typeName,
                                              Map<String, String> choiceSelections, Set<String> visiting, int depth,
                                              Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {

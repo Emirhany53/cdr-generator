@@ -10,7 +10,7 @@ import java.util.Map;
  *
  * <p>The builder wraps values so the BER encoder can recognise their type:
  * strings become {@code "value"} and INTEGER/BOOLEAN become {@code 'value'D}.
- * The token-separated (.dat) output and the JSON preview endpoint both need
+ * The token-separated (.txt) output and the JSON preview endpoint both need
  * the bare value instead, so the stripping logic lives here in one place
  * (DRY) rather than being duplicated across the writer and the controller.</p>
  */

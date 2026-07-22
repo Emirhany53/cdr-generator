@@ -14,7 +14,7 @@ import java.util.Set;
 import java.util.HashSet;
 
 /**
- * Writes generated CDR records to a Token-Separated-ASCII (.dat) file.
+ * Writes generated CDR records to a Token-Separated-ASCII (.txt) file.
  *
  * <p>Output format (per the project specification):
  * <ul>
@@ -33,7 +33,7 @@ public class CdrFileWriterService {
 
     private static final String FIELD_SEPARATOR = "|";
     private static final String PATH_SEPARATOR = ".";
-    private static final String DAT_FILE_SUFFIX = ".dat";
+    private static final String TXT_FILE_SUFFIX = ".txt";
     private static final String FILE_NAME_JOINER = "_";
 
     public Path writeCdrFile(String structureName, List<Map<String, Object>> records) throws IOException {
@@ -70,9 +70,9 @@ public class CdrFileWriterService {
             sb.append(String.join(FIELD_SEPARATOR, values)).append('\n');
         }
 
-        Path tempFile = Files.createTempFile(structureName + FILE_NAME_JOINER, DAT_FILE_SUFFIX);
+        Path tempFile = Files.createTempFile(structureName + FILE_NAME_JOINER, TXT_FILE_SUFFIX);
         Files.writeString(tempFile, sb.toString());
-        // Temp .dat files are one-shot downloads; make sure they do not pile up.
+        // Temp .txt files are one-shot downloads; make sure they do not pile up.
         tempFile.toFile().deleteOnExit();
 
         log.info("CDR file successfully written to: {}", tempFile.toAbsolutePath());

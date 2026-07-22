@@ -99,4 +99,23 @@ class TaggingAndChoiceRootTest {
         assertEquals(BerTagClass.APPLICATION, alternative.getTagClass(),
                 "the alternative's own [APPLICATION 0] tag must be preserved, not dropped");
     }
+
+    // ---- listRootChoiceAlternatives: exposes all branch names for a UI picker ----
+
+    @Test
+    void listRootChoiceAlternativesReturnsChoiceTypeNameAndAllBranches() {
+        var registry = builder.buildRegistry(CHOICE_MODULE);
+        AsnFieldTreeResolver.ChoiceAlternatives info = resolver.listRootChoiceAlternatives(registry, "Sms");
+
+        assertNotNull(info);
+        assertEquals("Sms", info.choiceTypeName());
+        assertEquals(List.of("callRecord", "cmdRecord"), info.alternativeNames());
+    }
+
+    @Test
+    void listRootChoiceAlternativesReturnsNullForNonChoiceRoot() {
+        String asn = "M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END";
+        var registry = builder.buildRegistry(asn);
+        assertEquals(null, resolver.listRootChoiceAlternatives(registry, "Root"));
+    }
 }
