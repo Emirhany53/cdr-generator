@@ -22174,3 +22174,5 @@ Identify and stop the process that's listening on port 8080 or configure this ap
 2026-07-22T14:47:14.325+03:00  INFO 18314 --- [cdr-generator1] [http-nio-8080-exec-6] c.t.c.controller.CdrStructureController  : Incoming ASCII CDR generate request (inline=false) for structure: Colombus_CSPSSms
 2026-07-22T14:47:14.326+03:00  INFO 18314 --- [cdr-generator1] [http-nio-8080-exec-6] c.t.c.service.CdrFileWriterService       : Generating token-separated CDR file for structure: Colombus_CSPSSms with 1 record(s)
 2026-07-22T14:47:14.340+03:00  INFO 18314 --- [cdr-generator1] [http-nio-8080-exec-6] c.t.c.service.CdrFileWriterService       : CDR file successfully written to: /var/folders/kk/4ngmfg2d7_s51t8hn2cdbcqr0000gn/T/Colombus_CSPSSms_15615178649477785784.txt
+2026-07-22T14:52:48.112+03:00  INFO 18314 --- [cdr-generator1] [SpringApplicationShutdownHook] o.s.boot.tomcat.GracefulShutdown         : Commencing graceful shutdown. Waiting for active requests to complete
+2026-07-22T14:52:48.160+03:00  INFO 18314 --- [cdr-generator1] [tomcat-shutdown] o.s.boot.tomcat.GracefulShutdown         : Graceful shutdown complete
