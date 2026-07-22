@@ -53,21 +53,21 @@ export default function StructureSourcePicker(props: StructureSourcePickerProps)
 
   return (
     <section className="card">
-      <h2>1. Şema kaynağı</h2>
+      <h2>1. Şema Kaynağı</h2>
       <div className="tabs">
         <button
           type="button"
           className={mode === "existing" ? "tab tab-active" : "tab"}
           onClick={() => onModeChange("existing")}
         >
-          Kayıtlı yapıdan seç
+          Kayıtlı Yapıdan Seç
         </button>
         <button
           type="button"
           className={mode === "inline" ? "tab tab-active" : "tab"}
           onClick={() => onModeChange("inline")}
         >
-          Dosya yükle / metin yapıştır
+          Dosya Yükle / Metin Yapıştır
         </button>
       </div>
 

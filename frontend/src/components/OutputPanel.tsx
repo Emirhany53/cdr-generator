@@ -26,7 +26,7 @@ export default function OutputPanel({
             checked={format === "ascii"}
             onChange={() => onFormatChange("ascii")}
           />
-          ASCII (.txt)
+          ASCII (.dat)
         </label>
         <label>
           <input

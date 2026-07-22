@@ -38,7 +38,7 @@ import java.util.Map;
 public class CdrStructureController {
 
     private static final int MIN_RECORD_COUNT = 1;
-    private static final String TXT_FILE_EXTENSION = ".txt";
+    private static final String DAT_FILE_EXTENSION = ".dat";
     /** Characters allowed in a download file name; everything else becomes '_'. */
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
@@ -144,7 +144,7 @@ public class CdrStructureController {
 
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safeName + TXT_FILE_EXTENSION + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safeName + DAT_FILE_EXTENSION + "\"")
                 .body(resource);
     }
 

@@ -100,7 +100,7 @@ export interface GenerateAsciiParams {
 }
 
 export function generateAscii(params: GenerateAsciiParams): Promise<DownloadedFile> {
-  return requestFile("/generate", params, `${params.structureName ?? "cdr"}.txt`);
+  return requestFile("/generate", params, `${params.structureName ?? "cdr"}.dat`);
 }
 
 export interface GenerateBerParams {

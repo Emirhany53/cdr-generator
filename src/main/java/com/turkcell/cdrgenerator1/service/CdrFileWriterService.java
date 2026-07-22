@@ -33,7 +33,7 @@ public class CdrFileWriterService {
 
     private static final String FIELD_SEPARATOR = "|";
     private static final String PATH_SEPARATOR = ".";
-    private static final String TXT_FILE_SUFFIX = ".txt";
+    private static final String TXT_FILE_SUFFIX = ".dat";
     private static final String FILE_NAME_JOINER = "_";
 
     public Path writeCdrFile(String structureName, List<Map<String, Object>> records) throws IOException {
