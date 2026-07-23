@@ -90,6 +90,24 @@ class CdrStructureControllerTest {
     }
 
     @Test
+    void structureDetailsWithChoiceSelectionQueryParamUsesTwoArgOverload() throws Exception {
+        AsnStructure structure = AsnStructure.builder()
+                .structureName("Sms")
+                .choiceRoot(true)
+                .choiceTypeName("Sms")
+                .choiceAlternatives(List.of("callRecord", "cmdRecord"))
+                .fields(List.of(leaf("cmdRecord", "CmdRecord", 0)))
+                .build();
+        when(parserService.getStructureByName("Sms", Map.of("Sms", "cmdRecord")))
+                .thenReturn(structure);
+
+        mockMvc.perform(get("/api/cdr/structures/Sms").param("Sms", "cmdRecord"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fields[0].fieldName").value("cmdRecord"))
+                .andExpect(jsonPath("$.choiceAlternatives[1]").value("cmdRecord"));
+    }
+
+    @Test
     void unknownStructureNameReturnsNotFound() throws Exception {
         when(parserService.getStructureByName(anyString())).thenReturn(null);
 
@@ -103,7 +121,7 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1), leaf("duration", "INTEGER", 4)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr")).thenReturn(structure);
+        when(parserService.getStructureByName("SMSCBerCdr", null)).thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 3 }
@@ -114,7 +132,7 @@ class CdrStructureControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.containsString("SMSCBerCdr.dat")));
+                        org.hamcrest.Matchers.containsString("SMSCBerCdr.txt")));
     }
 
     @Test
@@ -131,10 +149,46 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr")).thenReturn(structure);
+        when(parserService.getStructureByName("SMSCBerCdr", null)).thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 5000 }
+                """;
+
+        mockMvc.perform(post("/api/cdr/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void generateAsciiFromInlineContentsReturnsDownloadableAttachment() throws Exception {
+        AsnStructure structure = AsnStructure.builder()
+                .structureName("DemoVoice")
+                .fields(List.of(leaf("msisdn", "IA5String", 0)))
+                .build();
+        when(parserService.parseFromContents(anyString(), anyString(), any()))
+                .thenReturn(structure);
+
+        String body = """
+                { "structureName": "DemoVoice", "contents": "Demo DEFINITIONS ::= BEGIN Rec ::= SEQUENCE { msisdn [0] IA5String } END", "recordCount": 1 }
+                """;
+
+        mockMvc.perform(post("/api/cdr/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("DemoVoice.txt")));
+    }
+
+    @Test
+    void generateAsciiWithUnparsableInlineContentsReturnsBadRequest() throws Exception {
+        when(parserService.parseFromContents(anyString(), anyString(), any()))
+                .thenReturn(null);
+
+        String body = """
+                { "structureName": "Broken", "contents": "not asn1" }
                 """;
 
         mockMvc.perform(post("/api/cdr/generate")
@@ -156,5 +210,50 @@ class CdrStructureControllerTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 // Stripped: the value is a bare number, not a '..'D literal.
                 .andExpect(jsonPath("$.duration").isString());
+    }
+
+    @Test
+    void parseInlineReturnsFieldTreeForRawContents() throws Exception {
+        AsnStructure structure = AsnStructure.builder()
+                .structureName("DemoVoice")
+                .fields(List.of(leaf("msisdn", "IA5String", 0)))
+                .choiceRoot(false)
+                .build();
+        when(parserService.parseFromContents(anyString(), anyString(), any()))
+                .thenReturn(structure);
+
+        String body = """
+                { "structureName": "DemoVoice", "contents": "Demo DEFINITIONS ::= BEGIN Rec ::= SEQUENCE { msisdn [0] IA5String } END" }
+                """;
+
+        mockMvc.perform(post("/api/cdr/structures/parse-inline")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.structureName").value("DemoVoice"))
+                .andExpect(jsonPath("$.fields[0].fieldName").value("msisdn"));
+    }
+
+    @Test
+    void parseInlineWithoutContentsReturnsBadRequest() throws Exception {
+        mockMvc.perform(post("/api/cdr/structures/parse-inline")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"structureName\": \"Demo\" }"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void parseInlineWithUnparsableContentsReturnsBadRequest() throws Exception {
+        when(parserService.parseFromContents(anyString(), anyString(), any()))
+                .thenReturn(null);
+
+        String body = """
+                { "structureName": "Demo", "contents": "not asn1" }
+                """;
+
+        mockMvc.perform(post("/api/cdr/structures/parse-inline")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
     }
 }

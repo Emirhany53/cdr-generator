@@ -15,7 +15,7 @@ public class OpenApiConfig {
     private static final String API_VERSION = "1.0.0";
     private static final String API_DESCRIPTION =
             "ASN.1 yapı tanımlarını ayrıştırarak Ericsson Mediation Manager (EMM) "
-                    + "platformu için Token-Separated-ASCII (.dat) ve BER kodlu (.ber) "
+                    + "platformu için Token-Separated-ASCII (.txt) ve BER kodlu (.ber) "
                     + "CDR test dosyaları üreten REST API.";
 
     @Bean

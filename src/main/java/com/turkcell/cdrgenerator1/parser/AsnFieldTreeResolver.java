@@ -19,6 +19,8 @@ public class AsnFieldTreeResolver {
     private static final Pattern FIELD_LINE = Pattern.compile(
             "^\\s*([A-Za-z_][\\w-]*)\\s*(?:\\[\\s*(?:(UNIVERSAL|APPLICATION|PRIVATE)\\s+)?(\\d+)\\s*\\]\\s*)?(EXPLICIT\\s+|IMPLICIT\\s+)?(.+?)\\s*,?\\s*$"
     );
+    private static final Pattern ALIAS_TAG = Pattern.compile(
+            "^\\s*\\[\\s*(?:(UNIVERSAL|APPLICATION|PRIVATE)\\s+)?(\\d+)\\s*\\]\\s*(EXPLICIT\\s+|IMPLICIT\\s+)?");
     private static final int MAX_DEPTH = 15;
     private static final String EXPLICIT_KEYWORD = "EXPLICIT";
     private static final String IMPLICIT_KEYWORD = "IMPLICIT";
@@ -83,6 +85,43 @@ public class AsnFieldTreeResolver {
         List<AsnField> fields = resolveByTypeName(registry, resolvedName, selections, new HashSet<>(), 0,
                 cache, taggingMode);
         return new ResolvedRoot(current.getKind(), fields);
+    }
+
+    /** Root-level CHOICE metadata: the CHOICE type's own name plus its alternative field names, in declaration order. */
+    public record ChoiceAlternatives(String choiceTypeName, List<String> alternativeNames) {
+    }
+
+    /**
+     * Follows the alias chain from {@code rootTypeName} the same way {@link #resolveRoot} does,
+     * and if the resolved type is a CHOICE, returns its type name plus the list of alternative
+     * field names (in declaration order) WITHOUT resolving their children. Returns {@code null}
+     * when the root does not resolve to a CHOICE. Lets a caller (e.g. a UI) offer a "pick a
+     * branch" control before any alternative-specific fields are generated.
+     */
+    public ChoiceAlternatives listRootChoiceAlternatives(Map<String, AsnTypeDefinition> registry, String rootTypeName) {
+        String resolvedName = rootTypeName;
+        AsnTypeDefinition current = registry.get(resolvedName);
+        Set<String> aliasGuard = new HashSet<>();
+        while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
+            String target = stripConstraint(current.getAliasTarget());
+            target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+            resolvedName = target;
+            current = registry.get(target);
+        }
+        if (current == null || current.getKind() != AsnTypeKind.CHOICE) {
+            return null;
+        }
+
+        List<String> names = new ArrayList<>();
+        for (String line : splitFieldEntries(current.getRawBody())) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            AsnField alternative = parseFieldLine(trimmed, AsnTaggingMode.IMPLICIT);
+            if (alternative != null) {
+                names.add(alternative.getFieldName());
+            }
+        }
+        return new ChoiceAlternatives(resolvedName, names);
     }
 
     private List<AsnField> resolveByTypeName(Map<String, AsnTypeDefinition> registry, String typeName,
@@ -214,14 +253,35 @@ public class AsnFieldTreeResolver {
                 cache, taggingMode);
         String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
 
+        Integer tagNumber = field.getTagNumber();
+        BerTagClass tagClass = field.getTagClass();
+        boolean explicit = field.isExplicit();
+
+        if (tagNumber == null) {
+            AsnTypeDefinition aliasDef = registry.get(innerType);
+            if (aliasDef != null && aliasDef.getKind() == AsnTypeKind.ALIAS
+                    && aliasDef.getAliasTarget() != null) {
+                Matcher aliasTag = ALIAS_TAG.matcher(aliasDef.getAliasTarget());
+                if (aliasTag.find()) {
+                    tagNumber = Integer.valueOf(aliasTag.group(2));
+                    tagClass = aliasTag.group(1) != null
+                            ? BerTagClass.valueOf(aliasTag.group(1))
+                            : BerTagClass.CONTEXT;
+                    explicit = aliasTag.group(3) != null
+                            ? aliasTag.group(3).trim().equalsIgnoreCase("EXPLICIT")
+                            : taggingMode == AsnTaggingMode.EXPLICIT;
+                }
+            }
+        }
+
         return AsnField.builder()
                 .fieldName(field.getFieldName())
                 .fieldType(fieldType)
                 .optional(field.isOptional())
                 .repeated(repeated)
-                .tagNumber(field.getTagNumber())
-                .tagClass(field.getTagClass())
-                .explicit(field.isExplicit())
+                .tagNumber(tagNumber)
+                .tagClass(tagClass)
+                .explicit(explicit)
                 .children(children.isEmpty() ? null : children)
                 .build();
     }
@@ -323,7 +383,7 @@ public class AsnFieldTreeResolver {
     }
 
     private String resolveLeafBaseType(Map<String, AsnTypeDefinition> registry, String typeName) {
-        String current = typeName;
+        String current = stripAliasTag(typeName);
         Set<String> guard = new HashSet<>();
         while (current != null && guard.add(current)) {
             AsnTypeDefinition definition = registry.get(current);
@@ -337,9 +397,21 @@ public class AsnFieldTreeResolver {
                 return current;
             }
             String target = stripConstraint(definition.getAliasTarget());
+            // Alias hedefi "[APPLICATION 2] IA5String" gibi tag önekli olabilir.
+            // Tag zaten attachChildren tarafından okundu; burada sadece temel
+            // tipin kalması gerekir, yoksa BerUniversalTag tipi tanıyamaz.
+            target = stripAliasTag(target);
             current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
         }
         return current;
+    }
+
+    /** Removes a leading tag annotation such as "[APPLICATION 2]" or "[5] IMPLICIT". */
+    private String stripAliasTag(String typeExpression) {
+        if (typeExpression == null) {
+            return null;
+        }
+        return ALIAS_TAG.matcher(typeExpression).replaceFirst("").trim();
     }
 
     private boolean isAliasRepeated(Map<String, AsnTypeDefinition> registry, String typeName) {

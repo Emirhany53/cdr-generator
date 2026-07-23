@@ -1,0 +1,318 @@
+.app-shell {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.app-header h1 {
+  margin: 0 0 4px;
+  font-size: 1.6rem;
+}
+
+.app-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 1.05rem;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin: 14px 0 6px;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="file"],
+select,
+textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 0.92rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+textarea {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.82rem;
+  resize: vertical;
+}
+
+.mono {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.hint {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  margin: 8px 0 0;
+}
+
+.hint-inline {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-left: 6px;
+}
+
+/* --- tabs --- */
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+.tab {
+  border: none;
+  background: none;
+  padding: 8px 14px;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.tab-active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+  font-weight: 600;
+}
+
+.tab-panel select[size] {
+  height: auto;
+}
+
+/* --- buttons --- */
+.btn {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  margin-top: 14px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.btn-small {
+  padding: 2px 10px;
+  line-height: 1.4;
+}
+
+.btn-generate {
+  width: 100%;
+  padding: 11px;
+  font-size: 1rem;
+}
+
+/* --- banners --- */
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 0.88rem;
+}
+
+.banner-error {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border: 1px solid #fecaca;
+}
+
+.banner-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid #bbf7d0;
+}
+
+.banner-info {
+  background: var(--color-info-bg);
+  color: var(--color-primary);
+  border: 1px solid #bfdbfe;
+}
+
+.banner-close {
+  border: none;
+  background: none;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  color: inherit;
+}
+
+/* --- choice picker --- */
+.choice-picker {
+  background: var(--color-info-bg);
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+}
+
+.choice-picker select {
+  max-width: 320px;
+}
+
+/* --- field form --- */
+.field-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Every field row (leaf, group or repeated) is a <details> element that
+   starts closed — click the summary row to open it and enter a value. */
+.field-form details {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0 12px;
+}
+
+.field-form details[open] {
+  padding-bottom: 10px;
+}
+
+.field-form summary {
+  cursor: pointer;
+  padding: 9px 0;
+  font-size: 0.88rem;
+  list-style: revert;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.field-group-body,
+.leaf-field-body,
+.repeated-field-body {
+  margin-top: 4px;
+  padding-left: 14px;
+  border-left: 2px solid var(--color-border);
+}
+
+/* Depth-0 group/repeated field (e.g. the selected CHOICE alternative) — not
+   a <details>, always expanded, no click needed since it's the only thing
+   at that level anyway. */
+.field-group-top {
+  border: none;
+  padding: 0;
+}
+
+.field-group-top-header {
+  font-size: 0.9rem;
+  padding: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.field-group-top > .field-group-body {
+  margin-top: 0;
+  padding-left: 0;
+  border-left: none;
+}
+
+.field-type {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.tag-badge {
+  font-size: 0.72rem;
+  color: var(--color-primary);
+  background: var(--color-info-bg);
+  border-radius: 4px;
+  padding: 0 5px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+.badge {
+  font-size: 0.7rem;
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.badge-optional {
+  background: #f3f4f6;
+  color: var(--color-text-muted);
+}
+
+.badge-filled {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- repeated fields --- */
+.repeated-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.repeated-item {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.repeated-item-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+/* --- output panel --- */
+.format-choice {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 4px;
+}
+
+.radio-disabled {
+  opacity: 0.5;
+}

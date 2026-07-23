@@ -105,12 +105,16 @@ public class StructureParserService {
         String rootTypeName = selectRootTypeName(registry, selections, taggingMode);
         AsnFieldTreeResolver.ResolvedRoot root =
                 fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
+        AsnFieldTreeResolver.ChoiceAlternatives choiceInfo =
+                fieldTreeResolver.listRootChoiceAlternatives(registry, rootTypeName);
 
         String name = (suppliedName != null && !suppliedName.isBlank()) ? suppliedName : rootTypeName;
         return AsnStructure.builder()
                 .structureName(name)
                 .fields(root.fields())
                 .choiceRoot(root.kind() == AsnTypeKind.CHOICE)
+                .choiceTypeName(choiceInfo != null ? choiceInfo.choiceTypeName() : null)
+                .choiceAlternatives(choiceInfo != null ? choiceInfo.alternativeNames() : null)
                 .build();
     }
 

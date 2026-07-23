@@ -125,6 +125,11 @@ public class AsnTypeRegistryBuilder {
     }
 
     private String stripLineComments(String contents) {
+
+        contents = contents.replaceAll("(?s)/\\*.*?\\*/", " ");
+
+        contents = contents.replaceAll("(?m)^\\s*END\\s*$", " ");
+
         StringBuilder sb = new StringBuilder(contents.length());
         for (String line : contents.split("\\r?\\n", -1)) {
             int commentIndex = line.indexOf("--");
