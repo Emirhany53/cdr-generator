@@ -6,6 +6,7 @@ import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
 import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
+import com.turkcell.cdrgenerator1.generator.EnumValueResolver;
 import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
 import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
 import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
@@ -66,7 +67,9 @@ class CdrStructureControllerTest {
 
         CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
                 new UserProvidedValueSource(),
-                new AiValueSource(new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory)),
+                new AiValueSource(
+                        new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory),
+                        new EnumValueResolver()),
                 new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         CdrFileWriterService writer = new CdrFileWriterService();

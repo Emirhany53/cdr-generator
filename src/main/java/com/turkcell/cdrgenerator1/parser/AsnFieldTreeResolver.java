@@ -395,12 +395,20 @@ public class AsnFieldTreeResolver {
                 return current;
             }
             if (definition.getKind() == AsnTypeKind.ENUMERATED) {
-                return AsnTypeKind.ENUMERATED.name();
+                return formatWithNamedNumbers(AsnTypeKind.ENUMERATED.name(), definition.getRawBody());
             }
             if (definition.getKind() != AsnTypeKind.ALIAS) {
                 return current;
             }
-            String target = stripConstraint(definition.getAliasTarget());
+            String aliasTarget = definition.getAliasTarget();
+            // Isimli-sabitli INTEGER (ornek: RecordType ::= INTEGER { mMTelRecord(83) })
+            // bir alias ama govdesi sozluk tasir. stripConstraint bu sayilari SIZE
+            // kisiti sanip silecegi icin, boyle bir govde varsa zincire devam etmeden
+            // burada sonuclandirilir.
+            if (containsNamedNumberList(aliasTarget)) {
+                return formatWithNamedNumbers(extractBaseTypeToken(aliasTarget), aliasTarget);
+            }
+            String target = stripConstraint(aliasTarget);
             // Alias hedefi "[APPLICATION 2] IA5String" gibi tag önekli olabilir.
             // Tag zaten attachChildren tarafından okundu; burada sadece temel
             // tipin kalması gerekir, yoksa BerUniversalTag tipi tanıyamaz.
@@ -408,6 +416,37 @@ public class AsnFieldTreeResolver {
             current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
         }
         return current;
+    }
+
+    private boolean containsNamedNumberList(String typeExpression) {
+        return Objects.nonNull(typeExpression) && typeExpression.contains("{")
+                && NAMED_NUMBER_ENTRY.matcher(typeExpression).find();
+    }
+
+    private String extractBaseTypeToken(String typeExpression) {
+        int braceIndex = typeExpression.indexOf('{');
+        String prefix = braceIndex == -1 ? typeExpression : typeExpression.substring(0, braceIndex);
+        return stripAliasTag(prefix).trim();
+    }
+
+    /**
+     * "ad(sayi)" ciftlerini govdeden cikarip "TIP{ad(sayi),ad(sayi)}" seklinde
+     * sikistirir. Bos govde ya da eslesme yoksa yalnizca cIplak tip adi doner.
+     * Bu bicim daha sonra AI'in dondurdugu ismi sayiya cevirmek icin kullanilacak.
+     */
+    private String formatWithNamedNumbers(String baseTypeToken, String rawBody) {
+        if (Objects.isNull(rawBody)) {
+            return baseTypeToken;
+        }
+        Matcher matcher = NAMED_NUMBER_ENTRY.matcher(rawBody);
+        StringBuilder compacted = new StringBuilder();
+        while (matcher.find()) {
+            if (compacted.length() > 0) {
+                compacted.append(',');
+            }
+            compacted.append(matcher.group(1)).append('(').append(matcher.group(2)).append(')');
+        }
+        return compacted.isEmpty() ? baseTypeToken : baseTypeToken + "{" + compacted + "}";
     }
 
     /** Removes a leading tag annotation such as "[APPLICATION 2]" or "[5] IMPLICIT". */
@@ -423,6 +462,10 @@ public class AsnFieldTreeResolver {
         return def != null && def.getKind() == AsnTypeKind.ALIAS
                 && isRepeatedExpression(stripConstraint(def.getAliasTarget()));
     }
+
+    /** ENUMERATED / isimli-sabitli INTEGER govdesindeki "ad(sayi)" ciftlerini yakalar. */
+    private static final Pattern NAMED_NUMBER_ENTRY = Pattern.compile(
+            "([A-Za-z][\\w-]*)\\s*\\(\\s*(-?\\d+)\\s*\\)");
 
     /**
      * Parses a single field/alternative line into an AsnField.

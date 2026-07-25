@@ -24,6 +24,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import com.turkcell.cdrgenerator1.generator.EnumValueResolver;
 
 import java.util.List;
 
@@ -61,7 +62,9 @@ class BerGeneratorControllerTest {
 
         CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
                 new UserProvidedValueSource(),
-                new AiValueSource(new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory)),
+                new AiValueSource(
+                        new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory),
+                        new EnumValueResolver()),
                 new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         BerEncoderService encoder = new BerEncoderService(new TlvWriter());

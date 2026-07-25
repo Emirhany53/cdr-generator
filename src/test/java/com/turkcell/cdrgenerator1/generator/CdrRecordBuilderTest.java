@@ -126,16 +126,5 @@ class CdrRecordBuilderTest {
         assertEquals(List.of("first", "second", "third"), List.copyOf(record.keySet()));
     }
 
-    private static List<ValueSource> valueSources() {
-        AiConfigProperties properties = new AiConfigProperties();
-        AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
-        BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
-        FieldValueGenerator fieldValueGenerator =
-                new FieldValueGenerator(properties, sizeExtractor, bcdTimestampFactory);
 
-        return List.of(
-                new UserProvidedValueSource(),
-                new AiValueSource(new FieldValueValidator(properties, sizeExtractor, bcdTimestampFactory)),
-                new RandomValueSource(fieldValueGenerator));
-    }
 }
