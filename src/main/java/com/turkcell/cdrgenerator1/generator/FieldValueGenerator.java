@@ -8,8 +8,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -30,15 +28,12 @@ public class FieldValueGenerator {
     private static final String JITTER_SUFFIX_PATTERN = ".*\\d{4}$";
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
     private static final String HEX_LITERAL_PATTERN = "^([0-9A-Fa-f]{2})+$";
-    private static final String TIMESTAMP_NAME_TOKEN = "time";
     private static final int JITTER_LENGTH = 4;
     private static final int DEFAULT_STRING_LENGTH = 8;
     private static final int DEFAULT_INTEGER_BOUND = 100_000;
     private static final int MAX_GENERATED_LENGTH = 18;
     /** OCTET STRING hex dump uretiminde her bayt 2 hex karakter olmali. */
     private static final int HEX_CHARS_PER_BYTE = 2;
-    /** 3GPP BCD zaman damgasi 9 bayttir; bu uzunluktaki OCTET STRING'ler BCD kabul edilir. */
-    private static final int BCD_TIMESTAMP_BYTE_LENGTH = 9;
 
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
@@ -49,12 +44,14 @@ public class FieldValueGenerator {
     }
 
     private String produce(AsnField field) {
-        // BCD zaman damgasi kontrolu yml kuralindan ONCE yapilir: timestamp
-        // kurali bu alanlara ad benzerligiyle carpip duz tarih ornegi verebilir,
-        // ancak OCTET STRING (SIZE(9)) alanlar 18 hex BCD olmak zorundadir.
-        if (isBcdTimestamp(field)) {
-            return bcdTimestampFactory.randomTimestamp();
+        // BCD zaman damgasi/tarih kontrolu yml kuralindan ONCE yapilir: date/timestamp
+        // kurallari bu alanlara ad benzerligiyle carpip duz sayi ornegi verebilir,
+        // ancak OCTET STRING SIZE(9)/SIZE(3) alanlar BCD hex olmak zorundadir.
+        Optional<String> bcdValue = produceBcdIfApplicable(field);
+        if (bcdValue.isPresent()) {
+            return bcdValue.get();
         }
+
         Optional<String> seeded = generateFromRuleExample(field);
         if (seeded.isPresent()) {
             return seeded.get();
@@ -63,31 +60,36 @@ public class FieldValueGenerator {
             case INTEGER, ENUMERATED ->
                     String.valueOf(ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND));
             case BOOLEAN -> ThreadLocalRandom.current().nextBoolean() ? TRUE_VALUE : FALSE_VALUE;
-            case OCTET_STRING -> produceOctetString(field);
+            case OCTET_STRING -> randomHex(hexLengthFor(field));
             case STRING -> randomFrom(ALPHABET, lengthFor(field));
         };
     }
 
     /**
-     * OCTET STRING alanlar icin deger uretir. Alan bir 3GPP BCD zaman damgasi
-     * ise (9 bayt ve adi zaman iceriyor) gecerli bir zaman damgasi uretilir;
-     * aksi halde rastgele hex dump verilir.
+     * Alan bir 3GPP BCD zaman damgasi (9 bayt, saat dahil) ya da BCD tarih
+     * (3 bayt, sadece yil-ay-gun) ise gecerli deger uretir; aksi halde bos doner.
      */
-    private String produceOctetString(AsnField field) {
-        if (isBcdTimestamp(field)) {
-            return bcdTimestampFactory.randomTimestamp();
+    private Optional<String> produceBcdIfApplicable(AsnField field) {
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) != BerPrimitiveType.OCTET_STRING) {
+            return Optional.empty();
         }
-        return randomHex(hexLengthFor(field));
-    }
-
-    private boolean isBcdTimestamp(AsnField field) {
         Integer byteLength = asnSizeExtractor.extractMaxLength(field.getFieldType()).orElse(null);
-        return bcdTimestampFactory.isBcdTimestamp(field.getFieldName(), byteLength);
+        if (bcdTimestampFactory.isBcdTimestamp(field.getFieldName(), byteLength)) {
+            return Optional.of(bcdTimestampFactory.randomTimestamp());
+        }
+        if (bcdTimestampFactory.isBcdDate(field.getFieldName(), byteLength)) {
+            return Optional.of(bcdTimestampFactory.randomDate());
+        }
+        return Optional.empty();
     }
 
     /**
      * yml'deki kural orneklerinden birini tohum olarak kullanir.
-     * Ornekler alanin ASN.1 tipiyle uyumsuz degilse kural yok sayilir.
+     *
+     * Kural eslesmesi alan adinin bir parcasina bakarak yapildigi icin
+     * beklenmedik alanlara carpabilir (ornek: 'daRealMoneyFlag' icindeki
+     * 'realm'). Bu yuzden ornekler alanin ASN.1 tipiyle uyumlu degilse
+     * kural yok sayilir ve tipe uygun rastgele uretime dusulur.
      */
     private Optional<String> generateFromRuleExample(AsnField field) {
         return aiConfigProperties.findRuleFor(field.getFieldName())

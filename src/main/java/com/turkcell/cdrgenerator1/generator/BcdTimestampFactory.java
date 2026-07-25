@@ -28,6 +28,10 @@ public class BcdTimestampFactory {
     private static final int MAX_PAST_DAYS = 30;
     private static final int HOURS_IN_DAY = 24;
     private static final int MINUTES_IN_HOUR = 60;
+    private static final String DATE_NAME_TOKEN = "date";
+    private static final String BCD_DATE_PATTERN = "^[0-9A-Fa-f]{6}$";
+    private static final int BCD_DATE_BYTE_LENGTH = 3;
+    private static final DateTimeFormatter BCD_DATE_DIGITS = DateTimeFormatter.ofPattern("yyMMdd");
 
     /** Yakin gecmiste rastgele bir ana ait BCD zaman damgasi. */
     public String randomTimestamp() {
@@ -62,5 +66,22 @@ public class BcdTimestampFactory {
                 .minusHours(ThreadLocalRandom.current().nextInt(HOURS_IN_DAY))
                 .minusMinutes(ThreadLocalRandom.current().nextInt(MINUTES_IN_HOUR))
                 .withNano(0);
+    }
+
+    public boolean isBcdDate(String fieldName, Integer byteLength) {
+        boolean nameLooksLikeDate = Objects.nonNull(fieldName)
+                && fieldName.toLowerCase(Locale.ROOT).contains(DATE_NAME_TOKEN);
+        boolean hasDateLength = Objects.nonNull(byteLength) && byteLength == BCD_DATE_BYTE_LENGTH;
+        return nameLooksLikeDate && hasDateLength;
+    }
+
+    /** Yakin gecmiste rastgele bir gune ait BCD tarih (yyMMdd, 6 hex). */
+    public String randomDate() {
+        return randomRecentDateTime().format(BCD_DATE_DIGITS);
+    }
+
+    /** Verilen degerin gecerli bir BCD tarih bicimine (6 hex) sahip olup olmadigi. */
+    public boolean isValidBcdDate(String value) {
+        return Objects.nonNull(value) && value.matches(BCD_DATE_PATTERN);
     }
 }

@@ -3,6 +3,7 @@ package com.turkcell.cdrgenerator1.ai.prompt;
 import com.turkcell.cdrgenerator1.ai.model.AiGenerationRequest;
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
+import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.service.BerPrimitiveType;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class CdrPromptBuilder implements PromptBuilder {
 
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
+    private final BcdTimestampFactory bcdTimestampFactory;
 
     @Override
     public String build(AiGenerationRequest request) {
@@ -60,7 +62,6 @@ public class CdrPromptBuilder implements PromptBuilder {
         prompt.append(LINE);
     }
 
-    // --- DEGISEN METOT ---
     private void appendFields(StringBuilder prompt, AiGenerationRequest request) {
         prompt.append("Doldurulacak alanlar:").append(LINE);
 
@@ -68,19 +69,36 @@ public class CdrPromptBuilder implements PromptBuilder {
             prompt.append("- ").append(field.getFieldName())
                     .append(" (tip: ").append(field.getFieldType()).append(")");
 
-            asnSizeExtractor.extractMaxLength(field.getFieldType()).ifPresent(maxLength ->
-                    prompt.append(RULE_SEPARATOR)
-                            .append("azami uzunluk: ").append(maxLength).append(" karakter"));
-
-            if (isOctetString(field.getFieldType())) {
+            Integer maxLength = asnSizeExtractor.extractMaxLength(field.getFieldType()).orElse(null);
+            if (Objects.nonNull(maxLength)) {
                 prompt.append(RULE_SEPARATOR)
-                        .append("bu alan OCTET STRING'dir, deger SADECE hex karakterlerden ")
-                        .append("(0-9, A-F) olusmali, cift sayida karakter olmali");
+                        .append("azami uzunluk: ").append(maxLength).append(" karakter");
             }
 
+            appendOctetStringGuidance(prompt, field, maxLength);
             appendRuleIfPresent(prompt, field);
             prompt.append(LINE);
         });
+    }
+
+    private void appendOctetStringGuidance(StringBuilder prompt, AsnField field, Integer maxLength) {
+        if (!isOctetString(field.getFieldType())) {
+            return;
+        }
+        prompt.append(RULE_SEPARATOR)
+                .append("bu alan OCTET STRING'dir, deger SADECE hex karakterlerden ")
+                .append("(0-9, A-F) olusmali, cift sayida karakter olmali");
+
+        if (bcdTimestampFactory.isBcdTimestamp(field.getFieldName(), maxLength)) {
+            prompt.append(RULE_SEPARATOR)
+                    .append("bu alan 3GPP BCD zaman damgasidir: YYMMDDHHmmSS + isaret(2B/2D) + ")
+                    .append("saat farki(4 hane), toplam 18 hex karakter. Ornek: ")
+                    .append(bcdTimestampFactory.randomTimestamp());
+        } else if (bcdTimestampFactory.isBcdDate(field.getFieldName(), maxLength)) {
+            prompt.append(RULE_SEPARATOR)
+                    .append("bu alan BCD tarihtir: YYMMDD, toplam 6 hex karakter. Ornek: ")
+                    .append(bcdTimestampFactory.randomDate());
+        }
     }
 
     // --- YENI EKLENEN METOT ---
