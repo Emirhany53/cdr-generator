@@ -119,13 +119,51 @@ public class FieldValueValidator {
             return true;
         }
         final String pattern = rule.get().getPattern();
-        boolean matches = compiledPatterns.computeIfAbsent(pattern, Pattern::compile)
-                .matcher(value)
-                .matches();
-        if (!matches) {
-            log.warn("Yapay zeka degeri kurala uymadi, reddedildi. Alan: {}, Deger: {}, Regex: {}",
-                    field.getFieldName(), value, pattern);
+        Pattern compiled = compiledPatterns.computeIfAbsent(pattern, Pattern::compile);
+
+        if (compiled.matcher(value).matches()) {
+            return true;
         }
-        return matches;
+
+        // AsciiString/Currency/HexString/NumberString gibi tipler ASN.1'de
+        // OCTET STRING olarak tanimlanir ama gercek icerikleri ASCII metindir
+        // (TAP-0309 standardinin kendi yorumu bunu belirtir). AI dogru metni
+        // uretip ASCII-hex'e cevirebilir (ornek: "949" -> "393439"); bu durumda
+        // hex'i geri cozup kurali tekrar dene.
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.OCTET_STRING) {
+            Optional<String> decoded = decodeAsciiHex(value);
+            if (decoded.isPresent() && compiled.matcher(decoded.get()).matches()) {
+                return true;
+            }
+        }
+
+        log.warn("Yapay zeka degeri kurala uymadi, reddedildi. Alan: {}, Deger: {}, Regex: {}",
+                field.getFieldName(), value, pattern);
+        return false;
+    }
+
+    /**
+     * Cift uzunluktaki hex metni ASCII karakterlere cozer. Her bayt gecerli
+     * yazdirilabilir bir ASCII karakter degilse bos doner (gercek binary
+     * veriyi metin sanip yanlis pozitif vermemek icin).
+     */
+    private Optional<String> decodeAsciiHex(String hex) {
+        if (hex.length() % 2 != 0) {
+            return Optional.empty();
+        }
+        StringBuilder decoded = new StringBuilder(hex.length() / 2);
+        for (int i = 0; i < hex.length(); i += 2) {
+            int codePoint;
+            try {
+                codePoint = Integer.parseInt(hex.substring(i, i + 2), 16);
+            } catch (NumberFormatException ex) {
+                return Optional.empty();
+            }
+            if (codePoint < 0x20 || codePoint > 0x7E) {
+                return Optional.empty();
+            }
+            decoded.append((char) codePoint);
+        }
+        return Optional.of(decoded.toString());
     }
 }
