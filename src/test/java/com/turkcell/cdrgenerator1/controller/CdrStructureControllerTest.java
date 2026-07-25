@@ -1,12 +1,20 @@
 package com.turkcell.cdrgenerator1.controller;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
+import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
+import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
+import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
+import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
+import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
+import com.turkcell.cdrgenerator1.generator.validation.FieldValueValidator;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
+import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import org.junit.jupiter.api.BeforeEach;
@@ -52,12 +60,20 @@ class CdrStructureControllerTest {
         config.setDefaultRecordCount(1);
         config.setMaxRecordCount(100);
 
-        CdrRecordBuilder recordBuilder =
-                new CdrRecordBuilder(parserService, new FieldValueGenerator());
+        AiConfigProperties aiProperties = new AiConfigProperties();
+        AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
+        BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
+
+        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
+                new UserProvidedValueSource(),
+                new AiValueSource(new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory)),
+                new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
+
         CdrFileWriterService writer = new CdrFileWriterService();
+        AiRecordSupplier aiRecordSupplier = TestAiSupport.disabledSupplier(aiProperties);
 
         CdrStructureController controller = new CdrStructureController(
-                parserService, recordBuilder, writer, config);
+                parserService, recordBuilder, writer, config, aiRecordSupplier);
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -132,7 +148,7 @@ class CdrStructureControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.containsString("SMSCBerCdr.txt")));
+                        org.hamcrest.Matchers.containsString("SMSCBerCdr.dat")));
     }
 
     @Test
@@ -179,7 +195,7 @@ class CdrStructureControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.containsString("DemoVoice.txt")));
+                        org.hamcrest.Matchers.containsString("DemoVoice.dat")));
     }
 
     @Test

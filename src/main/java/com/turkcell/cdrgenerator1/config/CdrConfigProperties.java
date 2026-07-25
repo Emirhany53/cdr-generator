@@ -4,13 +4,14 @@ import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+@Data
 @Component
 @ConfigurationProperties(prefix = "app.cdr")
-@Data
 public class CdrConfigProperties {
 
+    /** datastructure.json konumu. */
     private String dataStructurePath;
+
     private int defaultRecordCount;
     private int maxRecordCount;
-
 }

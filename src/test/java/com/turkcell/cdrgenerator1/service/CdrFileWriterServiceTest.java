@@ -82,10 +82,10 @@ class CdrFileWriterServiceTest {
     }
 
     @Test
-    void fileNameCarriesStructureNameAndTxtSuffix() throws IOException {
+    void fileNameCarriesStructureNameAndDatSuffix() throws IOException {
         Path file = writer.writeCdrFile("MyStructure", List.of(record("a", "\"1\"")));
         String fileName = file.getFileName().toString();
         assertTrue(fileName.startsWith("MyStructure_"), "file name should start with the structure name");
-        assertTrue(fileName.endsWith(".txt"), "file must have the .txt suffix");
+        assertTrue(fileName.endsWith(".dat"), "file must have the .dat suffix");
     }
 }

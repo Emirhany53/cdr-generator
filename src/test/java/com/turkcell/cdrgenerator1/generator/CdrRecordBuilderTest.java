@@ -1,5 +1,12 @@
 package com.turkcell.cdrgenerator1.generator;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
+import com.turkcell.cdrgenerator1.config.AiConfigProperties;
+import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
+import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
+import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
+import com.turkcell.cdrgenerator1.generator.source.ValueSource;
+import com.turkcell.cdrgenerator1.generator.validation.FieldValueValidator;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.junit.jupiter.api.Test;
@@ -15,7 +22,7 @@ class CdrRecordBuilderTest {
 
     // buildRecordFromFields does not touch the registry, so the parser
     // dependency can stay null for these unit tests.
-    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, new FieldValueGenerator());
+    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, TestValueSources.chain());
 
     private AsnField leaf(String name, String type) {
         return AsnField.builder().fieldName(name).fieldType(type)
@@ -117,5 +124,18 @@ class CdrRecordBuilderTest {
                 List.of(leaf("first", "INTEGER"), leaf("second", "IA5String"), leaf("third", "INTEGER")),
                 Map.of());
         assertEquals(List.of("first", "second", "third"), List.copyOf(record.keySet()));
+    }
+
+    private static List<ValueSource> valueSources() {
+        AiConfigProperties properties = new AiConfigProperties();
+        AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
+        BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
+        FieldValueGenerator fieldValueGenerator =
+                new FieldValueGenerator(properties, sizeExtractor, bcdTimestampFactory);
+
+        return List.of(
+                new UserProvidedValueSource(),
+                new AiValueSource(new FieldValueValidator(properties, sizeExtractor, bcdTimestampFactory)),
+                new RandomValueSource(fieldValueGenerator));
     }
 }

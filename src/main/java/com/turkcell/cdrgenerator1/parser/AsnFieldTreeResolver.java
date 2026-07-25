@@ -24,6 +24,10 @@ public class AsnFieldTreeResolver {
     private static final int MAX_DEPTH = 15;
     private static final String EXPLICIT_KEYWORD = "EXPLICIT";
     private static final String IMPLICIT_KEYWORD = "IMPLICIT";
+    private static final Pattern SIZE_CONSTRAINT = Pattern.compile(
+            "SIZE\\s*\\(\\s*(\\d+)\\s*(?:\\.\\.\\s*(\\d+)\\s*)?\\)");
+    private static final String SIZE_SUFFIX_TEMPLATE = " (SIZE(%d))";
+    private static final int ALIAS_SIZE_MAX_DEPTH = 15;
 
     /** Root resolution result: the root type's kind plus its resolved fields. */
     public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
@@ -243,15 +247,14 @@ public class AsnFieldTreeResolver {
         return null;
     }
 
-    /** Resolves a field's referenced type into children and finalises its leaf/base type. */
     private AsnField attachChildren(Map<String, AsnTypeDefinition> registry, AsnField field,
                                     Map<String, String> choiceSelections, Set<String> visiting, int depth,
                                     Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
-        String innerType = field.getFieldType();
+        String innerType = stripConstraint(field.getFieldType());
         boolean repeated = field.isRepeated() || isAliasRepeated(registry, innerType);
         List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                 cache, taggingMode);
-        String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
+        String fieldType = resolveFieldType(registry, field.getFieldType(), innerType, children);
 
         Integer tagNumber = field.getTagNumber();
         BerTagClass tagClass = field.getTagClass();
@@ -352,6 +355,7 @@ public class AsnFieldTreeResolver {
                 && parsedLeaves.stream().allMatch(f -> f.getTagNumber() == null);
 
         // Second pass: assign automatic tags if applicable, then resolve children.
+        // Second pass: assign automatic tags if applicable, then resolve children.
         List<AsnField> fields = new ArrayList<>();
         for (int index = 0; index < parsedLeaves.size(); index++) {
             AsnField parsed = parsedLeaves.get(index);
@@ -361,16 +365,16 @@ public class AsnFieldTreeResolver {
                 parsed.setExplicit(false);
             }
 
-            String innerType = parsed.getFieldType();
+            // parsed.fieldType SIZE kisiti tasiyor olabilir; registry aramalari
+            // kisitsiz ada gore yapilmalidir.
+            String innerType = stripConstraint(parsed.getFieldType());
             boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                     cache, taggingMode);
 
-            String fieldType = children.isEmpty() ? resolveLeafBaseType(registry, innerType) : innerType;
-
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())
-                    .fieldType(fieldType)
+                    .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
                     .repeated(repeated)
                     .tagNumber(parsed.getTagNumber())
@@ -443,14 +447,19 @@ public class AsnFieldTreeResolver {
         String taggingKeyword = matcher.group(4) != null ? matcher.group(4).trim() : null;
         boolean explicit = resolveExplicit(taggingKeyword, taggingMode);
 
-        String typeExpr = stripConstraint(matcher.group(5)).replace("OPTIONAL", "").trim();
+        // SIZE kisiti stripConstraint tarafindan silinmeden once okunur; alan
+        // ifadesinde varsa alias zincirinden gelenden onceliklidir.
+        String rawTypeExpr = matcher.group(5);
+        Integer inlineSize = readSizeConstraint(rawTypeExpr);
+
+        String typeExpr = stripConstraint(rawTypeExpr).replace("OPTIONAL", "").trim();
 
         boolean repeated = isRepeatedExpression(typeExpr);
         String fieldType = repeated ? extractRepeatedInnerType(typeExpr) : normalize(typeExpr);
 
         return AsnField.builder()
                 .fieldName(fieldName)
-                .fieldType(fieldType)
+                .fieldType(appendSizeConstraint(fieldType, inlineSize))
                 .optional(optional)
                 .repeated(repeated)
                 .tagNumber(tagNumber)
@@ -482,6 +491,62 @@ public class AsnFieldTreeResolver {
         return typeExpr.replaceAll("\\s+", " ").trim();
     }
 
+    /**
+     * Bir tip ifadesindeki SIZE(n) kisitini okur. SIZE(a..b) formunda ust sinir alinir.
+     * Kisit yoksa null doner.
+     */
+    private Integer readSizeConstraint(String typeExpression) {
+        if (typeExpression == null) {
+            return null;
+        }
+        Matcher matcher = SIZE_CONSTRAINT.matcher(typeExpression);
+        if (!matcher.find()) {
+            return null;
+        }
+        String upperBound = matcher.group(2);
+        return Integer.valueOf(upperBound != null ? upperBound : matcher.group(1));
+    }
+
+    /**
+     * Alan satirinda SIZE yoksa alias zincirini takip ederek ilk SIZE kisitini bulur.
+     * Ornek: mSISDN -> MSISDN -> IA5STRING (SIZE(30)) icin 30 doner.
+     */
+    private Integer findSizeThroughAliases(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripAliasTag(typeName);
+        Set<String> guard = new HashSet<>();
+        int depth = 0;
+
+        while (current != null && guard.add(current) && depth++ < ALIAS_SIZE_MAX_DEPTH) {
+            AsnTypeDefinition definition = registry.get(current);
+            if (definition == null || definition.getKind() != AsnTypeKind.ALIAS) {
+                return null;
+            }
+            String target = definition.getAliasTarget();
+            Integer size = readSizeConstraint(target);
+            if (size != null) {
+                return size;
+            }
+            String stripped = stripAliasTag(stripConstraint(target));
+            current = isRepeatedExpression(stripped) ? extractRepeatedInnerType(stripped) : stripped;
+        }
+        return null;
+    }
+
+    /**
+     * Cozulmus temel tipe SIZE kisitini geri ekler.
+     *
+     * Kisitlar arama sirasinda kaldirilir (registry anahtarlari kisitsizdir), ancak
+     * yaprak alanin fieldType degerinde tutulmasi gerekir: yapay zeka katmani ve
+     * dogrulayici azami uzunlugu buradan okur. BerPrimitiveType startsWith ile
+     * calistigi icin sondaki kisit tip tanimayi bozmaz.
+     */
+    private String appendSizeConstraint(String baseType, Integer size) {
+        if (size == null || baseType == null || readSizeConstraint(baseType) != null) {
+            return baseType;
+        }
+        return baseType + SIZE_SUFFIX_TEMPLATE.formatted(size);
+    }
+
     private String stripConstraint(String text) {
         String previous;
         String current = text;
@@ -490,5 +555,17 @@ public class AsnFieldTreeResolver {
             current = current.replaceAll("\\([^()]*\\)", "").trim();
         } while (!current.equals(previous));
         return current;
+    }
+
+    private String resolveFieldType(Map<String, AsnTypeDefinition> registry, String declaredType,
+                                    String innerType, List<AsnField> children) {
+        if (!children.isEmpty()) {
+            return innerType;
+        }
+        Integer size = readSizeConstraint(declaredType);
+        if (size == null) {
+            size = findSizeThroughAliases(registry, innerType);
+        }
+        return appendSizeConstraint(resolveLeafBaseType(registry, innerType), size);
     }
 }

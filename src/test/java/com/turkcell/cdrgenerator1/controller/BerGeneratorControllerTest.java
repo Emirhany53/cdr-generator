@@ -1,19 +1,31 @@
 package com.turkcell.cdrgenerator1.controller;
 
+import com.turkcell.cdrgenerator1.ai.AiFieldValueProvider;
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
+import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
+import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
+import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
+import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
+import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
+import com.turkcell.cdrgenerator1.generator.validation.FieldValueValidator;
 import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
 import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
+import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import com.turkcell.cdrgenerator1.service.TlvWriter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -38,21 +50,32 @@ class BerGeneratorControllerTest {
         config.setDefaultRecordCount(1);
         config.setMaxRecordCount(100);
 
+        AiConfigProperties aiProperties = new AiConfigProperties();
+        AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
+        BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
+
         AsnTypeRegistryBuilder registryBuilder = new AsnTypeRegistryBuilder();
         AsnFieldTreeResolver resolver = new AsnFieldTreeResolver();
         StructureParserService parserService =
                 new StructureParserService(null, registryBuilder, resolver);
-        CdrRecordBuilder recordBuilder =
-                new CdrRecordBuilder(parserService, new FieldValueGenerator());
+
+        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
+                new UserProvidedValueSource(),
+                new AiValueSource(new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory)),
+                new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
+
         BerEncoderService encoder = new BerEncoderService(new TlvWriter());
 
+        AiRecordSupplier aiRecordSupplier = TestAiSupport.disabledSupplier(aiProperties);
+
         BerGeneratorController controller = new BerGeneratorController(
-                parserService, recordBuilder, encoder, config);
+                parserService, recordBuilder, encoder, config, aiRecordSupplier);
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
+
 
     @Test
     void inlineContentProducesDownloadableBerFile() throws Exception {

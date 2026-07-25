@@ -5,6 +5,7 @@ import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateBerRequest;
+import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -21,8 +22,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import java.io.ByteArrayOutputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
 @RestController
 @RequestMapping("/api/cdr")
 @RequiredArgsConstructor
@@ -31,15 +34,18 @@ import java.util.Objects;
         description = "Kayıtlı bir yapı adından ya da doğrudan gönderilen (inline) ASN.1 "
                 + "metninden binary BER kodlu (.ber) CDR dosyaları üretir.")
 public class BerGeneratorController {
+
     private static final String BER_FILE_EXTENSION = ".ber";
-    /** Characters allowed in a download file name; everything else becomes '_'. */
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
     private static final int MIN_RECORD_COUNT = 1;
+
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
     private final BerEncoderService berEncoderService;
     private final CdrConfigProperties cdrConfigProperties;
+    private final AiRecordSupplier aiRecordSupplier;
+
     @Operation(summary = "BER CDR dosyası üret ve indir",
             description = "Bir veya daha fazla kaydı binary BER olarak kodlar ve indirilebilir "
                     + "bir .ber dosyası döner. Kayıtlı bir structureName ile ya da istek gövdesindeki "
@@ -50,34 +56,50 @@ public class BerGeneratorController {
         boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
         log.info("Incoming BER generate request (inline={}) for structure: {}",
                 inlineMode, request.getStructureName());
+
         AsnStructure structure = resolveStructure(request, inlineMode);
         int effectiveRecordCount = Objects.nonNull(request.getRecordCount())
                 ? request.getRecordCount()
                 : cdrConfigProperties.getDefaultRecordCount();
+
         if (effectiveRecordCount > cdrConfigProperties.getMaxRecordCount()) {
             throw new RecordCountExceededException(effectiveRecordCount, cdrConfigProperties.getMaxRecordCount());
         }
         if (effectiveRecordCount < MIN_RECORD_COUNT) {
             throw new IllegalArgumentException("recordCount must be at least " + MIN_RECORD_COUNT);
         }
+
+        // Yapay zekadan TUM kayitlar icin degerler tek seferde, toplu olarak alinir.
+        // AI kapaliysa veya hata verirse bos liste doner, asagidaki build cagrisi
+        // otomatik olarak rastgele uretime duser.
+        List<Map<String, String>> aiRecords = aiRecordSupplier.supply(
+                structure.getStructureName(),
+                structure.getFields(),
+                request.getFieldValues(),
+                effectiveRecordCount);
+
         ByteArrayOutputStream fileBuffer = new ByteArrayOutputStream();
         for (int i = 0; i < effectiveRecordCount; i++) {
-            Map<String, Object> record =
-                    cdrRecordBuilder.buildRecordFromFields(structure.getFields(), request.getFieldValues());
+            Map<String, Object> record = cdrRecordBuilder.buildRecordFromFields(
+                    structure.getFields(), i, request.getFieldValues(), aiRecords);
             fileBuffer.writeBytes(berEncoderService.encodeRecord(structure, record));
         }
+
         byte[] fileBytes = fileBuffer.toByteArray();
         log.info("Generated BER file for '{}': {} record(s), {} bytes",
                 structure.getStructureName(), effectiveRecordCount, fileBytes.length);
+
         String safeName = structure.getStructureName()
                 .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
         String fileName = safeName + BER_FILE_EXTENSION;
+
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
                 .contentLength(fileBytes.length)
                 .body(new ByteArrayResource(fileBytes));
     }
+
     @Operation(summary = "BER CDR dosyası üret ve indir (HAM METİN)",
             description = "/generate-ber ile aynıdır, ancak ASN.1 metnini JSON kaçış karakteri "
                     + "gerektirmeden doğrudan gövdede alır. Swagger'da dosyadan kopyala-yapıştır için idealdir.")
@@ -95,6 +117,7 @@ public class BerGeneratorController {
 
         return generateBerFile(request);
     }
+
     private AsnStructure resolveStructure(GenerateBerRequest request, boolean inlineMode) {
         if (inlineMode) {
             AsnStructure structure =

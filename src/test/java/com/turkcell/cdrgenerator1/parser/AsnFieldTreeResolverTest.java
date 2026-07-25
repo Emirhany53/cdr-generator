@@ -172,14 +172,17 @@ class AsnFieldTreeResolverTest {
     }
 
     @Test
-    void constraintsAreStrippedFromTypeExpression() {
+    void sizeConstraintIsPreservedOnLeafTypes() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS ::=
                 BEGIN
                 Root ::= SEQUENCE { a [0] IA5String (SIZE(1..20)) }
                 END
                 """, "Root");
-        assertEquals("IA5String", fields.get(0).getFieldType());
+        // CODE("LEFT") gibi kisitlar kaldirilir, ancak SIZE(n) yaprak alanin
+        // fieldType degerinde tutulur: yapay zeka katmani ve dogrulayici
+        // azami uzunlugu buradan okur. SIZE(1..20) formunda ust sinir alinir.
+        assertEquals("IA5String (SIZE(20))", fields.get(0).getFieldType());
     }
 
     @Test

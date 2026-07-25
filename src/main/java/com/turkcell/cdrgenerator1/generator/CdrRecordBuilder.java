@@ -1,22 +1,25 @@
 package com.turkcell.cdrgenerator1.generator;
 
 import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
+import com.turkcell.cdrgenerator1.generator.source.ValueSource;
+import com.turkcell.cdrgenerator1.generator.source.ValueSourceContext;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Random;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class CdrRecordBuilder {
 
@@ -25,10 +28,28 @@ public class CdrRecordBuilder {
     private static final String PATH_SEPARATOR = ".";
     private static final String INDEX_OPEN = "[";
     private static final String INDEX_CLOSE = "]";
+    private static final String EMPTY_PATH = "";
+    private static final String INTEGER_TOKEN = "INTEGER";
+    private static final int SINGLE_RECORD_INDEX = 0;
 
     private final StructureParserService structureParserService;
-    private final FieldValueGenerator fieldValueGenerator;
+    private final List<ValueSource> valueSources;
     private final Random random = new Random();
+
+    public CdrRecordBuilder(StructureParserService structureParserService,
+                            List<ValueSource> valueSources) {
+        this.structureParserService = structureParserService;
+        this.valueSources = valueSources.stream()
+                .sorted(Comparator.comparingInt(ValueSource::getOrder))
+                .toList();
+        log.info("Deger kaynagi zinciri: {}", this.valueSources.stream()
+                .map(source -> source.getClass().getSimpleName())
+                .toList());
+    }
+
+    // ------------------------------------------------------------------
+    // Mevcut imzalar - davranis degismedi, AI olmadan calisirlar
+    // ------------------------------------------------------------------
 
     public Map<String, Object> buildRecord(String structureName, Map<String, String> userValues) {
         log.debug("Building record for structure: {}", structureName);
@@ -38,38 +59,53 @@ public class CdrRecordBuilder {
             log.error("Structure not found: {}", structureName);
             throw new StructureNotFoundException(structureName);
         }
-
-        return buildFields(structure.getFields(), userValues, "");
+        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH);
     }
 
-    /**
-     * Builds a record honouring an explicit CHOICE selection. With an empty
-     * selection this behaves exactly like {@link #buildRecord(String, Map)}.
-     */
     public Map<String, Object> buildRecord(String structureName, Map<String, String> userValues,
                                            Map<String, String> choiceSelections) {
         if (Objects.isNull(choiceSelections) || choiceSelections.isEmpty()) {
             return buildRecord(structureName, userValues);
         }
-
         AsnStructure structure = structureParserService.getStructureByName(structureName, choiceSelections);
         if (Objects.isNull(structure)) {
             log.error("Structure not found: {}", structureName);
             throw new StructureNotFoundException(structureName);
         }
-
-        return buildFields(structure.getFields(), userValues, "");
+        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH);
     }
+
+    public Map<String, Object> buildRecordFromFields(List<AsnField> fields, Map<String, String> userValues) {
+        return buildFields(fields, emptyAiContext(userValues), EMPTY_PATH);
+    }
+
+    // ------------------------------------------------------------------
+    // Yapay zekanin devrede oldugu imza
+    // ------------------------------------------------------------------
 
     /**
-     * Builds a record directly from an already-resolved field list, without a
-     * registry lookup. Used for structures parsed from inline request content.
+     * Coklu kayit uretiminde her kayit icin farkli recordIndex, ayni
+     * aiGeneratedRecords listesi gecirilir. AI listesi bossa davranis
+     * buildRecordFromFields ile birebir aynidir.
      */
-    public Map<String, Object> buildRecordFromFields(List<AsnField> fields, Map<String, String> userValues) {
-        return buildFields(fields, userValues, "");
+    public Map<String, Object> buildRecordFromFields(List<AsnField> fields,
+                                                     int recordIndex,
+                                                     Map<String, String> userValues,
+                                                     List<Map<String, String>> aiGeneratedRecords) {
+        ValueSourceContext context = new ValueSourceContext(
+                null, recordIndex, userValues, aiGeneratedRecords);
+        return buildFields(fields, context, EMPTY_PATH);
     }
 
-    private Map<String, Object> buildFields(List<AsnField> fields, Map<String, String> userValues,
+    private ValueSourceContext emptyAiContext(Map<String, String> userValues) {
+        return new ValueSourceContext(null, SINGLE_RECORD_INDEX, userValues, List.of());
+    }
+
+    // ------------------------------------------------------------------
+    // Agac gezme - eski mantik korundu
+    // ------------------------------------------------------------------
+
+    private Map<String, Object> buildFields(List<AsnField> fields, ValueSourceContext context,
                                             String pathPrefix) {
         Map<String, Object> record = new LinkedHashMap<>();
 
@@ -79,74 +115,60 @@ public class CdrRecordBuilder {
 
             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
                 record.put(fieldName, field.isRepeated()
-                        ? buildRepeatedGroup(field, userValues, fieldPath)
-                        : buildFields(field.getChildren(), userValues, fieldPath));
+                        ? buildRepeatedGroup(field, context, fieldPath)
+                        : buildFields(field.getChildren(), context, fieldPath));
             } else if (field.isRepeated()) {
-                // SEQUENCE OF <primitive>: emit a real list so both the BER
-                // encoder and the flattened ASCII writer see the elements.
-                record.put(fieldName, buildRepeatedLeaf(field, userValues, fieldPath));
+                record.put(fieldName, buildRepeatedLeaf(field, context, fieldPath));
             } else {
-                record.put(fieldName, resolveLeafValue(field, userValues, fieldPath));
+                record.put(fieldName, resolveLeafValue(field, context, fieldPath));
             }
         }
         return record;
     }
 
-    private List<Map<String, Object>> buildRepeatedGroup(AsnField field, Map<String, String> userValues,
+    private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
         int repeatCount = randomRepeatCount();
-        List<Map<String, Object>> items = new ArrayList<>();
-        for (int i = 0; i < repeatCount; i++) {
-            String elementPath = fieldPath + INDEX_OPEN + i + INDEX_CLOSE;
-            items.add(buildFields(field.getChildren(), userValues, elementPath));
+        List<Map<String, Object>> items = new ArrayList<>(repeatCount);
+        for (int index = 0; index < repeatCount; index++) {
+            String elementPath = fieldPath + INDEX_OPEN + index + INDEX_CLOSE;
+            items.add(buildFields(field.getChildren(), context, elementPath));
         }
         return items;
     }
 
-    /**
-     * Builds the value list for a repeated primitive field. A user-supplied
-     * value (matched by full path or bare field name) becomes a single-element
-     * list; otherwise 1-2 values are generated.
-     */
-    private List<String> buildRepeatedLeaf(AsnField field, Map<String, String> userValues, String fieldPath) {
-        String userValue = lookupUserValue(userValues, fieldPath, field.getFieldName());
-        if (Objects.nonNull(userValue)) {
-            return List.of(formatAsnLiteral(userValue, field.getFieldType()));
+    private List<String> buildRepeatedLeaf(AsnField field, ValueSourceContext context, String fieldPath) {
+        Optional<String> resolved = resolveThroughChain(field, context, fieldPath);
+        if (resolved.isPresent()) {
+            return List.of(formatAsnLiteral(resolved.get(), field.getFieldType()));
         }
         int repeatCount = randomRepeatCount();
         List<String> values = new ArrayList<>(repeatCount);
-        for (int i = 0; i < repeatCount; i++) {
-            String generated = fieldValueGenerator.generateValue(field.getFieldName(), field.getFieldType());
-            values.add(formatAsnLiteral(generated, field.getFieldType()));
+        for (int index = 0; index < repeatCount; index++) {
+            values.add(formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType()));
         }
         return values;
     }
 
-    private String resolveLeafValue(AsnField field, Map<String, String> userValues, String fieldPath) {
-        String userValue = lookupUserValue(userValues, fieldPath, field.getFieldName());
-        String rawValue = Objects.nonNull(userValue)
-                ? userValue
-                : fieldValueGenerator.generateValue(field.getFieldName(), field.getFieldType());
-        return formatAsnLiteral(rawValue, field.getFieldType());
+    private String resolveLeafValue(AsnField field, ValueSourceContext context, String fieldPath) {
+        return formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType());
     }
 
     /**
-     * Looks up a user-supplied value first by its full dotted/indexed path
-     * (e.g. {@code addr.msisdn}) and then by the bare field name. The path form
-     * lets callers disambiguate nested or duplicated leaf names; the bare name
-     * stays supported for convenience and backward compatibility.
+     * Deger kaynagi zinciri: kullanici degeri -> yapay zeka -> rastgele.
+     * Zincirin son halkasi her zaman deger dondurdugu icin bos donmez.
      */
-    private String lookupUserValue(Map<String, String> userValues, String fieldPath, String fieldName) {
-        if (Objects.isNull(userValues)) {
-            return null;
-        }
-        if (userValues.containsKey(fieldPath)) {
-            return userValues.get(fieldPath);
-        }
-        if (userValues.containsKey(fieldName)) {
-            return userValues.get(fieldName);
-        }
-        return null;
+    private String fallbackValue(AsnField field, ValueSourceContext context, String fieldPath) {
+        return resolveThroughChain(field, context, fieldPath).orElse("");
+    }
+
+    private Optional<String> resolveThroughChain(AsnField field, ValueSourceContext context,
+                                                 String fieldPath) {
+        ValueSourceContext pathAwareContext = context.withCurrentPath(fieldPath);
+        return valueSources.stream()
+                .map(source -> source.resolve(pathAwareContext, field))
+                .flatMap(Optional::stream)
+                .findFirst();
     }
 
     private int randomRepeatCount() {
@@ -161,8 +183,7 @@ public class CdrRecordBuilder {
         if (Objects.isNull(fieldType)) {
             return "\"" + rawValue + "\"";
         }
-        String upperType = fieldType.toUpperCase(java.util.Locale.ENGLISH);
-        if (upperType.contains("INTEGER")) {
+        if (fieldType.toUpperCase(Locale.ENGLISH).contains(INTEGER_TOKEN)) {
             return "'" + rawValue + "'D";
         }
         return "\"" + rawValue + "\"";

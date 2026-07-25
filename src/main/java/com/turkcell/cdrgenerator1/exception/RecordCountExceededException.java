@@ -1,10 +1,11 @@
 package com.turkcell.cdrgenerator1.exception;
 
-
 public class RecordCountExceededException extends RuntimeException {
 
-    public RecordCountExceededException(int requestedCount, int maxAllowedCount) {
-        super("Requested record count (" + requestedCount
-                + ") exceeds the maximum allowed record count (" + maxAllowedCount + ")");
+    private static final String MESSAGE_TEMPLATE =
+            "Istenen kayit sayisi (%d) gecersiz. Izin verilen aralik: 1 - %d.";
+
+    public RecordCountExceededException(int requested, int maximum) {
+        super(MESSAGE_TEMPLATE.formatted(requested, maximum));
     }
 }

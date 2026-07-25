@@ -1,9 +1,10 @@
 package com.turkcell.cdrgenerator1.exception;
 
-/** Thrown when a requested structure name is not present in the parsed set. */
 public class StructureNotFoundException extends RuntimeException {
 
+    private static final String MESSAGE_TEMPLATE = "'%s' adinda bir ASN.1 yapisi bulunamadi.";
+
     public StructureNotFoundException(String structureName) {
-        super("Structure not found: " + structureName);
+        super(MESSAGE_TEMPLATE.formatted(structureName));
     }
 }

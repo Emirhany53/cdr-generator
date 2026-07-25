@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /** Covers B5: nested leaves can be targeted by dotted path, bare name still works. */
 class NestedPathValueTest {
 
-    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, new FieldValueGenerator());
+    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, TestValueSources.chain());
 
     private AsnField leaf(String name, String type) {
         return AsnField.builder().fieldName(name).fieldType(type)

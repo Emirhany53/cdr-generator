@@ -4,28 +4,25 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
-import java.util.HashSet;
 
 /**
- * Writes generated CDR records to a Token-Separated-ASCII (.txt) file.
+ * Token-Separated-ASCII CDR yazicisi: her satir bir kayit, alanlar '|' ile ayrilir.
  *
- * <p>Output format (per the project specification):
- * <ul>
- *   <li>Fields are separated by the pipe ('|') character.</li>
- *   <li>Each line is a single flattened CDR record.</li>
- * </ul>
- *
- * <p>Nested and repeated fields are flattened depth-first into a single row.
- * Header names use dotted paths (e.g. {@code location.cellId}) and repeated
- * items are indexed (e.g. {@code partials[0].volume}) so every column stays
- * traceable back to its ASN.1 field.</p>
+ * Kayit agaci ic ice Map ve List icerebildigi icin once noktali yollara
+ * duzlestirilir (ornek: addr.ton, attrs[0]). SEQUENCE OF alanlarda kayitlar
+ * farkli sayida eleman tasiyabildiginden once TUM kayitlarin sutun birlesimi
+ * cikarilir; bir kayitta olmayan sutun bos birakilir, boylece satirlar hizali
+ * kalir ve tuketici taraf sutun kaymasi yasamaz.
  */
 @Slf4j
 @Service
@@ -33,78 +30,75 @@ public class CdrFileWriterService {
 
     private static final String FIELD_SEPARATOR = "|";
     private static final String PATH_SEPARATOR = ".";
-    private static final String TXT_FILE_SUFFIX = ".dat";
-    private static final String FILE_NAME_JOINER = "_";
+    private static final String INDEX_OPEN = "[";
+    private static final String INDEX_CLOSE = "]";
+    private static final String EMPTY_PATH = "";
+    private static final String EMPTY_VALUE = "";
+    private static final String FILE_NAME_PREFIX_SUFFIX = "_";
+    private static final String FILE_NAME_EXTENSION = ".dat";
 
     public Path writeCdrFile(String structureName, List<Map<String, Object>> records) throws IOException {
-        log.info("Generating token-separated CDR file for structure: {} with {} record(s)",
-                structureName, records.size());
+        List<Map<String, String>> flattenedRecords = records.stream()
+                .map(this::flattenRecord)
+                .toList();
 
-        List<LinkedHashMap<String, String>> flatRecords = new ArrayList<>();
-        for (Map<String, Object> record : records) {
-            LinkedHashMap<String, String> flat = new LinkedHashMap<>();
-            flatten("", record, flat);
-            flatRecords.add(flat);
-        }
+        Set<String> columns = collectColumns(flattenedRecords);
 
-        // Column set is the ordered union across all records: repeated groups
-        // have a random element count per record, so one record may contain
-        // e.g. partials[1].volume while another does not. Taking only the
-        // first record's keys would silently drop or misalign such columns.
-        List<String> columns = new ArrayList<>();
-        Set<String> seenColumns = new HashSet<>();
-        for (LinkedHashMap<String, String> flat : flatRecords) {
-            for (String key : flat.keySet()) {
-                if (seenColumns.add(key)) {
-                    columns.add(key);
-                }
-            }
-        }
+        List<String> lines = flattenedRecords.stream()
+                .map(record -> toLine(record, columns))
+                .toList();
 
-        StringBuilder sb = new StringBuilder();
-        for (LinkedHashMap<String, String> flat : flatRecords) {
-            List<String> values = new ArrayList<>(columns.size());
-            for (String column : columns) {
-                values.add(flat.getOrDefault(column, ""));
-            }
-            sb.append(String.join(FIELD_SEPARATOR, values)).append('\n');
-        }
+        Path filePath = Files.createTempFile(
+                structureName + FILE_NAME_PREFIX_SUFFIX, FILE_NAME_EXTENSION);
+        Files.write(filePath, lines, StandardCharsets.US_ASCII);
 
-        Path tempFile = Files.createTempFile(structureName + FILE_NAME_JOINER, TXT_FILE_SUFFIX);
-        Files.writeString(tempFile, sb.toString());
-        // Temp .txt files are one-shot downloads; make sure they do not pile up.
-        tempFile.toFile().deleteOnExit();
-
-        log.info("CDR file successfully written to: {}", tempFile.toAbsolutePath());
-        return tempFile;
+        log.info("{} kayit ASCII olarak yazildi: {}", lines.size(), filePath);
+        return filePath;
     }
 
-    /**
-     * Recursively flattens a record tree into ordered leaf columns.
-     * Leaf values are stripped of ASN.1 literal decoration ("..." and '..'D)
-     * so the token-separated output stays clean and machine-parseable.
-     */
-    @SuppressWarnings("unchecked")
-    private void flatten(String prefix, Map<String, Object> node, LinkedHashMap<String, String> out) {
-        for (Map.Entry<String, Object> entry : node.entrySet()) {
-            String path = prefix.isEmpty() ? entry.getKey() : prefix + PATH_SEPARATOR + entry.getKey();
-            Object value = entry.getValue();
+    /** Kayit agacini "yol -> deger" seklinde duz bir haritaya cevirir. */
+    private Map<String, String> flattenRecord(Map<String, Object> record) {
+        Map<String, String> flattened = new LinkedHashMap<>();
+        flattenNode(record, EMPTY_PATH, flattened);
+        return flattened;
+    }
 
-            if (value instanceof Map<?, ?> nested) {
-                flatten(path, (Map<String, Object>) nested, out);
-            } else if (value instanceof List<?> items) {
-                for (int i = 0; i < items.size(); i++) {
-                    Object item = items.get(i);
-                    if (item instanceof Map<?, ?> nestedItem) {
-                        flatten(path + "[" + i + "]", (Map<String, Object>) nestedItem, out);
-                    } else {
-                        // Repeated primitive (SEQUENCE OF OCTET STRING etc.)
-                        out.put(path + "[" + i + "]", AsnLiteralFormatter.strip(item));
-                    }
-                }
-            } else {
-                out.put(path, AsnLiteralFormatter.strip(value));
-            }
+    private void flattenNode(Object node, String path, Map<String, String> target) {
+        if (node instanceof Map<?, ?> map) {
+            map.forEach((key, value) -> flattenNode(value, appendName(path, String.valueOf(key)), target));
+            return;
         }
+        if (node instanceof List<?> list) {
+            for (int index = 0; index < list.size(); index++) {
+                flattenNode(list.get(index), appendIndex(path, index), target);
+            }
+            return;
+        }
+        target.put(path, AsnLiteralFormatter.strip(node));
+    }
+
+    /** Tum kayitlarin sutunlarini gorulme sirasini koruyarak birlestirir. */
+    private Set<String> collectColumns(List<Map<String, String>> flattenedRecords) {
+        Set<String> columns = new LinkedHashSet<>();
+        flattenedRecords.forEach(record -> columns.addAll(record.keySet()));
+        return columns;
+    }
+
+    private String toLine(Map<String, String> record, Set<String> columns) {
+        List<String> values = new ArrayList<>(columns.size());
+        columns.forEach(column -> values.add(record.getOrDefault(column, EMPTY_VALUE)));
+        return String.join(FIELD_SEPARATOR, values);
+    }
+
+    private String appendName(String path, String fieldName) {
+        return path.isEmpty() ? fieldName : path + PATH_SEPARATOR + fieldName;
+    }
+
+    private String appendIndex(String path, int index) {
+        return path + INDEX_OPEN + index + INDEX_CLOSE;
+    }
+
+    private boolean isNull(Object node) {
+        return Objects.isNull(node);
     }
 }

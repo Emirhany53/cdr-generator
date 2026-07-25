@@ -7,26 +7,27 @@ import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateRequest;
 import com.turkcell.cdrgenerator1.model.request.ParseInlineRequest;
-import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
+import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.AsnLiteralFormatter;
+import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
-import java.util.Objects;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @RestController
 @RequestMapping("/api/cdr")
@@ -34,7 +35,7 @@ import java.util.Map;
 @Slf4j
 @Tag(name = "CDR Yapıları ve ASCII Üretimi",
         description = "ASN.1 yapılarını listeler, alanlarını gösterir ve "
-                + "Token-Separated-ASCII (.txt) CDR dosyaları üretir.")
+                + "Token-Separated-ASCII (.dat) CDR dosyaları üretir.")
 public class CdrStructureController {
 
     private static final int MIN_RECORD_COUNT = 1;
@@ -42,19 +43,20 @@ public class CdrStructureController {
     /** Characters allowed in a download file name; everything else becomes '_'. */
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
+    private static final String ATTACHMENT_TEMPLATE = "attachment; filename=\"%s%s\"";
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
     private final CdrFileWriterService cdrFileWriterService;
     private final CdrConfigProperties cdrConfigProperties;
+    private final AiRecordSupplier aiRecordSupplier;
 
     @Operation(summary = "Tüm yapı adlarını listele",
             description = "datastructure.json içinden ayrıştırılan tüm ASN.1 yapılarının adlarını döner.")
     @GetMapping("/structures")
     public ResponseEntity<List<String>> getAllStructureNames() {
         log.info("Listing all available structure names");
-        List<String> structureNames = structureParserService.getAllStructureNames();
-        return ResponseEntity.ok(structureNames);
+        return ResponseEntity.ok(structureParserService.getAllStructureNames());
     }
 
     @Operation(summary = "Yapının alan tanımlarını getir",
@@ -90,7 +92,8 @@ public class CdrStructureController {
         log.info("Parsing inline ASN.1 content (name hint: {})", request.getStructureName());
         AsnStructure structure = structureParserService.parseFromContents(
                 request.getStructureName(), request.getContents(), request.getChoiceSelections());
-        if (Objects.isNull(structure) || Objects.isNull(structure.getFields()) || structure.getFields().isEmpty()) {
+        if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
+                || structure.getFields().isEmpty()) {
             throw new IllegalArgumentException("Content could not be parsed into any ASN.1 structure");
         }
         return ResponseEntity.ok(structure);
@@ -107,45 +110,63 @@ public class CdrStructureController {
     }
 
     @Operation(summary = "ASCII CDR dosyası üret ve indir",
-            description = "Token-Separated-ASCII (.txt) dosyası üretir: her satır bir kayıt, "
-                    + "alanlar '|' ile ayrılır. Belirtilmeyen alanlar otomatik üretilir. "
-                    + "Kayıtlı bir structureName ile ya da istek gövdesindeki 'contents' alanına "
-                    + "konan inline ASN.1 metniyle çalışır (JSON'da olmayan yeni bir şema için). "
-                    + "recordCount değerini yapılandırılan üst sınıra kadar dikkate alır.")
+            description = "Token-Separated-ASCII (.dat) dosyası üretir: her satır bir kayıt, "
+                    + "alanlar '|' ile ayrılır. Belirtilmeyen alanlar yapay zeka ile mantıklı "
+                    + "değerlerle doldurulur; yapay zeka devre dışıysa ya da ürettiği değer "
+                    + "kurallara uymazsa rastgele üretime düşülür. Kayıtlı bir structureName ile "
+                    + "ya da istek gövdesindeki 'contents' alanına konan inline ASN.1 metniyle "
+                    + "çalışır. recordCount değerini yapılandırılan üst sınıra kadar dikkate alır.")
     @PostMapping("/generate")
     public ResponseEntity<Resource> generateAndDownloadCdr(@RequestBody GenerateRequest request) throws IOException {
-
         boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
         log.info("Incoming ASCII CDR generate request (inline={}) for structure: {}",
                 inlineMode, request.getStructureName());
 
         AsnStructure structure = resolveStructure(request, inlineMode);
+        int effectiveRecordCount = resolveRecordCount(request.getRecordCount());
 
-        Integer recordCount = request.getRecordCount();
-        int effectiveRecordCount = Objects.nonNull(recordCount)
-                ? recordCount
+        // Yapay zekadan TUM kayitlar icin degerler tek seferde, toplu olarak alinir.
+        // AI kapaliysa veya hata verirse bos liste doner; deger kaynagi zinciri
+        // otomatik olarak rastgele uretime duser.
+        List<Map<String, String>> aiRecords = aiRecordSupplier.supply(
+                structure.getStructureName(),
+                structure.getFields(),
+                request.getFieldValues(),
+                effectiveRecordCount);
+
+        List<Map<String, Object>> records = new ArrayList<>(effectiveRecordCount);
+        for (int index = 0; index < effectiveRecordCount; index++) {
+            records.add(cdrRecordBuilder.buildRecordFromFields(
+                    structure.getFields(), index, request.getFieldValues(), aiRecords));
+        }
+
+        Path filePath = cdrFileWriterService.writeCdrFile(structure.getStructureName(), records);
+        String safeName = structure.getStructureName()
+                .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
+
+        log.info("Generated ASCII CDR file for '{}': {} record(s)",
+                structure.getStructureName(), records.size());
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_PLAIN)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ATTACHMENT_TEMPLATE.formatted(safeName, DAT_FILE_EXTENSION))
+                .body(new UrlResource(filePath.toUri()));
+    }
+
+    private int resolveRecordCount(Integer requestedRecordCount) {
+        int effectiveRecordCount = Objects.nonNull(requestedRecordCount)
+                ? requestedRecordCount
                 : cdrConfigProperties.getDefaultRecordCount();
 
         if (effectiveRecordCount > cdrConfigProperties.getMaxRecordCount()) {
-            throw new RecordCountExceededException(effectiveRecordCount, cdrConfigProperties.getMaxRecordCount());
+            throw new RecordCountExceededException(effectiveRecordCount,
+                    cdrConfigProperties.getMaxRecordCount());
         }
         if (effectiveRecordCount < MIN_RECORD_COUNT) {
             throw new IllegalArgumentException("recordCount must be at least " + MIN_RECORD_COUNT);
         }
-
-        List<Map<String, Object>> records = new ArrayList<>();
-        for (int i = 0; i < effectiveRecordCount; i++) {
-            records.add(cdrRecordBuilder.buildRecordFromFields(structure.getFields(), request.getFieldValues()));
-        }
-
-        Path filePath = cdrFileWriterService.writeCdrFile(structure.getStructureName(), records);
-        String safeName = structure.getStructureName().replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
-        Resource resource = new UrlResource(filePath.toUri());
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_PLAIN)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safeName + DAT_FILE_EXTENSION + "\"")
-                .body(resource);
+        return effectiveRecordCount;
     }
 
     /**
