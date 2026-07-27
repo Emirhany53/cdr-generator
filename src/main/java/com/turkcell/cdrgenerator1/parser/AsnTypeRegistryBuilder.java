@@ -28,6 +28,9 @@ public class AsnTypeRegistryBuilder {
     private static final Pattern TAGGING_MODE_PATTERN = Pattern.compile(
             MODULE_HEADER_KEYWORD + "\\s+(IMPLICIT|EXPLICIT|AUTOMATIC)\\s+" + TAGS_KEYWORD);
 
+    private static final Pattern ANONYMOUS_CHOICE_FIELD = Pattern.compile(
+            "([A-Za-z][\\w-]*)\\s+CHOICE\\s*\\{");
+
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
         if (contents == null || contents.isBlank()) {
@@ -42,14 +45,10 @@ public class AsnTypeRegistryBuilder {
 
         Matcher starts = DEFINITION_START.matcher(cleaned);
         while (starts.find()) {
-            // Skip the module header line "ModuleName DEFINITIONS ::=" - the token
-            // right before ::= is the DEFINITIONS keyword, not a real type name.
             String precedingToken = cleaned.substring(0, starts.start(1)).trim();
             String candidateName = starts.group(1);
             boolean isModuleHeader = precedingToken.endsWith(MODULE_HEADER_KEYWORD)
                     || MODULE_HEADER_KEYWORD.equals(candidateName);
-            // Handles "DEFINITIONS IMPLICIT TAGS ::=", "DEFINITIONS EXPLICIT TAGS ::=",
-            // "DEFINITIONS AUTOMATIC TAGS ::=" - the name captured before ::= is "TAGS".
             boolean isTaggingMode = TAGS_KEYWORD.equals(candidateName)
                     && precedingToken.contains(MODULE_HEADER_KEYWORD);
             if (isModuleHeader || isTaggingMode) {
@@ -63,7 +62,7 @@ public class AsnTypeRegistryBuilder {
         for (int i = 0; i < names.size(); i++) {
             int statementEnd = (i + 1 < names.size()) ? nameStarts.get(i + 1) : cleaned.length();
             String statement = cleaned.substring(bodyStarts.get(i), statementEnd);
-            registry.putIfAbsent(names.get(i), parseStatement(names.get(i), statement));
+            registry.putIfAbsent(names.get(i), parseStatement(names.get(i), statement, registry));
         }
 
         log.debug("Parsed {} ASN.1 type definitions", registry.size());
@@ -87,13 +86,27 @@ public class AsnTypeRegistryBuilder {
         return AsnTaggingMode.EXPLICIT;
     }
 
-    private AsnTypeDefinition parseStatement(String typeName, String statement) {
+    private AsnTypeDefinition parseStatement(String typeName, String statement,
+                                             Map<String, AsnTypeDefinition> registry) {
         Matcher kindMatcher = STRUCTURED_KIND.matcher(statement);
         int braceIndex = statement.indexOf('{');
 
         if (kindMatcher.find() && braceIndex != -1 && kindMatcher.start() < braceIndex) {
             AsnTypeKind kind = AsnTypeKind.valueOf(kindMatcher.group(1));
             String body = extractBalancedBody(statement, braceIndex);
+
+            // SEQUENCE/SET govdesinde "alanAdi CHOICE { ... }" gibi isimsiz (anonim)
+            // bir CHOICE tanimi olabilir. ASN.1'de bu gecerli bir kalip ama registry
+            // yalnizca "TipAdi ::= ..." seklindeki adlandirilmis tanimlari taniyor,
+            // bu yuzden anonim govde hic cozulmeden ciplak "CHOICE" olarak kalirdi.
+            // Burada anonim govdeyi sentetik bir isimle ayri bir tanim olarak
+            // registry'ye ekleyip, alan satirindaki "CHOICE {...}" ifadesini o
+            // sentetik isimle degistiriyoruz; boylece cozucu onu normal bir
+            // adlandirilmis tip referansi gibi ele alabiliyor.
+            if (kind == AsnTypeKind.SEQUENCE || kind == AsnTypeKind.SET) {
+                body = extractAnonymousChoices(typeName, body, registry);
+            }
+
             return AsnTypeDefinition.builder()
                     .typeName(typeName)
                     .kind(kind)
@@ -106,6 +119,55 @@ public class AsnTypeRegistryBuilder {
                 .kind(AsnTypeKind.ALIAS)
                 .aliasTarget(statement.trim())
                 .build();
+    }
+
+    /**
+     * "alanAdi CHOICE { ... }" kalibini govdede arar, her bulguyu sentetik bir
+     * isimle (ornek: "TokenCdr$cdr") registry'ye ayri bir CHOICE tanimi olarak
+     * kaydeder ve govdedeki ifadeyi o isimle degistirir.
+     */
+    private String extractAnonymousChoices(String parentTypeName, String body,
+                                           Map<String, AsnTypeDefinition> registry) {
+        StringBuilder result = new StringBuilder();
+        Matcher matcher = ANONYMOUS_CHOICE_FIELD.matcher(body);
+        int lastEnd = 0;
+
+        while (matcher.find()) {
+            int choiceBraceIndex = matcher.end() - 1;
+            String choiceBody = extractBalancedBody(body, choiceBraceIndex);
+            int choiceEnd = findMatchingBraceEnd(body, choiceBraceIndex);
+
+            String fieldName = matcher.group(1);
+            String syntheticName = parentTypeName + "$" + fieldName;
+
+            registry.putIfAbsent(syntheticName, AsnTypeDefinition.builder()
+                    .typeName(syntheticName)
+                    .kind(AsnTypeKind.CHOICE)
+                    .rawBody(choiceBody)
+                    .build());
+
+            result.append(body, lastEnd, matcher.start(1))
+                    .append(fieldName).append(' ').append(syntheticName);
+            lastEnd = choiceEnd + 1;
+        }
+        result.append(body.substring(lastEnd));
+        return result.toString();
+    }
+
+    /** extractBalancedBody ile ayni denge mantigini kullanip kapanan '}' indeksini bulur. */
+    private int findMatchingBraceEnd(String text, int braceIndex) {
+        int depth = 0;
+        for (int i = braceIndex; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return text.length() - 1;
     }
 
     private String extractBalancedBody(String statement, int braceIndex) {

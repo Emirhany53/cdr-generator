@@ -39,7 +39,7 @@ app:
           examples: [ "05301234567", "905343545097", "05559876543" ]
 
         - name: calledNumber
-          match: [ "bnumber", "callednumber", "calledparty", "destination", "dialledparty", "requestedparty", "recipient" ]
+          match: [ "bnumber", "callednumber", "calledparty", "destinationnumber", "dialledparty", "requestedparty", "recipient" ]
           description: "Aranan numara; Turkiye GSM (5xx) veya sabit hat (2xx, 3xx, 4xx)"
           pattern: "^(\\+?90|0)?(5(0|3|4|5|6)[0-9]{8}|(2|3|4)[0-9]{9})$"
           examples: [ "905010983255", "02121234567", "05321112233" ]

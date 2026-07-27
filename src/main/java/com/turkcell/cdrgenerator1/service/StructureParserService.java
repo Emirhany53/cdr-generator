@@ -11,7 +11,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
+import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
 
 @Service
 @RequiredArgsConstructor
@@ -28,6 +29,10 @@ public class StructureParserService {
 
     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
     private static final String TYPE_TOKEN_DELIMITER = "[^A-Za-z0-9_-]+";
+
+    /** "SEQUENCE OF TypeName" biçimindeki alias hedeflerini yakalar. */
+    private static final Pattern SEQUENCE_OF_ALIAS = Pattern.compile(
+            "^\\s*SEQUENCE\\s+OF\\s+([A-Za-z][\\w-]*)\\s*$");
 
     private final CdrStructureReaderService cdrStructureReaderService;
     private final AsnTypeRegistryBuilder registryBuilder;
@@ -128,17 +133,57 @@ public class StructureParserService {
      * first defined type.
      */
     private String selectRootTypeName(Map<String, AsnTypeDefinition> registry,
-                                      Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
+                                      Map<String, String> choiceSelections,
+                                      AsnTaggingMode taggingMode) {
         Set<String> referenced = collectReferencedTypeNames(registry);
+
+        // Kök adayı birden fazla olabilir (örnek: bir DB lookup şemasında hem
+        // "Key" hem "Record" tipi tanımlı). İlk bulunanı değil, en çok alana
+        // sahip olanı seçeriz; böylece "sub_merchant_id" gibi tek alanlı bir
+        // arama anahtarı, asıl çok alanlı kayıt tipinin (DBRecord) önüne
+        // geçmez. "SEQUENCE OF X" şeklindeki referanssız bir alias (örnek:
+        // DBDataRecord), X'in kendisini de geçerli bir kök adayı yapar -
+        // X normalde "referanslı" sayılsa bile, bu sarmalayıcı dışında başka
+        // kullanıcısı yoksa asıl veri kaydı X'tir.
+        String bestCandidate = null;
+        int bestFieldCount = -1;
 
         for (String candidate : registry.keySet()) {
             AsnTypeDefinition definition = registry.get(candidate);
-            if (isStructured(definition.getKind()) && !referenced.contains(candidate)
-                    && !fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
-                            .fields().isEmpty()) {
-                log.debug("Selected root type '{}' (unreferenced structured type)", candidate);
-                return candidate;
+
+            if (isStructured(definition.getKind()) && !referenced.contains(candidate)) {
+                int fieldCount = fieldTreeResolver
+                        .resolveRoot(registry, candidate, choiceSelections, taggingMode)
+                        .fields().size();
+
+                if (fieldCount > bestFieldCount) {
+                    bestCandidate = candidate;
+                    bestFieldCount = fieldCount;
+                }
             }
+
+            if (definition.getKind() == AsnTypeKind.ALIAS && !referenced.contains(candidate)) {
+                String innerTypeName = extractSequenceOfInnerType(definition.getAliasTarget());
+                AsnTypeDefinition innerDefinition =
+                        innerTypeName != null ? registry.get(innerTypeName) : null;
+
+                if (innerDefinition != null && isStructured(innerDefinition.getKind())) {
+                    int fieldCount = fieldTreeResolver
+                            .resolveRoot(registry, innerTypeName, choiceSelections, taggingMode)
+                            .fields().size();
+
+                    if (fieldCount > bestFieldCount) {
+                        bestCandidate = innerTypeName;
+                        bestFieldCount = fieldCount;
+                    }
+                }
+            }
+        }
+
+        if (bestCandidate != null && bestFieldCount > 0) {
+            log.debug("Selected root type '{}' ({} fields, unreferenced/wrapper target)",
+                    bestCandidate, bestFieldCount);
+            return bestCandidate;
         }
 
         for (String candidate : registry.keySet()) {
@@ -152,6 +197,15 @@ public class StructureParserService {
         String firstType = registry.keySet().iterator().next();
         log.debug("Selected root type '{}' (first defined, none resolvable)", firstType);
         return firstType;
+    }
+
+    private String extractSequenceOfInnerType(String aliasTarget) {
+        if (aliasTarget == null) {
+            return null;
+        }
+
+        Matcher matcher = SEQUENCE_OF_ALIAS.matcher(aliasTarget);
+        return matcher.matches() ? matcher.group(1) : null;
     }
 
     private Set<String> collectReferencedTypeNames(Map<String, AsnTypeDefinition> registry) {
