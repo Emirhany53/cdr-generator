@@ -34,7 +34,9 @@ public class FieldValueGenerator {
     private static final int MAX_GENERATED_LENGTH = 18;
     /** OCTET STRING hex dump uretiminde her bayt 2 hex karakter olmali. */
     private static final int HEX_CHARS_PER_BYTE = 2;
+    private static final int BITS_PER_BYTE = 8;
 
+    private final TbcdCodec tbcdCodec;
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
     private final BcdTimestampFactory bcdTimestampFactory;
@@ -50,6 +52,15 @@ public class FieldValueGenerator {
         Optional<String> bcdValue = produceBcdIfApplicable(field);
         if (bcdValue.isPresent()) {
             return bcdValue.get();
+        }
+
+        // TBCD (MSISDN/IMSI/IMEI) kontrolu de kural motorundan once gelir; aksi
+        // halde generateFromRuleExample duz rakam dizisini (ornek: "905321112233")
+        // TBCD'ye paketlemeden dogrudan dondurur, boylece SIZE'a sigmayan uzun
+        // bir deger uretilmis olur.
+        Optional<String> tbcdValue = produceTbcdIfApplicable(field);
+        if (tbcdValue.isPresent()) {
+            return tbcdValue.get();
         }
 
         Optional<String> seeded = generateFromRuleExample(field);
@@ -108,6 +119,19 @@ public class FieldValueGenerator {
         };
     }
 
+    private Optional<String> produceTbcdIfApplicable(AsnField field) {
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) != BerPrimitiveType.OCTET_STRING) {
+            return Optional.empty();
+        }
+        Integer byteLength = asnSizeExtractor.extractMaxLength(field.getFieldType()).orElse(null);
+        if (!tbcdCodec.isLikelyTbcd(field.getFieldName(), byteLength)) {
+            return Optional.empty();
+        }
+        // Kural motorundan gecerli bir rakam dizisi al (ornek: msisdn kurali
+        // "905321112233" verir), sonra TBCD'ye paketle.
+        return generateFromRuleExample(field).flatMap(tbcdCodec::encode);
+    }
+
     private boolean isNumericLiteral(String value) {
         return value.matches(NUMERIC_LITERAL_PATTERN);
     }
@@ -159,10 +183,27 @@ public class FieldValueGenerator {
         return value.length() > effectiveMax ? value.substring(0, effectiveMax) : value;
     }
 
-    /** OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir. */
+    /**
+     * OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir.
+     * INTEGER/ENUMERATED'da SIZE yine bayt cinsindendir (BER kodlama genisligi),
+     * karakter/basamak sayisi degildir; N baytlik imzali bir tam sayinin en
+     * fazla kac basamak tutabilecegi hesaplanir. Bu donusum olmadan, ornegin
+     * SIZE(2) (16 bit, -32768..32767 araligi) yanlislikla "2 karakter" sinirina
+     * indirgenip AI'in urettigi gecerli 4 haneli bir deger (ornek: "1234")
+     * reddediliyordu.
+     */
     private int effectiveMaxLength(AsnField field, int sizeConstraint) {
-        boolean isOctetString =
-                BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.OCTET_STRING;
-        return isOctetString ? sizeConstraint * HEX_CHARS_PER_BYTE : sizeConstraint;
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        return switch (type) {
+            case OCTET_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
+            case INTEGER, ENUMERATED -> maxDigitsForByteWidth(sizeConstraint);
+            default -> sizeConstraint;
+        };
+    }
+
+    /** N baytlik imzali bir tam sayinin (isaret haric) en fazla basamak sayisi. */
+    private int maxDigitsForByteWidth(int byteWidth) {
+        double maxAbsValue = Math.pow(2, (double) byteWidth * BITS_PER_BYTE - 1);
+        return String.valueOf((long) maxAbsValue).length();
     }
 }

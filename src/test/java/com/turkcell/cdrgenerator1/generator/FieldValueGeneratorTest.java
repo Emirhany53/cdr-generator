@@ -32,7 +32,8 @@ class FieldValueGeneratorTest {
                 rule("duration", List.of("duration"), "^[0-9]{1,6}$",
                         List.of("15", "127", "842"))));
 
-        generator = new FieldValueGenerator(properties, new AsnSizeExtractor(), new BcdTimestampFactory());
+        generator = new FieldValueGenerator(
+                new TbcdCodec(), properties, new AsnSizeExtractor(), new BcdTimestampFactory());
     }
 
     private AiConfigProperties.FieldRule rule(String name, List<String> match,

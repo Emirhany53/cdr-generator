@@ -4,6 +4,7 @@ import com.turkcell.cdrgenerator1.ai.model.AiGenerationRequest;
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
+import com.turkcell.cdrgenerator1.generator.TbcdCodec;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.service.BerPrimitiveType;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class CdrPromptBuilder implements PromptBuilder {
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
     private final BcdTimestampFactory bcdTimestampFactory;
+    private final TbcdCodec tbcdCodec;
 
     @Override
     public String build(AiGenerationRequest request) {
@@ -76,7 +78,7 @@ public class CdrPromptBuilder implements PromptBuilder {
             }
 
             appendOctetStringGuidance(prompt, field, maxLength);
-            appendRuleIfPresent(prompt, field);
+            appendRuleIfPresent(prompt, field, maxLength);
             prompt.append(LINE);
         });
     }
@@ -98,7 +100,40 @@ public class CdrPromptBuilder implements PromptBuilder {
             prompt.append(RULE_SEPARATOR)
                     .append("bu alan BCD tarihtir: YYMMDD, toplam 6 hex karakter. Ornek: ")
                     .append(bcdTimestampFactory.randomDate());
+        } else if (tbcdCodec.isLikelyTbcd(field.getFieldName(), maxLength)) {
+            appendTbcdGuidance(prompt, field);
         }
+    }
+
+    /**
+     * TBCD (3GPP TS 29.002) alanlar icin AI'a somut bir ornek verir.
+     *
+     * AI, "hex olmali" talimatini gorunce varsayilan olarak ASCII-hex uretiyor
+     * (ornek: "905321112233" -> "393035..."), oysa MSISDN/IMSI/IMEI alanlari
+     * TBCD (nibble-swap) bekler. Kural motorundan gecerli bir rakam dizisi
+     * alip TBCD'ye paketleyerek somut bir ornek gostermek, AI'in dogru
+     * kodlamayi baslangictan uretmesini saglar.
+     */
+    private void appendTbcdGuidance(StringBuilder prompt, AsnField field) {
+        Optional<String> sampleDigits = aiConfigProperties.findRuleFor(field.getFieldName())
+                .map(AiConfigProperties.FieldRule::getExamples)
+                .filter(examples -> !examples.isEmpty())
+                .map(examples -> examples.get(0));
+
+        Optional<String> tbcdExample = sampleDigits.flatMap(tbcdCodec::encode);
+
+        prompt.append(RULE_SEPARATOR)
+                .append("bu alan TBCD (3GPP TS 29.002) kodlu bir abone numarasidir ")
+                .append("(MSISDN/IMSI/IMEI). ASCII-hex DEGIL. Rakamlar ikiser ikiser ")
+                .append("gruplanir, her ciftte rakamlarin sirasi TERS cevrilir ")
+                .append("(dusuk-yuksek nibble), tek sayida rakamda son nibble 'F' ile doldurulur.");
+
+        tbcdExample.ifPresentOrElse(
+                example -> prompt.append(RULE_SEPARATOR)
+                        .append("Ornek: duz numara ").append(sampleDigits.orElse(""))
+                        .append(" -> TBCD ").append(example),
+                () -> prompt.append(RULE_SEPARATOR)
+                        .append("Ornek: duz numara \"12345\" -> TBCD \"2143F5\""));
     }
 
     // --- YENI EKLENEN METOT ---
@@ -106,22 +141,40 @@ public class CdrPromptBuilder implements PromptBuilder {
         return BerPrimitiveType.fromTypeExpression(fieldType) == BerPrimitiveType.OCTET_STRING;
     }
 
-    private void appendRuleIfPresent(StringBuilder prompt, AsnField field) {
+    /**
+     * yml kuralindaki regex ve ornekler TBCD alanlarda (msisdn/imsi/imei)
+     * DUZ rakam dizisine aittir, nihai TBCD hex'e degil. Bu ayrimi acikca
+     * belirtmezsek AI, TBCD talimati ile regex/ornek talimati arasinda
+     * celiski gorup somut/dogrulanabilir olan regex-ornek tarafini
+     * onceliklendiriyor ve TBCD paketlemesini atlayip duz/ASCII-hex
+     * uretiyordu. Bu metot iki talimati birbirini tamamlar hale getirir:
+     * "once buna uyan duz numarayi uret, sonra TBCD'ye cevir".
+     */
+    private void appendRuleIfPresent(StringBuilder prompt, AsnField field, Integer maxLength) {
         Optional<AiConfigProperties.FieldRule> rule =
                 aiConfigProperties.findRuleFor(field.getFieldName());
         if (rule.isEmpty()) {
             return;
         }
         AiConfigProperties.FieldRule fieldRule = rule.get();
+        boolean isTbcd = tbcdCodec.isLikelyTbcd(field.getFieldName(), maxLength);
+
+        if (isTbcd) {
+            prompt.append(RULE_SEPARATOR)
+                    .append("ASAGIDAKI aciklama/regex/ornekler TBCD'YE CEVRILMEDEN ONCEKI ")
+                    .append("DUZ rakam dizisi icindir. Once bu kurala uyan duz bir numara ")
+                    .append("dusun, SONRA yukarida anlatilan TBCD kuralina gore paketle. ")
+                    .append("Nihai deger asla bu duz halin kendisi ya da ASCII-hex'i olmamali.");
+        }
 
         if (Objects.nonNull(fieldRule.getDescription())) {
             prompt.append(RULE_SEPARATOR).append("aciklama: ").append(fieldRule.getDescription());
         }
         if (Objects.nonNull(fieldRule.getPattern())) {
-            prompt.append(RULE_SEPARATOR).append("regex: ").append(fieldRule.getPattern());
+            prompt.append(RULE_SEPARATOR).append("duz halin regex'i: ").append(fieldRule.getPattern());
         }
         if (!fieldRule.getExamples().isEmpty()) {
-            prompt.append(RULE_SEPARATOR).append("ornekler: ")
+            prompt.append(RULE_SEPARATOR).append("duz hal ornekleri: ")
                     .append(String.join(", ", fieldRule.getExamples()));
         }
     }

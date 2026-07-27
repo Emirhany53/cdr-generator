@@ -23,11 +23,12 @@ final class TestValueSources {
         AiConfigProperties properties = new AiConfigProperties();
         AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
         BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
+        TbcdCodec tbcdCodec = new TbcdCodec();
 
         FieldValueValidator validator =
-                new FieldValueValidator(properties, sizeExtractor, bcdTimestampFactory);
+                new FieldValueValidator(tbcdCodec,properties, sizeExtractor, bcdTimestampFactory);
         FieldValueGenerator generator =
-                new FieldValueGenerator(properties, sizeExtractor, bcdTimestampFactory);
+                new FieldValueGenerator(tbcdCodec,properties, sizeExtractor, bcdTimestampFactory);
 
         return List.of(
                 new UserProvidedValueSource(),

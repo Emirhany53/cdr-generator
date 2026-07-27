@@ -3,6 +3,7 @@ package com.turkcell.cdrgenerator1.generator.validation;
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
+import com.turkcell.cdrgenerator1.generator.TbcdCodec;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.service.BerPrimitiveType;
 import lombok.RequiredArgsConstructor;
@@ -29,9 +30,11 @@ public class FieldValueValidator {
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
     private static final String TRUE_LITERAL = "1";
     private static final String FALSE_LITERAL = "0";
+    private static final int BITS_PER_BYTE = 8;
     /** OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir. */
     private static final int HEX_CHARS_PER_BYTE = 2;
 
+    private final TbcdCodec tbcdCodec;
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
     private final BcdTimestampFactory bcdTimestampFactory;
@@ -94,6 +97,12 @@ public class FieldValueValidator {
         if (bcdTimestampFactory.isBcdDate(field.getFieldName(), byteLength)) {
             return bcdTimestampFactory.isValidBcdDate(value);
         }
+        if (tbcdCodec.isLikelyTbcd(field.getFieldName(), byteLength)) {
+            // AI TBCD hex dogrudan uretebilir (nadiren) ya da ASCII-hex/duz
+            // metin uretip biz onu TBCD'ye cevirebiliriz; matchesRule zaten
+            // bu ikinci yolu deniyor, burada sadece bicimsel gecerliligi kontrol ediyoruz.
+            return tbcdCodec.decode(value).isPresent();
+        }
         return true;
     }
 
@@ -104,11 +113,28 @@ public class FieldValueValidator {
                 .orElse(false);
     }
 
-    /** OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir. */
+    /**
+     * OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir.
+     * INTEGER/ENUMERATED'da SIZE yine bayt cinsindendir (BER kodlama genisligi),
+     * karakter/basamak sayisi degildir; N baytlik imzali bir tam sayinin en
+     * fazla kac basamak tutabilecegi hesaplanir. Bu donusum olmadan, ornegin
+     * SIZE(2) (16 bit, -32768..32767 araligi) yanlislikla "2 karakter" sinirina
+     * indirgenip AI'in urettigi gecerli 4 haneli bir deger (ornek: "1234")
+     * reddediliyordu.
+     */
     private int effectiveMaxLength(AsnField field, int sizeConstraint) {
-        boolean isOctetString =
-                BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.OCTET_STRING;
-        return isOctetString ? sizeConstraint * HEX_CHARS_PER_BYTE : sizeConstraint;
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        return switch (type) {
+            case OCTET_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
+            case INTEGER, ENUMERATED -> maxDigitsForByteWidth(sizeConstraint);
+            default -> sizeConstraint;
+        };
+    }
+
+    /** N baytlik imzali bir tam sayinin (isaret haric) en fazla basamak sayisi. */
+    private int maxDigitsForByteWidth(int byteWidth) {
+        double maxAbsValue = Math.pow(2, (double) byteWidth * BITS_PER_BYTE - 1);
+        return String.valueOf((long) maxAbsValue).length();
     }
 
     private boolean matchesRule(AsnField field, String value) {
@@ -125,14 +151,13 @@ public class FieldValueValidator {
             return true;
         }
 
-        // AsciiString/Currency/HexString/NumberString gibi tipler ASN.1'de
-        // OCTET STRING olarak tanimlanir ama gercek icerikleri ASCII metindir
-        // (TAP-0309 standardinin kendi yorumu bunu belirtir). AI dogru metni
-        // uretip ASCII-hex'e cevirebilir (ornek: "949" -> "393439"); bu durumda
-        // hex'i geri cozup kurali tekrar dene.
         if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.OCTET_STRING) {
             Optional<String> decoded = decodeAsciiHex(value);
             if (decoded.isPresent() && compiled.matcher(decoded.get()).matches()) {
+                return true;
+            }
+            Optional<String> tbcdDecoded = tbcdCodec.decode(value);
+            if (tbcdDecoded.isPresent() && compiled.matcher(tbcdDecoded.get()).matches()) {
                 return true;
             }
         }

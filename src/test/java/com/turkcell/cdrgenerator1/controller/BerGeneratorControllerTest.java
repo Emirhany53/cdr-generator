@@ -5,9 +5,7 @@ import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
-import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
-import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
-import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
+import com.turkcell.cdrgenerator1.generator.*;
 import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
 import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
 import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
@@ -24,7 +22,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import com.turkcell.cdrgenerator1.generator.EnumValueResolver;
 
 import java.util.List;
 
@@ -60,12 +57,14 @@ class BerGeneratorControllerTest {
         StructureParserService parserService =
                 new StructureParserService(null, registryBuilder, resolver);
 
+        TbcdCodec tbcdCodec = new TbcdCodec();
+
         CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
                 new UserProvidedValueSource(),
                 new AiValueSource(
-                        new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory),
+                        new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),
                         new EnumValueResolver()),
-                new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
+                new RandomValueSource(new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         BerEncoderService encoder = new BerEncoderService(new TlvWriter());
 

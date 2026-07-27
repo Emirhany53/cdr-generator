@@ -4,10 +4,7 @@ import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
-import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
-import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
-import com.turkcell.cdrgenerator1.generator.EnumValueResolver;
-import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
+import com.turkcell.cdrgenerator1.generator.*;
 import com.turkcell.cdrgenerator1.generator.source.AiValueSource;
 import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
 import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
@@ -65,12 +62,14 @@ class CdrStructureControllerTest {
         AsnSizeExtractor sizeExtractor = new AsnSizeExtractor();
         BcdTimestampFactory bcdTimestampFactory = new BcdTimestampFactory();
 
+        TbcdCodec tbcdCodec = new TbcdCodec();
+
         CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
                 new UserProvidedValueSource(),
                 new AiValueSource(
-                        new FieldValueValidator(aiProperties, sizeExtractor, bcdTimestampFactory),
+                        new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),
                         new EnumValueResolver()),
-                new RandomValueSource(new FieldValueGenerator(aiProperties, sizeExtractor, bcdTimestampFactory))));
+                new RandomValueSource(new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         CdrFileWriterService writer = new CdrFileWriterService();
         AiRecordSupplier aiRecordSupplier = TestAiSupport.disabledSupplier(aiProperties);
