@@ -272,6 +272,7 @@ public class AsnFieldTreeResolver {
 
         EffectiveTag effectiveTag = resolveEffectiveTag(registry, field, innerType, taggingMode);
         boolean choiceElement = isChoiceType(registry, innerType);
+        boolean setElement = isSetType(registry, innerType);
 
         // 'choice' means "this field's TYPE is a CHOICE", independent of
         // 'repeated'. A SEQUENCE OF <Choice> still has CHOICE-typed elements;
@@ -285,39 +286,84 @@ public class AsnFieldTreeResolver {
                 .optional(field.isOptional())
                 .repeated(repeated)
                 .choice(choiceElement)
-                .set(isSetType(registry, innerType))
+                .set(setElement)
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
-                .explicit(effectiveExplicit(effectiveTag.explicit(), repeated, choiceElement))
+                .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement, setElement))
                 .children(children.isEmpty() ? null : children)
                 .build();
     }
 
     /**
-     * Neutralizes a written {@code EXPLICIT} on a SEQUENCE-OF-CHOICE field.
+     * Neutralizes a written {@code EXPLICIT} that the real MMTel-family wire
+     * format doesn't carry, without touching the vendored schema text.
      *
-     * <p>X.680 doesn't forbid this shape - {@code [n] EXPLICIT ListOfX} where
-     * {@code ListOfX ::= SEQUENCE OF Choice} is syntactically legal, and would
-     * mean "wrap the whole list in one more universal SEQUENCE layer under
-     * [n]". But several source modules (MMTel, and the AIMS/IMS/UAG/ATS family
-     * that share the same {@code InvolvedParty} CHOICE) write EXPLICIT there
-     * while the real wire format - confirmed against an EMM-accepted MMTel
-     * reference capture - has no such layer: [n] stands directly for the list,
-     * each element keeping its own CHOICE-alternative tag. Encoding the
-     * written EXPLICIT literally produces BER no decoder for these types
-     * accepts (see {@code BerNestedChoiceEncodingTest}).
+     * <p>X.680 doesn't forbid EXPLICIT on a SEQUENCE-OF-CHOICE or on a SET -
+     * both shapes have their own universal tag (16 collection / 17 SET) that
+     * IMPLICIT could otherwise replace, so writing EXPLICIT there is legal
+     * ASN.1, not a language violation. It's a data-quality question: does the
+     * real wire format actually use the extra layer, or is the keyword a
+     * transcription error relative to the true spec? We only have a hard
+     * answer for one lineage:</p>
      *
-     * <p>Rather than edit the vendored schema text, this one shape is
-     * neutralized here: a SEQUENCE/SET-OF-CHOICE field's own container tag is
-     * always treated as implicit, whatever the source says. Every other type -
-     * scalar CHOICE, plain SEQUENCE/SET, INTEGER, OCTET STRING, ENUMERATED,
-     * repeated non-CHOICE elements - is returned unchanged.</p>
+     * <ul>
+     *   <li><b>SEQUENCE/SET OF &lt;CHOICE&gt;</b> - confirmed via
+     *       {@code list-Of-Calling-Party-Address} against an EMM-accepted
+     *       MMTel reference capture: [n] stands directly for the list, each
+     *       element keeping its own CHOICE-alternative tag, no extra
+     *       universal-SEQUENCE layer. This is safe everywhere: a repeated
+     *       CHOICE that isn't also carrying this specific error is
+     *       vanishingly unlikely to exist, since it would require the
+     *       encoder's own {@code encodeRepeated} CHOICE-element handling
+     *       (see {@code BerNestedChoiceEncodingTest}) to already assume the
+     *       no-wrap shape independent of any per-field detection.</li>
+     *   <li><b>Scalar or repeated SET</b> - confirmed via
+     *       {@code recordExtensions}/{@code mMTelInformation}/
+     *       {@code list-of-subscription-ID} against the same reference: same
+     *       "no extra layer" shape. But GGSN/LTE-family CDRs (e.g. LTE-R10's
+     *       {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress}, where
+     *       {@code PDPAddress} is a SET in that module) write EXPLICIT on a
+     *       SET too, and there is no EMM verification either way for that
+     *       family. Applying this blindly there would be exactly the
+     *       unverified "strip every EXPLICIT" rule this method deliberately
+     *       avoids. So the SET branch is additionally gated on
+     *       {@link #isVerifiedSetNeutralizationFamily}: it only fires inside
+     *       the MMTel/AIMS/IMS/UAG/ATS lineage that was actually checked
+     *       against the reference file. LTE-R10's PDPAddress-as-SET is left
+     *       exactly as written - TODO: revisit if/when an EMM-accepted or
+     *       EMM-rejected capture for that CDR family becomes available.</li>
+     * </ul>
+     *
+     * <p>Every other shape - scalar CHOICE (X.680 mandates EXPLICIT there
+     * regardless), plain SEQUENCE, INTEGER, OCTET STRING, ENUMERATED - is
+     * returned unchanged.</p>
      */
-    private boolean effectiveExplicit(boolean writtenExplicit, boolean repeated, boolean choiceElement) {
+    private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, boolean writtenExplicit,
+                                      boolean repeated, boolean choiceElement, boolean setElement) {
         if (repeated && choiceElement) {
             return false;
         }
+        if (setElement && isVerifiedSetNeutralizationFamily(registry)) {
+            return false;
+        }
         return writtenExplicit;
+    }
+
+    /**
+     * True when this module's registry carries the shared {@code InvolvedParty}
+     * CHOICE lineage - the structural fingerprint of the MMTel/AIMS/IMS/UAG/ATS
+     * family whose EXPLICIT-on-SET anomaly was verified against a real
+     * EMM-accepted MMTel reference capture (see {@link #effectiveExplicit}).
+     *
+     * <p>Confirmed absent from every GGSN/LTE/CCN-family module in the current
+     * data set (they carry no SIP/IMS party addressing at all), so this check
+     * naturally excludes LTE-R10's unrelated, unverified
+     * {@code servedPDPPDNAddress}/{@code PDPAddress} case without needing a
+     * hardcoded module-name list.</p>
+     */
+    private boolean isVerifiedSetNeutralizationFamily(Map<String, AsnTypeDefinition> registry) {
+        AsnTypeDefinition involvedParty = registry.get("InvolvedParty");
+        return involvedParty != null && involvedParty.getKind() == AsnTypeKind.CHOICE;
     }
 
     /**
@@ -397,16 +443,17 @@ public class AsnFieldTreeResolver {
             // TAP0309'da 427) etkileyen ayri, kasitli olarak ertelenmis bir konu;
             // bkz. AsnFieldTreeResolverTest.listAliasCarryingItsOwnTagIsStillDetectedAsRepeated javadoc'u.
             boolean choiceElement = isChoiceType(registry, innerType);
+            boolean setElement = isSetType(registry, innerType);
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())
                     .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
                     .repeated(repeated)
                     .choice(choiceElement)
-                    .set(isSetType(registry, innerType))
+                    .set(setElement)
                     .tagNumber(parsed.getTagNumber())
                     .tagClass(parsed.getTagClass())
-                    .explicit(effectiveExplicit(parsed.isExplicit(), repeated, choiceElement))
+                    .explicit(effectiveExplicit(registry, parsed.isExplicit(), repeated, choiceElement, setElement))
                     .children(children.isEmpty() ? null : children)
                     .build());
         }

@@ -200,6 +200,70 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
+     * berTreeDump against a freshly generated MMTelChargingDataTypes-3.ber
+     * caught 3 more violations the CHOICE-only fix above didn't cover:
+     * {@code recordExtensions [25] EXPLICIT ManagementExtensions} (scalar
+     * SET), {@code mMTelInformation [110] EXPLICIT MMTelInformation} (scalar
+     * SET), and {@code list-of-subscription-ID [31] EXPLICIT SEQUENCE OF
+     * SubscriptionID} (repeated SET) - same "extra universal-tag layer EMM
+     * doesn't accept" mechanism, just on SET instead of CHOICE. This fixture
+     * reproduces both shapes with the {@code InvolvedParty} fingerprint
+     * present (as it is in every real MMTel/AIMS/IMS/UAG/ATS module), so
+     * {@link AsnFieldTreeResolver#isVerifiedSetNeutralizationFamily} fires.
+     */
+    @Test
+    void explicitOnSetIsNeutralizedWithinTheVerifiedInvolvedPartyFamily() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SET {
+                    recordExtensions [25] EXPLICIT ManagementExtensions OPTIONAL,
+                    subscriptions [31] EXPLICIT ListOfSubscriptionID OPTIONAL,
+                    parties [6] EXPLICIT ListOfInvolvedParties OPTIONAL
+                }
+                ManagementExtensions ::= SET { a [0] INTEGER OPTIONAL }
+                ListOfSubscriptionID ::= SEQUENCE OF SubscriptionID
+                SubscriptionID ::= SET { b [0] INTEGER OPTIONAL }
+                ListOfInvolvedParties ::= SEQUENCE OF InvolvedParty
+                InvolvedParty ::= CHOICE {
+                    sIP-URI [0] GraphicString,
+                    tEL-URI [1] GraphicString
+                }
+                END
+                """, "Root");
+
+        assertFalse(fields.get(0).isExplicit(),
+                "scalar SET (recordExtensions-shape) must be neutralized within the verified family");
+        assertFalse(fields.get(1).isExplicit(),
+                "SEQUENCE OF <SET> (list-of-subscription-ID-shape) must be neutralized within the verified family");
+    }
+
+    /**
+     * The exact same SET shape, but WITHOUT the InvolvedParty fingerprint -
+     * simulating LTE-R10's {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress}
+     * (PDPAddress is a SET in that module). There is no EMM verification for
+     * this CDR family, so the written EXPLICIT must be left exactly as-is;
+     * this is what keeps the fix from becoming a blanket "ignore EXPLICIT on
+     * SET" rule.
+     */
+    @Test
+    void explicitOnSetIsPreservedOutsideTheVerifiedInvolvedPartyFamily() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    servedPDPPDNAddress [9] EXPLICIT PDPAddress OPTIONAL
+                }
+                PDPAddress ::= SET { a [0] INTEGER OPTIONAL }
+                END
+                """, "Root");
+
+        assertTrue(fields.get(0).isExplicit(),
+                "without the InvolvedParty fingerprint (e.g. LTE-R10) a written EXPLICIT on a SET "
+                        + "must be left untouched - there is no EMM evidence for that CDR family");
+    }
+
+    /**
      * SET vs SEQUENCE must survive both a direct reference and a named list
      * alias, mirroring {@link #choiceFlagSurvivesRepetitionIntroducedByANamedAlias}.
      * ManagementExtensions and SubscriptionID in MMTelChargingDataTypes are both
