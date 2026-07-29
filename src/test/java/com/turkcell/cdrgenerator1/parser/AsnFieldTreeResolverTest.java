@@ -159,6 +159,44 @@ class AsnFieldTreeResolverTest {
         assertTrue(parties.isChoice(),
                 "element type reached through the alias (InvolvedParty) is a CHOICE - "
                         + "encodeRepeated needs this to skip the synthetic per-element SEQUENCE");
+        assertFalse(parties.isExplicit(),
+                "a written EXPLICIT on a SEQUENCE-OF-CHOICE field must be neutralized: the real "
+                        + "MMTel wire format (confirmed against an EMM-accepted reference capture) has no "
+                        + "extra universal SEQUENCE between [6] and the CHOICE elements. Honoring the "
+                        + "source EXPLICIT literally here is exactly the bug that made EMM reject "
+                        + "list-Of-Calling-Party-Address; see AsnFieldTreeResolver.effectiveExplicit().");
+    }
+
+    /**
+     * The neutralization in {@link #choiceFlagSurvivesRepetitionIntroducedByANamedAlias}
+     * must stay scoped to SEQUENCE/SET-OF-CHOICE: every other EXPLICIT usage -
+     * scalar CHOICE, plain SEQUENCE, plain repeated element - keeps behaving
+     * exactly as before.
+     */
+    @Test
+    void explicitIsPreservedForEveryShapeOtherThanSequenceOfChoice() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    scalarChoice [4] EXPLICIT NodeAddress OPTIONAL,
+                    plainSequence [7] EXPLICIT MySeq OPTIONAL,
+                    plainList [12] EXPLICIT ListOfInts OPTIONAL
+                }
+                NodeAddress ::= CHOICE {
+                    iPAddress [0] GraphicString,
+                    domainName [1] GraphicString
+                }
+                MySeq ::= SEQUENCE { a [0] INTEGER }
+                ListOfInts ::= SEQUENCE OF INTEGER
+                END
+                """, "Root");
+
+        assertTrue(fields.get(0).isExplicit(), "scalar CHOICE must keep its EXPLICIT tag");
+        assertTrue(fields.get(1).isExplicit(), "a plain SEQUENCE field must keep its written EXPLICIT");
+        assertTrue(fields.get(2).isExplicit(),
+                "a SEQUENCE OF <non-CHOICE> must keep its written EXPLICIT - only the "
+                        + "SEQUENCE-OF-CHOICE shape is neutralized");
     }
 
     /**

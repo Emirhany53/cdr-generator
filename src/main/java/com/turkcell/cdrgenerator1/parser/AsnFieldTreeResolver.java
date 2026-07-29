@@ -271,6 +271,7 @@ public class AsnFieldTreeResolver {
         String fieldType = resolveFieldType(registry, field.getFieldType(), innerType, children);
 
         EffectiveTag effectiveTag = resolveEffectiveTag(registry, field, innerType, taggingMode);
+        boolean choiceElement = isChoiceType(registry, innerType);
 
         // 'choice' means "this field's TYPE is a CHOICE", independent of
         // 'repeated'. A SEQUENCE OF <Choice> still has CHOICE-typed elements;
@@ -283,13 +284,40 @@ public class AsnFieldTreeResolver {
                 .fieldType(fieldType)
                 .optional(field.isOptional())
                 .repeated(repeated)
-                .choice(isChoiceType(registry, innerType))
+                .choice(choiceElement)
                 .set(isSetType(registry, innerType))
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
-                .explicit(effectiveTag.explicit())
+                .explicit(effectiveExplicit(effectiveTag.explicit(), repeated, choiceElement))
                 .children(children.isEmpty() ? null : children)
                 .build();
+    }
+
+    /**
+     * Neutralizes a written {@code EXPLICIT} on a SEQUENCE-OF-CHOICE field.
+     *
+     * <p>X.680 doesn't forbid this shape - {@code [n] EXPLICIT ListOfX} where
+     * {@code ListOfX ::= SEQUENCE OF Choice} is syntactically legal, and would
+     * mean "wrap the whole list in one more universal SEQUENCE layer under
+     * [n]". But several source modules (MMTel, and the AIMS/IMS/UAG/ATS family
+     * that share the same {@code InvolvedParty} CHOICE) write EXPLICIT there
+     * while the real wire format - confirmed against an EMM-accepted MMTel
+     * reference capture - has no such layer: [n] stands directly for the list,
+     * each element keeping its own CHOICE-alternative tag. Encoding the
+     * written EXPLICIT literally produces BER no decoder for these types
+     * accepts (see {@code BerNestedChoiceEncodingTest}).
+     *
+     * <p>Rather than edit the vendored schema text, this one shape is
+     * neutralized here: a SEQUENCE/SET-OF-CHOICE field's own container tag is
+     * always treated as implicit, whatever the source says. Every other type -
+     * scalar CHOICE, plain SEQUENCE/SET, INTEGER, OCTET STRING, ENUMERATED,
+     * repeated non-CHOICE elements - is returned unchanged.</p>
+     */
+    private boolean effectiveExplicit(boolean writtenExplicit, boolean repeated, boolean choiceElement) {
+        if (repeated && choiceElement) {
+            return false;
+        }
+        return writtenExplicit;
     }
 
     /**
@@ -368,16 +396,17 @@ public class AsnFieldTreeResolver {
             // aksine) miras alinmaz. Bu, TAP ailesinde 1487 alani (27 yapida,
             // TAP0309'da 427) etkileyen ayri, kasitli olarak ertelenmis bir konu;
             // bkz. AsnFieldTreeResolverTest.listAliasCarryingItsOwnTagIsStillDetectedAsRepeated javadoc'u.
+            boolean choiceElement = isChoiceType(registry, innerType);
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())
                     .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
                     .repeated(repeated)
-                    .choice(isChoiceType(registry, innerType))
+                    .choice(choiceElement)
                     .set(isSetType(registry, innerType))
                     .tagNumber(parsed.getTagNumber())
                     .tagClass(parsed.getTagClass())
-                    .explicit(parsed.isExplicit())
+                    .explicit(effectiveExplicit(parsed.isExplicit(), repeated, choiceElement))
                     .children(children.isEmpty() ? null : children)
                     .build());
         }
