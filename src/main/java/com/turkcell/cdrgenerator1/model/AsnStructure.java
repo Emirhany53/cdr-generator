@@ -23,6 +23,14 @@ public class AsnStructure {
     private boolean choiceRoot;
 
     /**
+     * True when the root type is a SET rather than a SEQUENCE. The record
+     * wrapper then carries universal tag 17 instead of 16 (X.690 8.11).
+     * Meaningless when {@link #choiceRoot} is true, since a CHOICE root is
+     * encoded as its selected alternative and gets no wrapper of its own.
+     */
+    private boolean setRoot;
+
+    /**
      * When {@link #choiceRoot} is true, the ASN.1 type name of the root CHOICE
      * (e.g. "TokenCDR"). This is the key a caller must use in a
      * {@code choiceSelections} map to pick a different alternative. Null when

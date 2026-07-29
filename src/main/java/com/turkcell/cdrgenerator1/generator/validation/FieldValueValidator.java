@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.math.BigInteger;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -107,34 +108,51 @@ public class FieldValueValidator {
     }
 
     private boolean exceedsMaxLength(AsnField field, String value) {
-        return asnSizeExtractor.extractMaxLength(field.getFieldType())
-                .map(maxLength -> effectiveMaxLength(field, maxLength))
-                .map(effectiveMax -> value.length() > effectiveMax)
-                .orElse(false);
+        Optional<Integer> sizeConstraint = asnSizeExtractor.extractMaxLength(field.getFieldType());
+        if (sizeConstraint.isEmpty()) {
+            return false;
+        }
+
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
+            return exceedsIntegerRange(value, sizeConstraint.get());
+        }
+
+        return value.length() > effectiveMaxLength(field, sizeConstraint.get());
+    }
+
+    /**
+     * True when the value cannot be encoded within SIZE(n) bytes.
+     *
+     * <p>Counting digits is not equivalent: 9053435 has 7 digits, the most a
+     * 3-byte signed integer can show, yet it is above 8388607 and BER has to
+     * spend a fourth byte on it. The range is what the constraint actually
+     * limits, so that is what gets checked.</p>
+     */
+    private boolean exceedsIntegerRange(String value, int byteWidth) {
+        BigInteger parsed;
+        try {
+            parsed = new BigInteger(value.trim());
+        } catch (NumberFormatException ex) {
+            // Not an integer literal at all - matchesPrimitiveType already rejects that.
+            return false;
+        }
+        BigInteger max = BigInteger.ONE.shiftLeft(byteWidth * BITS_PER_BYTE - 1).subtract(BigInteger.ONE);
+        BigInteger min = max.negate().subtract(BigInteger.ONE);
+        return parsed.compareTo(max) > 0 || parsed.compareTo(min) < 0;
     }
 
     /**
      * OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir.
-     * INTEGER/ENUMERATED'da SIZE yine bayt cinsindendir (BER kodlama genisligi),
-     * karakter/basamak sayisi degildir; N baytlik imzali bir tam sayinin en
-     * fazla kac basamak tutabilecegi hesaplanir. Bu donusum olmadan, ornegin
-     * SIZE(2) (16 bit, -32768..32767 araligi) yanlislikla "2 karakter" sinirina
-     * indirgenip AI'in urettigi gecerli 4 haneli bir deger (ornek: "1234")
-     * reddediliyordu.
+     * INTEGER/ENUMERATED bu yoldan gecmez: onlar icin basamak sayisi degil,
+     * {@link #exceedsIntegerRange} ile gercek deger araligi kontrol edilir.
      */
     private int effectiveMaxLength(AsnField field, int sizeConstraint) {
         BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         return switch (type) {
             case OCTET_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
-            case INTEGER, ENUMERATED -> maxDigitsForByteWidth(sizeConstraint);
             default -> sizeConstraint;
         };
-    }
-
-    /** N baytlik imzali bir tam sayinin (isaret haric) en fazla basamak sayisi. */
-    private int maxDigitsForByteWidth(int byteWidth) {
-        double maxAbsValue = Math.pow(2, (double) byteWidth * BITS_PER_BYTE - 1);
-        return String.valueOf((long) maxAbsValue).length();
     }
 
     private boolean matchesRule(AsnField field, String value) {

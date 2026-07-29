@@ -31,6 +31,13 @@ import java.util.regex.Pattern;
  *       their primitive type (INTEGER 2, BOOLEAN 1, OCTET STRING 4,
  *       ENUMERATED 10, IA5String 22...), or universal SEQUENCE for
  *       constructed values.</li>
+ *   <li>A CHOICE field ({@code AsnField.choice}) is never wrapped: its encoding
+ *       is exactly the selected alternative's TLV. A tag on a CHOICE is always
+ *       EXPLICIT (X.680 8.3), so it adds an outer constructed tag around that
+ *       alternative and nothing else. This applies both to a scalar CHOICE
+ *       field and to each element of a {@code SEQUENCE OF <Choice>}
+ *       ({@link #encodeRepeated}) - only the collection's own outer tag keeps
+ *       normal container wrapping.</li>
  * </ul>
  */
 @Slf4j
@@ -68,7 +75,7 @@ public class BerEncoderService {
         Objects.requireNonNull(record, "record must not be null");
 
         if (!structure.isChoiceRoot()) {
-            return encodeRecord(structure.getFields(), record);
+            return encodeRecord(structure.getFields(), record, structure.isSetRoot());
         }
 
         List<AsnField> fields = structure.getFields();
@@ -88,12 +95,21 @@ public class BerEncoderService {
      * the concatenation of the encoded top-level fields.
      */
     public byte[] encodeRecord(List<AsnField> topLevelFields, Map<String, Object> record) {
+        return encodeRecord(topLevelFields, record, false);
+    }
+
+    /**
+     * Encodes one record, wrapping it in a universal SET TLV instead of a
+     * SEQUENCE when {@code setRoot} is true (X.690 8.11).
+     */
+    public byte[] encodeRecord(List<AsnField> topLevelFields, Map<String, Object> record, boolean setRoot) {
         Objects.requireNonNull(topLevelFields, "topLevelFields must not be null");
         Objects.requireNonNull(record, "record must not be null");
 
         byte[] content = encodeFieldList(topLevelFields, record);
+        BerUniversalTag rootTag = setRoot ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE;
         byte[] encoded = tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
-                BerUniversalTag.SEQUENCE.getTagNumber(), true, content);
+                rootTag.getTagNumber(), true, content);
         log.debug("Encoded record into {} BER bytes", encoded.length);
         return encoded;
     }
@@ -133,14 +149,28 @@ public class BerEncoderService {
 
     /** SEQUENCE OF / SET OF: one inner encoding per list element. */
     private byte[] encodeRepeated(AsnField field, List<?> elements) {
+        // The element type may itself be a CHOICE (e.g. Charging-Function-Address.ccf
+        // ::= SEQUENCE OF NodeAddress). Each element is then already the selected
+        // alternative's complete, self-tagged TLV (same shape as the scalar CHOICE
+        // case in wrapInTlv). Wrapping it in a per-element universal SEQUENCE would
+        // hide that tag behind 0x30, which matches none of the CHOICE's
+        // alternatives - the exact bug fixed for the scalar case, just recurring
+        // once per list element instead of once for the field.
+        boolean elementIsChoice = field.isChoice();
+
         ByteArrayOutputStream elementBuffer = new ByteArrayOutputStream();
         for (Object element : elements) {
             byte[] inner;
-            if (isConstructed(field)) {
+            if (elementIsChoice) {
+                inner = encodeConstructed(field, element);
+            } else if (isConstructed(field)) {
                 // Every element of a SEQUENCE OF <SEQUENCE> must be its own
                 // self-delimiting TLV, otherwise the elements merge together.
+                // The element's own universal tag is SET (17) when the element
+                // type is a SET - e.g. SEQUENCE OF SubscriptionID, where
+                // SubscriptionID ::= SET.
                 inner = tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
-                        BerUniversalTag.SEQUENCE.getTagNumber(), true,
+                        elementUniversalTag(field), true,
                         encodeConstructed(field, element));
             } else {
                 inner = wrapLeafInUniversalTlv(field, encodeLeafValue(field, element));
@@ -237,10 +267,22 @@ public class BerEncoderService {
     private byte[] wrapInTlv(AsnField field, byte[] content) {
         boolean constructed = isConstructed(field) || field.isRepeated();
 
+        // A CHOICE is not a container - its encoding IS the selected
+        // alternative's TLV, which `content` already holds complete with the
+        // alternative's own tag. Wrapping it in a universal SEQUENCE (or
+        // re-tagging it implicitly) would hide that tag, and a decoder matching
+        // the incoming element against the CHOICE's alternatives would find no
+        // match. Repeated fields are excluded: there the outer tag wraps the
+        // collection, not a single alternative.
+        boolean choice = field.isChoice() && !field.isRepeated();
+
         if (Objects.isNull(field.getTagNumber())) {
+            if (choice) {
+                return content;
+            }
             return constructed
                     ? tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
-                            BerUniversalTag.SEQUENCE.getTagNumber(), true, content)
+                            containerUniversalTag(field), true, content)
                     : wrapLeafInUniversalTlv(field, content);
         }
 
@@ -248,14 +290,42 @@ public class BerEncoderService {
                 ? field.getTagClass()
                 : BerTagClass.CONTEXT;
 
-        if (field.isExplicit()) {
-            byte[] inner = constructed
-                    ? tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
-                            BerUniversalTag.SEQUENCE.getTagNumber(), true, content)
-                    : wrapLeafInUniversalTlv(field, content);
+        // X.680 8.3: a CHOICE can never carry an IMPLICIT tag, because the tag
+        // is what identifies the selected alternative. Any tag on a CHOICE is
+        // therefore encoded as EXPLICIT, whatever the module's default tagging.
+        if (field.isExplicit() || choice) {
+            byte[] inner;
+            if (choice) {
+                inner = content;
+            } else if (constructed) {
+                inner = tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
+                        containerUniversalTag(field), true, content);
+            } else {
+                inner = wrapLeafInUniversalTlv(field, content);
+            }
             return tlvWriter.buildTlv(tagClass, field.getTagNumber(), true, inner);
         }
         return tlvWriter.buildTlv(tagClass, field.getTagNumber(), constructed, content);
+    }
+
+    /**
+     * Universal tag for the wrapper the encoder emits around a field's own
+     * content: SET (17) when the field's type is a SET, SEQUENCE (16)
+     * otherwise.
+     *
+     * <p>A repeated field is always SEQUENCE here even when its ELEMENTS are
+     * SETs: the wrapper at this level is the {@code SEQUENCE OF} collection
+     * itself, and the per-element SET tags are emitted by
+     * {@link #elementUniversalTag}.</p>
+     */
+    private int containerUniversalTag(AsnField field) {
+        boolean isSet = field.isSet() && !field.isRepeated();
+        return (isSet ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE).getTagNumber();
+    }
+
+    /** Universal tag for one element of a SEQUENCE OF / SET OF collection. */
+    private int elementUniversalTag(AsnField field) {
+        return (field.isSet() ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE).getTagNumber();
     }
 
     /** Builds the universal-class TLV matching the leaf field's primitive type. */

@@ -118,6 +118,7 @@ public class StructureParserService {
                 .structureName(name)
                 .fields(root.fields())
                 .choiceRoot(root.kind() == AsnTypeKind.CHOICE)
+                .setRoot(root.kind() == AsnTypeKind.SET)
                 .choiceTypeName(choiceInfo != null ? choiceInfo.choiceTypeName() : null)
                 .choiceAlternatives(choiceInfo != null ? choiceInfo.alternativeNames() : null)
                 .build();

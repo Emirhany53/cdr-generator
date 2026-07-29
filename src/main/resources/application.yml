@@ -92,6 +92,24 @@ app:
           pattern: "^[0-9]{1,12}$"
           examples: [ "1048576", "52428800" ]
 
+        - name: ipAddress
+          match: [ "ipaddress", "ipv4", "sgsnaddress", "ggsnaddress", "pdpaddress", "gsnaddress" ]
+          description: "Ozel ag IPv4 adresi"
+          pattern: "^(10|172|192)\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}$"
+          examples: [ "10.219.22.197" ]
+
+        - name: accessPointName
+          match: [ "accesspointname", "apn" ]
+          description: "Erisim noktasi adi (APN)"
+          pattern: "^[a-zA-Z0-9.]+$"
+          examples: [ "internet", "mms.turkcell.com.tr", "ims" ]
+
+        - name: pdpType
+          match: [ "pdptype" ]
+          description: "PDP tipi kodu"
+          pattern: "^(IP|PPP|IPV6|IPV4V6)$"
+          examples: [ "IP", "IPV6" ]
+
         - name: cellId
           match: [ "cellid", "cellidentifier", "locationarea", "trackingarea" ]
           description: "Sabit uzunlukta sifir dolgulu hucre veya alan kimligi"

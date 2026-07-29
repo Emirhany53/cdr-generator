@@ -69,7 +69,7 @@ public class AsnFieldTreeResolver {
         AsnTypeDefinition current = registry.get(resolvedName);
         Set<String> aliasGuard = new HashSet<>();
         while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
-            String target = stripConstraint(current.getAliasTarget());
+            String target = normalizeAliasTarget(current.getAliasTarget());
             target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
             resolvedName = target;
             current = registry.get(target);
@@ -107,7 +107,7 @@ public class AsnFieldTreeResolver {
         AsnTypeDefinition current = registry.get(resolvedName);
         Set<String> aliasGuard = new HashSet<>();
         while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
-            String target = stripConstraint(current.getAliasTarget());
+            String target = normalizeAliasTarget(current.getAliasTarget());
             target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
             resolvedName = target;
             current = registry.get(target);
@@ -171,12 +171,26 @@ public class AsnFieldTreeResolver {
     private List<AsnField> resolveAlias(Map<String, AsnTypeDefinition> registry, AsnTypeDefinition definition,
                                         Map<String, String> choiceSelections, Set<String> visiting, int depth,
                                         Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
-        String target = stripConstraint(definition.getAliasTarget());
+        String target = normalizeAliasTarget(definition.getAliasTarget());
         String innerType = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
         return resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1, cache, taggingMode);
     }
 
-    /** Legacy CHOICE resolution used for nested CHOICE types: flattens to the chosen alternative's fields. */
+    /**
+     * Nested CHOICE resolution: returns the selected alternative as a SINGLE
+     * field, keeping its own tag and EXPLICIT flag intact.
+     *
+     * <p>This deliberately does NOT flatten to the alternative's inner fields.
+     * Flattening loses every intermediate tag, which breaks chains such as
+     * {@code nodeAddress [4] EXPLICIT NodeAddress -> iPAddress [0] EXPLICIT
+     * IPAddress -> iPBinaryAddress -> iPBinV4Address [0]}: the {@code [0]
+     * EXPLICIT} layer would vanish and the encoder would emit a universal
+     * SEQUENCE in its place, producing BER that no decoder accepts.</p>
+     *
+     * <p>The caller ({@code attachChildren} / {@code parseFieldLines}) marks the
+     * owning field with {@code choice=true}, so the encoder knows this single
+     * child IS the value and must not be wrapped.</p>
+     */
     private List<AsnField> resolveChoiceAlternative(Map<String, AsnTypeDefinition> registry, String choiceTypeName,
                                                     String rawBody, Map<String, String> choiceSelections,
                                                     Set<String> visiting, int depth,
@@ -194,7 +208,7 @@ public class AsnFieldTreeResolver {
                 firstAlternative = alternative;
             }
             if (alternative.getFieldName().equals(preferredAlternative)) {
-                return resolveAlternative(registry, alternative, choiceSelections, visiting, depth, cache, taggingMode);
+                return List.of(attachChildren(registry, alternative, choiceSelections, visiting, depth, cache, taggingMode));
             }
         }
 
@@ -203,7 +217,7 @@ public class AsnFieldTreeResolver {
                 log.warn("Choice alternative '{}' not found in '{}', falling back to first alternative '{}'",
                         preferredAlternative, choiceTypeName, firstAlternative.getFieldName());
             }
-            return resolveAlternative(registry, firstAlternative, choiceSelections, visiting, depth, cache, taggingMode);
+            return List.of(attachChildren(registry, firstAlternative, choiceSelections, visiting, depth, cache, taggingMode));
         }
         return List.of();
     }
@@ -256,50 +270,26 @@ public class AsnFieldTreeResolver {
                 cache, taggingMode);
         String fieldType = resolveFieldType(registry, field.getFieldType(), innerType, children);
 
-        Integer tagNumber = field.getTagNumber();
-        BerTagClass tagClass = field.getTagClass();
-        boolean explicit = field.isExplicit();
+        EffectiveTag effectiveTag = resolveEffectiveTag(registry, field, innerType, taggingMode);
 
-        if (tagNumber == null) {
-            AsnTypeDefinition aliasDef = registry.get(innerType);
-            if (aliasDef != null && aliasDef.getKind() == AsnTypeKind.ALIAS
-                    && aliasDef.getAliasTarget() != null) {
-                Matcher aliasTag = ALIAS_TAG.matcher(aliasDef.getAliasTarget());
-                if (aliasTag.find()) {
-                    tagNumber = Integer.valueOf(aliasTag.group(2));
-                    tagClass = aliasTag.group(1) != null
-                            ? BerTagClass.valueOf(aliasTag.group(1))
-                            : BerTagClass.CONTEXT;
-                    explicit = aliasTag.group(3) != null
-                            ? aliasTag.group(3).trim().equalsIgnoreCase("EXPLICIT")
-                            : taggingMode == AsnTaggingMode.EXPLICIT;
-                }
-            }
-        }
-
+        // 'choice' means "this field's TYPE is a CHOICE", independent of
+        // 'repeated'. A SEQUENCE OF <Choice> still has CHOICE-typed elements;
+        // encodeRepeated() needs that signal to avoid wrapping each element in
+        // a synthetic SEQUENCE. wrapInTlv() applies its own !isRepeated() guard
+        // when deciding how to wrap the field's OUTER collection tag, so this
+        // flag no longer needs to pre-filter that case here.
         return AsnField.builder()
                 .fieldName(field.getFieldName())
                 .fieldType(fieldType)
                 .optional(field.isOptional())
                 .repeated(repeated)
-                .tagNumber(tagNumber)
-                .tagClass(tagClass)
-                .explicit(explicit)
+                .choice(isChoiceType(registry, innerType))
+                .set(isSetType(registry, innerType))
+                .tagNumber(effectiveTag.tagNumber())
+                .tagClass(effectiveTag.tagClass())
+                .explicit(effectiveTag.explicit())
                 .children(children.isEmpty() ? null : children)
                 .build();
-    }
-
-    /**
-     * Resolves the chosen CHOICE alternative (nested case). When the alternative
-     * is structured its fields are returned; when it is primitive the alternative
-     * itself is kept as a single leaf field so the CHOICE never resolves empty.
-     */
-    private List<AsnField> resolveAlternative(Map<String, AsnTypeDefinition> registry, AsnField alternative,
-                                              Map<String, String> choiceSelections, Set<String> visiting, int depth,
-                                              Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
-        List<AsnField> resolved = resolveByTypeName(registry, alternative.getFieldType(),
-                choiceSelections, visiting, depth + 1, cache, taggingMode);
-        return resolved.isEmpty() ? List.of(alternative) : resolved;
     }
 
     /**
@@ -372,11 +362,19 @@ public class AsnFieldTreeResolver {
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                     cache, taggingMode);
 
+            // NOT: burada bilerek resolveEffectiveTag KULLANILMIYOR. Bir SEQUENCE/SET
+            // govdesindeki alan kendi [n] etiketini tasimiyorsa tag'siz kalir - alias
+            // hedefinin kendi tag'i (attachChildren'daki CHOICE alternatifi durumunun
+            // aksine) miras alinmaz. Bu, TAP ailesinde 1487 alani (27 yapida,
+            // TAP0309'da 427) etkileyen ayri, kasitli olarak ertelenmis bir konu;
+            // bkz. AsnFieldTreeResolverTest.listAliasCarryingItsOwnTagIsStillDetectedAsRepeated javadoc'u.
             fields.add(AsnField.builder()
                     .fieldName(parsed.getFieldName())
                     .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
                     .repeated(repeated)
+                    .choice(isChoiceType(registry, innerType))
+                    .set(isSetType(registry, innerType))
                     .tagNumber(parsed.getTagNumber())
                     .tagClass(parsed.getTagClass())
                     .explicit(parsed.isExplicit())
@@ -384,6 +382,44 @@ public class AsnFieldTreeResolver {
                     .build());
         }
         return fields;
+    }
+
+    /**
+     * Resolves the tag that belongs to a CHOICE alternative. A tag written
+     * directly on the alternative always wins; otherwise a leading tag on its
+     * direct alias target is inherited.
+     *
+     * <p>Used only by {@link #attachChildren} (CHOICE alternatives).
+     * {@link #parseFieldLines} (ordinary SEQUENCE/SET fields) deliberately does
+     * NOT use this - see the comment at its call site.</p>
+     */
+    private EffectiveTag resolveEffectiveTag(Map<String, AsnTypeDefinition> registry, AsnField field,
+                                             String innerType, AsnTaggingMode taggingMode) {
+        if (field.getTagNumber() != null) {
+            return new EffectiveTag(field.getTagNumber(), field.getTagClass(), field.isExplicit());
+        }
+
+        AsnTypeDefinition aliasDef = registry.get(innerType);
+        if (aliasDef == null || aliasDef.getKind() != AsnTypeKind.ALIAS
+                || aliasDef.getAliasTarget() == null) {
+            return new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+        }
+
+        Matcher aliasTag = ALIAS_TAG.matcher(aliasDef.getAliasTarget());
+        if (!aliasTag.find()) {
+            return new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+        }
+
+        BerTagClass tagClass = aliasTag.group(1) != null
+                ? BerTagClass.valueOf(aliasTag.group(1))
+                : BerTagClass.CONTEXT;
+        boolean explicit = aliasTag.group(3) != null
+                ? aliasTag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
+                : taggingMode == AsnTaggingMode.EXPLICIT;
+        return new EffectiveTag(Integer.valueOf(aliasTag.group(2)), tagClass, explicit);
+    }
+
+    private record EffectiveTag(Integer tagNumber, BerTagClass tagClass, boolean explicit) {
     }
 
     private String resolveLeafBaseType(Map<String, AsnTypeDefinition> registry, String typeName) {
@@ -457,10 +493,95 @@ public class AsnFieldTreeResolver {
         return ALIAS_TAG.matcher(typeExpression).replaceFirst("").trim();
     }
 
+    /** Normalizes an alias target before using it as a registry key or type expression. */
+    private String normalizeAliasTarget(String aliasTarget) {
+        return stripAliasTag(stripConstraint(aliasTarget));
+    }
+
+    /**
+     * True when {@code typeName} is an alias whose target is a list, e.g.
+     * {@code ListOfInvolvedParties ::= SEQUENCE OF InvolvedParty}.
+     *
+     * <p>The alias target is stored raw, so it may still carry its own tag -
+     * {@code CurrencyConversion ::= [APPLICATION 80] SEQUENCE OF
+     * ExchangeRateDefinition}. Without stripping that tag first the target does
+     * not start with "SEQUENCE OF", the field is never marked repeated, and a
+     * list gets encoded as a single element. The tag itself is not lost: the
+     * caller reads it separately via ALIAS_TAG when the field has no tag of its
+     * own.</p>
+     */
     private boolean isAliasRepeated(Map<String, AsnTypeDefinition> registry, String typeName) {
         AsnTypeDefinition def = registry.get(typeName);
-        return def != null && def.getKind() == AsnTypeKind.ALIAS
-                && isRepeatedExpression(stripConstraint(def.getAliasTarget()));
+        if (def == null || def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+            return false;
+        }
+        return isRepeatedExpression(stripConstraint(stripAliasTag(def.getAliasTarget())));
+    }
+
+    /**
+     * True when {@code typeName} resolves to a CHOICE, following ALIAS chains
+     * (e.g. {@code ServedPartyIPAddress ::= IPAddress} where IPAddress is a
+     * CHOICE). The encoder needs this to avoid wrapping a CHOICE in a synthetic
+     * universal SEQUENCE, which would make the record undecodable.
+     *
+     * <p>Also follows a named "list" alias down to its element type (e.g.
+     * {@code ListOfInvolvedParties ::= SEQUENCE OF InvolvedParty} -&gt; checks
+     * InvolvedParty), the same way {@link #resolveRoot} and
+     * {@link #resolveChoiceRootAlternative} already do via
+     * {@link #extractRepeatedInnerType}. Without this, a repeated field whose
+     * repetition is introduced through a named alias - rather than written
+     * inline as "SEQUENCE OF X" on the field itself - would report
+     * {@code choice=false}, and {@code encodeRepeated} would wrap each element
+     * in a synthetic SEQUENCE exactly like the bug this class already fixes for
+     * the inline case.</p>
+     */
+    private boolean isChoiceType(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripConstraint(typeName);
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition def = registry.get(current);
+            if (def == null) {
+                return false;
+            }
+            if (def.getKind() == AsnTypeKind.CHOICE) {
+                return true;
+            }
+            if (def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+                return false;
+            }
+            String target = stripConstraint(stripAliasTag(def.getAliasTarget()));
+            current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+        }
+        return false;
+    }
+
+    /**
+     * True when {@code typeName} resolves to a SET (as opposed to a SEQUENCE),
+     * following ALIAS chains and drilling through a list alias to its element
+     * type exactly like {@link #isChoiceType}.
+     *
+     * <p>The encoder needs this because a SET's universal tag is 17 while a
+     * SEQUENCE's is 16, and the two are indistinguishable once the type has
+     * been resolved to a plain field list.</p>
+     */
+    private boolean isSetType(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripConstraint(typeName);
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition def = registry.get(current);
+            if (def == null) {
+                return false;
+            }
+            if (def.getKind() == AsnTypeKind.SET) {
+                return true;
+            }
+            if (def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+                return false;
+            }
+            String target = stripConstraint(stripAliasTag(def.getAliasTarget()));
+            current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+        }
+        return false;
     }
 
     /** ENUMERATED / isimli-sabitli INTEGER govdesindeki "ad(sayi)" ciftlerini yakalar. */

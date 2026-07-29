@@ -15,6 +15,12 @@ public enum BerUniversalTag {
     ENUMERATED(10),
     UTF8_STRING(12),
     SEQUENCE(16),
+    /**
+     * X.690 8.11: a SET value carries universal tag 17, not 16. Emitting
+     * SEQUENCE for a SET makes a strict decoder reject the record, because the
+     * inner tag of an EXPLICIT wrapper must be the type's own universal tag.
+     */
+    SET(17),
     IA5_STRING(22);
 
     private static final String UTF8_KEYWORD = "UTF8STRING";

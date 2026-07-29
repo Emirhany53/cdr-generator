@@ -7,6 +7,7 @@ import com.turkcell.cdrgenerator1.service.BerPrimitiveType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.math.BigInteger;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
@@ -177,33 +178,62 @@ public class FieldValueGenerator {
     }
 
     private String trimToMaxLength(AsnField field, String value) {
-        int effectiveMax = asnSizeExtractor.extractMaxLength(field.getFieldType())
-                .map(maxLength -> effectiveMaxLength(field, maxLength))
-                .orElse(Integer.MAX_VALUE);
+        Optional<Integer> sizeConstraint = asnSizeExtractor.extractMaxLength(field.getFieldType());
+        if (sizeConstraint.isEmpty()) {
+            return value;
+        }
+
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
+            return fitIntegerToByteWidth(value, sizeConstraint.get());
+        }
+
+        int effectiveMax = effectiveMaxLength(field, sizeConstraint.get());
         return value.length() > effectiveMax ? value.substring(0, effectiveMax) : value;
     }
 
     /**
+     * Brings an INTEGER inside the range a SIZE(n) field can actually hold.
+     *
+     * <p>Cutting the digit string is not enough. SIZE(3) allows at most 7
+     * digits, so a value like 9053435 passes a digit-count check - yet it is
+     * above 8388607, the largest signed 3-byte integer, so BER has to spend a
+     * fourth byte on it and the SIZE(3) constraint is broken. This was visible
+     * in a generated CBSiso record: callingPartySType (INTEGER SIZE(3)) came out
+     * as {@code 02 04 00 8A 24 FB}.</p>
+     *
+     * <p>Out-of-range values are folded back into 0..max rather than clamped to
+     * max, so generated records keep some variety instead of every overflowing
+     * field showing the same boundary number.</p>
+     */
+    private String fitIntegerToByteWidth(String value, int byteWidth) {
+        BigInteger parsed;
+        try {
+            parsed = new BigInteger(value.trim());
+        } catch (NumberFormatException ex) {
+            // Not a plain integer literal - leave it alone and let the validator judge.
+            return value;
+        }
+
+        BigInteger max = BigInteger.ONE.shiftLeft(byteWidth * BITS_PER_BYTE - 1).subtract(BigInteger.ONE);
+        BigInteger min = max.negate().subtract(BigInteger.ONE);
+        if (parsed.compareTo(max) <= 0 && parsed.compareTo(min) >= 0) {
+            return value;
+        }
+        return parsed.mod(max.add(BigInteger.ONE)).toString();
+    }
+
+    /**
      * OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir.
-     * INTEGER/ENUMERATED'da SIZE yine bayt cinsindendir (BER kodlama genisligi),
-     * karakter/basamak sayisi degildir; N baytlik imzali bir tam sayinin en
-     * fazla kac basamak tutabilecegi hesaplanir. Bu donusum olmadan, ornegin
-     * SIZE(2) (16 bit, -32768..32767 araligi) yanlislikla "2 karakter" sinirina
-     * indirgenip AI'in urettigi gecerli 4 haneli bir deger (ornek: "1234")
-     * reddediliyordu.
+     * INTEGER/ENUMERATED bu yoldan gecmez: onlar {@link #trimToMaxLength}
+     * icinde {@link #fitIntegerToByteWidth} ile deger araligina gore ele alinir,
+     * cunku basamak sayisi bayt genisligini dogru temsil etmiyor.
      */
     private int effectiveMaxLength(AsnField field, int sizeConstraint) {
         BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         return switch (type) {
             case OCTET_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
-            case INTEGER, ENUMERATED -> maxDigitsForByteWidth(sizeConstraint);
             default -> sizeConstraint;
         };
-    }
-
-    /** N baytlik imzali bir tam sayinin (isaret haric) en fazla basamak sayisi. */
-    private int maxDigitsForByteWidth(int byteWidth) {
-        double maxAbsValue = Math.pow(2, (double) byteWidth * BITS_PER_BYTE - 1);
-        return String.valueOf((long) maxAbsValue).length();
     }
 }

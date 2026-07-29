@@ -66,6 +66,48 @@ class FieldValueGeneratorTest {
         assertTrue(value.matches("\\d+"));
     }
 
+    /**
+     * The number of decimal digits is not a usable proxy for BER width: 9053435
+     * has 7 digits - the most a 3-byte signed integer can show - yet it is above
+     * 8388607, so BER needs a fourth byte and SIZE(3) is broken. Seen live in a
+     * CBSiso record, where callingPartySType (INTEGER SIZE(3)) came out as
+     * {@code 02 04 00 8A 24 FB}.
+     */
+    @Test
+    void integerSeededFromARuleIsBroughtWithinTheRangeItsSizeCanHold() {
+        // 'msisdn' matches the callingNumber rule, so the field is seeded with a
+        // 11-12 digit phone number - far past what SIZE(3) can hold.
+        for (int attempt = 0; attempt < 200; attempt++) {
+            String value = generator.generate(field("msisdn", "INTEGER (SIZE(3) CODE(\"DEC\"))"));
+            long parsed = Long.parseLong(value);
+            assertTrue(parsed >= -8_388_608L && parsed <= 8_388_607L,
+                    "SIZE(3) holds -8388608..8388607, generated: " + value);
+        }
+    }
+
+    @Test
+    void unconstrainedIntegerFallbackAlsoRespectsSize() {
+        // No rule matches 'someCounter', so this exercises the random fallback,
+        // which draws from 0..99999 and overflows anything narrower than 3 bytes.
+        for (int attempt = 0; attempt < 200; attempt++) {
+            String value = generator.generate(field("someCounter", "INTEGER (SIZE(1))"));
+            long parsed = Long.parseLong(value);
+            assertTrue(parsed >= -128L && parsed <= 127L,
+                    "SIZE(1) holds -128..127, generated: " + value);
+        }
+    }
+
+    @Test
+    void integerAlreadyInsideItsSizeIsLeftUntouched() {
+        // The duration rule seeds 15/127/842, all of which fit SIZE(10) already,
+        // so the folding must not rewrite them into something else.
+        for (int attempt = 0; attempt < 50; attempt++) {
+            String value = generator.generate(field("duration", "INTEGER (SIZE(10) CODE(\"DEC\"))"));
+            assertTrue(value.matches("\\d{1,3}"),
+                    "a value that already fits must pass through unchanged, got: " + value);
+        }
+    }
+
     @Test
     void booleanTypeProducesZeroOrOne() {
         String value = generator.generate(field("someField", "BOOLEAN"));
