@@ -81,6 +81,10 @@ public class FieldValueValidator {
             case INTEGER, ENUMERATED -> value.matches(NUMERIC_LITERAL_PATTERN);
             case BOOLEAN -> TRUE_LITERAL.equals(value) || FALSE_LITERAL.equals(value);
             case OCTET_STRING -> matchesOctetString(field, value);
+            // A NULL encodes as zero-length whatever stands here (X.690 8.8), so
+            // there is no value shape to reject - and rejecting would only push
+            // the chain into a pointless regeneration loop.
+            case NULL -> true;
             case STRING -> true;
         };
     }

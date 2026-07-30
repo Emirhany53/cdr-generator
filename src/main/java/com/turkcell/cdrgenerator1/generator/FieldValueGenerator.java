@@ -26,6 +26,12 @@ public class FieldValueGenerator {
     private static final String DIGITS = "0123456789";
     private static final String TRUE_VALUE = "1";
     private static final String FALSE_VALUE = "0";
+    /**
+     * Placeholder for an ASN.1 NULL field: present but empty. Must not be
+     * {@code null}, or BerEncoderService would treat the field as an unset
+     * OPTIONAL and drop it instead of emitting the zero-length marker.
+     */
+    private static final String NULL_MARKER_VALUE = "";
     private static final String JITTER_SUFFIX_PATTERN = ".*\\d{4}$";
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
     private static final String HEX_LITERAL_PATTERN = "^([0-9A-Fa-f]{2})+$";
@@ -73,6 +79,12 @@ public class FieldValueGenerator {
                     String.valueOf(ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND));
             case BOOLEAN -> ThreadLocalRandom.current().nextBoolean() ? TRUE_VALUE : FALSE_VALUE;
             case OCTET_STRING -> randomHex(hexLengthFor(field));
+            // A NULL carries no value at all - its presence IS the information
+            // (X.690 8.8: no contents octets). An empty string is the honest
+            // representation: NOT null, because a null value would make the
+            // encoder omit the field entirely instead of emitting the marker.
+            // BerEncoderService discards whatever stands here regardless.
+            case NULL -> NULL_MARKER_VALUE;
             case STRING -> randomFrom(ALPHABET, lengthFor(field));
         };
     }
@@ -116,6 +128,11 @@ public class FieldValueGenerator {
             case INTEGER, ENUMERATED -> examples.stream().allMatch(this::isNumericLiteral);
             case BOOLEAN -> examples.stream().allMatch(this::isBooleanLiteral);
             case OCTET_STRING -> examples.stream().allMatch(this::isHexLiteral);
+            // A NULL field holds no value, so no example can ever be compatible
+            // with it. Returning false keeps a loosely-matched yml rule (matching
+            // is by name substring) from seeding content into a field that must
+            // encode as zero-length.
+            case NULL -> false;
             case STRING -> true;
         };
     }
