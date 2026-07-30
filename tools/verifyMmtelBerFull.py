@@ -74,14 +74,26 @@ def children(buf, start, end):
 
 
 def check_shape(buf, path, cs, ce, shape, problems, record_no, hit_paths=None):
+    def fail(msg):
+        problems.append(f"kayit #{record_no} yol={path}: {msg} (shape={shape})")
+
+    # NULL, children() cagrilmadan ONCE ele alinmali: bozuk bir NULL'un icerik
+    # baytlari TLV gibi cozulmeye calisilirsa parser sasirir. Ayrica dogru NULL
+    # bos oldugu icin asagidaki "cocuk yoksa cik" korumasina takilir ve hic
+    # kontrol edilmemis olurdu.
+    if shape == 'null_empty':
+        if hit_paths is not None:
+            hit_paths.add(path)
+        if ce != cs:
+            fail(f"NULL alani {ce - cs} bayt icerik tasiyor - X.690 8.8'e gore "
+                 f"uzunluk 0 OLMALI (icerik={buf[cs:ce].hex(' ')})")
+        return
+
     kids = list(children(buf, cs, ce))
     if not kids:
         return  # OPTIONAL alan bu kayitta yok - kontrol edilecek bir sey yok
     if hit_paths is not None:
         hit_paths.add(path)  # bu alan bu kayitta doluydu ve fiilen kontrol edildi
-
-    def fail(msg):
-        problems.append(f"kayit #{record_no} yol={path}: {msg} (shape={shape})")
 
     if shape in ('scalar_choice_direct',):
         for tc, tn, con, _, _ in kids:
@@ -164,8 +176,11 @@ def walk(buf, cs, ce, path, expected, problems, record_no, depth=0, hit_paths=No
             if new_path in expected:
                 shape = expected[new_path]
                 check_shape(buf, new_path, ics, ice, shape, problems, record_no, hit_paths)
-                rcs, rce = real_content_bounds(buf, ics, ice, shape)
-                walk(buf, rcs, rce, new_path, expected, problems, record_no, depth + 1, hit_paths)
+                # Yaprak alanlara (NULL gibi) inilmez: icerikleri TLV degildir,
+                # cozmeye calismak parser'i sasirtir.
+                if con:
+                    rcs, rce = real_content_bounds(buf, ics, ice, shape)
+                    walk(buf, rcs, rce, new_path, expected, problems, record_no, depth + 1, hit_paths)
             elif con:
                 walk(buf, ics, ice, new_path, expected, problems, record_no, depth + 1, hit_paths)
         elif con:

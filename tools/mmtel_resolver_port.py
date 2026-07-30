@@ -550,6 +550,14 @@ def predict_shapes(field: AsnField, path, out: dict, max_depth=6):
         return
     my_path = path + (field.tag_number,)
 
+    # NULL bir YAPRAK ama yine de kontrol edilmeli: X.690 8.8'e gore icerik
+    # oktetleri HIC olmamali (uzunluk 0). Uretecin NULL alanina rastgele deger
+    # koyup icerik yazmasi, EMM'in "Invalid length" ile kaydi reddetmesine yol
+    # acti - bu yuzden sekil haritasina ayri bir tur olarak giriyor.
+    if (field.field_type or '').upper().strip() == 'NULL':
+        out[my_path] = 'null_empty'
+        return
+
     is_constructed = bool(field.children) or field.repeated
     if not is_constructed:
         return

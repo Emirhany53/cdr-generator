@@ -190,6 +190,15 @@ public class BerEncoderService {
     }
 
     private byte[] encodeLeafValue(AsnField field, Object value) {
+        // X.690 8.8: NULL carries NO contents octets. This is checked before the
+        // value is looked at all, because the generator still produces some
+        // placeholder for a NULL field and any of the branches below would
+        // happily turn that into content bytes - which is exactly the defect
+        // that made EMM reject a record with "Invalid length" (a NULL field is
+        // a pure presence marker; the tag alone carries the whole meaning).
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.NULL) {
+            return new byte[0];
+        }
         if (value instanceof Boolean bool) {
             return tlvWriter.encodeBoolean(bool);
         }
@@ -227,6 +236,7 @@ public class BerEncoderService {
             case OCTET_STRING -> BARE_HEX.matcher(text).matches()
                     ? tlvWriter.encodeHex(text)
                     : tlvWriter.encodeString(text);
+            case NULL -> new byte[0];
             case STRING -> tlvWriter.encodeString(text);
         };
     }

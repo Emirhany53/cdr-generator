@@ -12,6 +12,8 @@ public enum BerUniversalTag {
     BOOLEAN(1),
     INTEGER(2),
     OCTET_STRING(4),
+    /** X.690 8.8: NULL's contents octets are always absent (length 0). */
+    NULL(5),
     ENUMERATED(10),
     UTF8_STRING(12),
     SEQUENCE(16),
@@ -44,6 +46,7 @@ public enum BerUniversalTag {
             case INTEGER -> INTEGER;
             case ENUMERATED -> ENUMERATED;
             case OCTET_STRING -> OCTET_STRING;
+            case NULL -> NULL;
             case STRING -> forStringType(typeExpression);
         };
     }
