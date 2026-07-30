@@ -73,10 +73,12 @@ def children(buf, start, end):
         i = nxt
 
 
-def check_shape(buf, path, cs, ce, shape, problems, record_no):
+def check_shape(buf, path, cs, ce, shape, problems, record_no, hit_paths=None):
     kids = list(children(buf, cs, ce))
     if not kids:
         return  # OPTIONAL alan bu kayitta yok - kontrol edilecek bir sey yok
+    if hit_paths is not None:
+        hit_paths.add(path)  # bu alan bu kayitta doluydu ve fiilen kontrol edildi
 
     def fail(msg):
         problems.append(f"kayit #{record_no} yol={path}: {msg} (shape={shape})")
@@ -141,7 +143,7 @@ def real_content_bounds(buf, cs, ce, shape):
     return cs, ce
 
 
-def walk(buf, cs, ce, path, expected, problems, record_no, depth=0):
+def walk(buf, cs, ce, path, expected, problems, record_no, depth=0, hit_paths=None):
     if depth > 12:
         return
     for tc, tn, con, ics, ice in children(buf, cs, ce):
@@ -149,13 +151,13 @@ def walk(buf, cs, ce, path, expected, problems, record_no, depth=0):
             new_path = path + (tn,)
             if new_path in expected:
                 shape = expected[new_path]
-                check_shape(buf, new_path, ics, ice, shape, problems, record_no)
+                check_shape(buf, new_path, ics, ice, shape, problems, record_no, hit_paths)
                 rcs, rce = real_content_bounds(buf, ics, ice, shape)
-                walk(buf, rcs, rce, new_path, expected, problems, record_no, depth + 1)
+                walk(buf, rcs, rce, new_path, expected, problems, record_no, depth + 1, hit_paths)
             elif con:
-                walk(buf, ics, ice, new_path, expected, problems, record_no, depth + 1)
+                walk(buf, ics, ice, new_path, expected, problems, record_no, depth + 1, hit_paths)
         elif con:
-            walk(buf, ics, ice, path, expected, problems, record_no, depth + 1)
+            walk(buf, ics, ice, path, expected, problems, record_no, depth + 1, hit_paths)
 
 
 def main():
@@ -181,21 +183,29 @@ def main():
 
     buf = open(ber_path, "rb").read()
     problems = []
+    hit_paths = set()
     i, record_no = 0, 0
     while i < len(buf):
         tc, tn, con, cs, ce, nxt = parse_tlv(buf, i)
         record_no += 1
         if con and tc == CONTEXT and tn in (83, 999):
-            walk(buf, cs, ce, (), expected, problems, record_no)
+            walk(buf, cs, ce, (), expected, problems, record_no, 0, hit_paths)
         i = nxt
 
     print(f"{record_no} kayit tarandi.")
+    print(f"Kapsam: {len(hit_paths)}/{len(expected)} constructed alan bu dosyada dolu cikip fiilen kontrol edildi "
+          f"(kalani OPTIONAL ve hicbir kayitta doldurulmamis - kontrol edilemedi).")
+    missing = sorted(set(expected) - hit_paths)
+    if missing:
+        print("  Kontrol EDILEMEYEN yollar (bos/populate edilmemis):")
+        for p in missing:
+            print(f"    {p} beklenen={expected[p]}")
     if problems:
         print(f"{len(problems)} ihlal:")
         for p in dict.fromkeys(problems):
             print("  " + p)
         return 1
-    print("Kapsamli kontrol temiz - semadan hesaplanan HIC BIR constructed alanda sarmal uyusmazligi yok.")
+    print("Kapsamli kontrol temiz - fiilen kontrol edilen HICBIR constructed alanda sarmal uyusmazligi yok.")
     return 0
 
 
