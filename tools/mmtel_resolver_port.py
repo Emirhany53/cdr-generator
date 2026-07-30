@@ -162,6 +162,7 @@ class AsnField:
     tag_number: Optional[int] = None
     tag_class: str = 'CONTEXT'
     explicit: bool = False
+    universal_tag_override: Optional[int] = None
     children: list = dc_field(default_factory=list)
 
 
@@ -192,6 +193,51 @@ def strip_alias_tag(type_expr: Optional[str]) -> Optional[str]:
 
 def normalize_alias_target(alias_target: Optional[str]) -> Optional[str]:
     return strip_alias_tag(strip_constraint(alias_target))
+
+
+def read_universal_tag(type_expr: Optional[str]) -> Optional[int]:
+    """Port of AsnFieldTreeResolver.readUniversalTag."""
+    if type_expr is None:
+        return None
+    m = ALIAS_TAG.match(type_expr)
+    if not m or m.group(1) != 'UNIVERSAL':
+        return None
+    return int(m.group(2))
+
+
+def resolve_universal_tag_override(registry: dict, type_name: Optional[str]) -> Optional[int]:
+    """Port of AsnFieldTreeResolver.resolveUniversalTagOverride.
+
+    Follows the alias chain looking for a type that re-tags itself into the
+    UNIVERSAL class, e.g. GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String.
+    Returns the tag number the wire format must carry, or None (the usual case)
+    when the primitive's own universal tag applies.
+    """
+    current = strip_alias_tag(type_name)
+    if current and is_repeated_expression(current):
+        current = extract_repeated_inner_type(current)
+    guard = set()
+    while current is not None and current not in guard:
+        guard.add(current)
+        definition = registry.get(current)
+        if definition is None or definition.kind != 'ALIAS' or definition.alias_target is None:
+            return None
+        alias_target = definition.alias_target
+        universal_tag = read_universal_tag(alias_target)
+        if universal_tag is not None:
+            return universal_tag
+        if contains_named_number_list(alias_target):
+            return None
+        target = strip_alias_tag(strip_constraint(alias_target))
+        current = extract_repeated_inner_type(target) if is_repeated_expression(target) else target
+    return None
+
+
+def contains_named_number_list(type_expr: Optional[str]) -> bool:
+    return bool(type_expr) and '{' in type_expr and NAMED_NUMBER_ENTRY.search(type_expr) is not None
+
+
+NAMED_NUMBER_ENTRY = re.compile(r'([A-Za-z][\w-]*)\s*\(\s*(-?\d+)\s*\)')
 
 
 def normalize_type_text(t: str) -> str:
@@ -397,6 +443,7 @@ def attach_children(registry, field: AsnField, visiting, depth, cache, tagging_m
         tag_number=tag_number,
         tag_class=tag_class,
         explicit=effective_explicit(registry, explicit_tag, repeated, choice_element),
+        universal_tag_override=resolve_universal_tag_override(registry, inner_type),
         children=children,
     )
 
@@ -436,6 +483,7 @@ def parse_field_lines(registry, raw_body, visiting, depth, cache, tagging_mode):
             tag_number=parsed.tag_number,
             tag_class=parsed.tag_class,
             explicit=effective_explicit(registry, parsed.explicit, repeated, choice_element),
+            universal_tag_override=resolve_universal_tag_override(registry, inner_type),
             children=children,
         ))
     return fields
@@ -468,6 +516,31 @@ def resolve_root(registry: dict, root_type_name: str, tagging_mode: str):
 # at the STRUCTURAL level only - no value encoding needed).
 # --------------------------------------------------------------------------
 
+def expected_leaf_tag(field: AsnField) -> int:
+    """The UNIVERSAL tag number a primitive leaf must carry on the wire.
+
+    Mirrors BerEncoderService.wrapLeafInUniversalTlv: an explicit
+    [UNIVERSAL n] re-tag from the schema wins, otherwise the tag implied by the
+    resolved primitive type applies.
+    """
+    if field.universal_tag_override is not None:
+        return field.universal_tag_override
+    upper = (field.field_type or '').upper().strip()
+    if upper.startswith('INTEGER'):
+        return 2
+    if upper.startswith('ENUMERATED'):
+        return 10
+    if upper.startswith('BOOLEAN'):
+        return 1
+    if upper.startswith('OCTET STRING') or upper.startswith('OCTETSTRING'):
+        return 4
+    if upper.startswith('UTF8STRING'):
+        return 12
+    if upper.startswith('IA5STRING'):
+        return 22
+    return 4  # unknown textual/custom types fall back to OCTET STRING
+
+
 def predict_shapes(field: AsnField, path, out: dict, max_depth=6):
     """Recursively walks the resolved field tree, recording an expected shape
     for every CONSTRUCTED field (has children or is repeated) keyed by its
@@ -484,6 +557,17 @@ def predict_shapes(field: AsnField, path, out: dict, max_depth=6):
     if field.repeated:
         if field.choice:
             shape = 'repeated_choice_direct'  # each element: own CHOICE-alt CONTEXT tag, no wrap
+        elif not field.children:
+            # SEQUENCE OF <primitive>, e.g. sDP-Session-Description [4] SEQUENCE OF
+            # GraphicStringImp. The elements are PRIMITIVE leaves carrying their own
+            # universal tag - NOT constructed SEQUENCEs. Expecting a UNIVERSAL
+            # SEQUENCE per element here was a bug in this predictor: it flagged the
+            # very same 5 paths in our output AND in both EMM-accepted reference
+            # captures, which is the signature of a wrong expectation rather than a
+            # real encoding fault.
+            shape = f'repeated_elem_primitive_{expected_leaf_tag(field)}'
+            out[my_path] = shape
+            return
         else:
             shape = 'repeated_elem_set' if field.set_ else 'repeated_elem_seq'
         shape += '_explicit' if field.explicit else '_implicit'

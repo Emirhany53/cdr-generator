@@ -107,6 +107,18 @@ def check_shape(buf, path, cs, ce, shape, problems, record_no, hit_paths=None):
             fail(f"EXPLICIT beklenirken tek cocuk UNIVERSAL {('SET' if want_tag==UNIV_SET else 'SEQUENCE')} degil")
             return
 
+    elif shape.startswith('repeated_elem_primitive_'):
+        # SEQUENCE OF <primitive>: her eleman kendi UNIVERSAL tag'ini tasiyan
+        # bir yaprak TLV olmali. Semada [UNIVERSAL n] ile yeniden etiketlenmis
+        # tipler (GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String) burada
+        # 25 bekler; 22 (duz IA5String) gorulmesi override'in kaybedildigini
+        # gosterir - EMM'in kabul ettigi referans dosyalar 25 tasiyor.
+        want = int(shape.rsplit('_', 1)[1])
+        for tc, tn, con, _, _ in kids:
+            if tc != UNIVERSAL or tn != want:
+                fail(f"eleman UNIVERSAL tag={want} beklenirken class={tc} tag={tn} goruldu")
+                return
+
     elif shape.startswith('repeated_elem_'):
         want_tag = UNIV_SET if 'set' in shape else UNIV_SEQ
         is_explicit = shape.endswith('_explicit')
@@ -189,7 +201,18 @@ def main():
         tc, tn, con, cs, ce, nxt = parse_tlv(buf, i)
         record_no += 1
         if con and tc == CONTEXT and tn in (83, 999):
-            walk(buf, cs, ce, (), expected, problems, record_no, 0, hit_paths)
+            # mMTelRecord/sCIRecord [83]/[999]'un KENDISI de expected'ta bir yol
+            # tasir ((83,) -> scalar_set_implicit): build_expected_shapes bu dis
+            # sarmali da hesaba katarak yol uretiyor, o yuzden walk'a bos path
+            # degil (tn,) verilmeli - yoksa TUM alt yollar bir seviye kayar ve
+            # hicbiri eslesmez (0/54 kapsam gibi yanlis bir sonuc dogurur).
+            record_path = (tn,)
+            rcs, rce = cs, ce
+            if record_path in expected:
+                shape = expected[record_path]
+                check_shape(buf, record_path, cs, ce, shape, problems, record_no, hit_paths)
+                rcs, rce = real_content_bounds(buf, cs, ce, shape)
+            walk(buf, rcs, rce, record_path, expected, problems, record_no, 0, hit_paths)
         i = nxt
 
     print(f"{record_no} kayit tarandi.")

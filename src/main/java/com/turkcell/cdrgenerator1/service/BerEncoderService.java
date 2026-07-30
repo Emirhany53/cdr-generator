@@ -328,10 +328,21 @@ public class BerEncoderService {
         return (field.isSet() ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE).getTagNumber();
     }
 
-    /** Builds the universal-class TLV matching the leaf field's primitive type. */
+    /**
+     * Builds the universal-class TLV matching the leaf field's primitive type.
+     *
+     * <p>A type may re-tag itself into the UNIVERSAL class - the MMTel family's
+     * {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String} encodes its
+     * VALUE as an IA5String but must carry GraphicString's tag 25 on the wire.
+     * {@link AsnField#getUniversalTagOverride()} carries that number when the
+     * schema declares one, and it wins over the tag implied by the resolved
+     * primitive type; otherwise nothing changes.</p>
+     */
     private byte[] wrapLeafInUniversalTlv(AsnField field, byte[] content) {
-        BerUniversalTag universalTag =
-                BerUniversalTag.forPrimitiveType(field.getFieldType());
-        return tlvWriter.buildTlv(BerTagClass.UNIVERSAL, universalTag.getTagNumber(), false, content);
+        Integer override = field.getUniversalTagOverride();
+        int tagNumber = Objects.nonNull(override)
+                ? override
+                : BerUniversalTag.forPrimitiveType(field.getFieldType()).getTagNumber();
+        return tlvWriter.buildTlv(BerTagClass.UNIVERSAL, tagNumber, false, content);
     }
 }

@@ -56,5 +56,26 @@ public class AsnField {
 
     private boolean explicit;
 
+    /**
+     * The universal-class tag number this field's type must be encoded with,
+     * when its ASN.1 definition re-tags a primitive into the UNIVERSAL class -
+     * e.g. {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String}.
+     * {@code null} for the overwhelming majority of fields, which simply use
+     * the universal tag implied by their primitive type.
+     *
+     * <p>The value bytes still follow the underlying type (IA5String here), but
+     * the tag on the wire must be 25 (GraphicString), not 22 (IA5String). The
+     * resolver otherwise discards the {@code [UNIVERSAL n]} prefix while
+     * following the alias chain down to the primitive, which silently loses
+     * that distinction; keeping it here is what lets
+     * {@code BerEncoderService.wrapLeafInUniversalTlv} emit the right tag.</p>
+     *
+     * <p>Only ever consulted where the encoder emits a UNIVERSAL tag of its own:
+     * an untagged leaf, the inner tag of an EXPLICIT wrapper, and each element
+     * of a {@code SEQUENCE OF <primitive>}. An IMPLICIT context tag replaces the
+     * universal tag outright, so those fields are unaffected either way.</p>
+     */
+    private Integer universalTagOverride;
+
     private List<AsnField> children;
 }

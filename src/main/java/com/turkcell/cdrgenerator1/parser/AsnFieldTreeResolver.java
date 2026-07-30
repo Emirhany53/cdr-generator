@@ -290,6 +290,7 @@ public class AsnFieldTreeResolver {
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
                 .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement))
+                .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
     }
@@ -452,6 +453,7 @@ public class AsnFieldTreeResolver {
                     .tagNumber(parsed.getTagNumber())
                     .tagClass(parsed.getTagClass())
                     .explicit(effectiveExplicit(registry, parsed.isExplicit(), repeated, choiceElement))
+                    .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build());
         }
@@ -526,6 +528,75 @@ public class AsnFieldTreeResolver {
             current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
         }
         return current;
+    }
+
+    /**
+     * Finds the UNIVERSAL-class tag a type re-tags itself with, following the
+     * same alias chain as {@link #resolveLeafBaseType} but keeping what that
+     * method deliberately throws away.
+     *
+     * <p>{@link #resolveLeafBaseType} strips every leading tag annotation so
+     * the chain bottoms out in a bare primitive name the encoder can classify.
+     * For {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String} that
+     * yields "IA5String" - correct for choosing how to encode the VALUE, but it
+     * loses the fact that the TAG on the wire has to be 25 (GraphicString), not
+     * 22 (IA5String). The MMTel-family reference captures EMM accepts do carry
+     * tag 25 in exactly these places, so dropping the override produced BER
+     * that a strict decoder rejects.</p>
+     *
+     * <p>Scope is deliberately narrow. Only UNIVERSAL-class annotations are
+     * returned: APPLICATION/CONTEXT tags on an alias target are a different
+     * mechanism, already handled by {@link #resolveEffectiveTag} for CHOICE
+     * alternatives, and re-reading them here would double-apply them. The walk
+     * also stops at the first tag it meets, since an outer re-tag shadows any
+     * further one below it. In the current data set only three type definitions
+     * across the MMTel/AIMS/IMS/UAG/ATS modules use this form (all
+     * {@code [UNIVERSAL 25] IMPLICIT IA5String}); every other type returns
+     * {@code null} and is encoded exactly as before.</p>
+     */
+    private Integer resolveUniversalTagOverride(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripAliasTag(typeName);
+        if (current != null && isRepeatedExpression(current)) {
+            // A repeated field's universal tag belongs to its ELEMENT type; the
+            // collection's own SEQUENCE/SET tag is decided by the encoder.
+            current = extractRepeatedInnerType(current);
+        }
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition definition = registry.get(current);
+            if (definition == null || definition.getKind() != AsnTypeKind.ALIAS
+                    || definition.getAliasTarget() == null) {
+                return null;
+            }
+            String aliasTarget = definition.getAliasTarget();
+            Integer universalTag = readUniversalTag(aliasTarget);
+            if (universalTag != null) {
+                return universalTag;
+            }
+            if (containsNamedNumberList(aliasTarget)) {
+                // Named-number bodies (ENUMERATED / INTEGER {...}) end the chain;
+                // see the matching guard in resolveLeafBaseType.
+                return null;
+            }
+            String target = stripAliasTag(stripConstraint(aliasTarget));
+            current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+        }
+        return null;
+    }
+
+    /**
+     * Reads a leading {@code [UNIVERSAL n]} annotation, returning {@code null}
+     * for an untagged expression or for any other tag class.
+     */
+    private Integer readUniversalTag(String typeExpression) {
+        if (typeExpression == null) {
+            return null;
+        }
+        Matcher matcher = ALIAS_TAG.matcher(typeExpression);
+        if (!matcher.find() || !BerTagClass.UNIVERSAL.name().equals(matcher.group(1))) {
+            return null;
+        }
+        return Integer.valueOf(matcher.group(2));
     }
 
     private boolean containsNamedNumberList(String typeExpression) {

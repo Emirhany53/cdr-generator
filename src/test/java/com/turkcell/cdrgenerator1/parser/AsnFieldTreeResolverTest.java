@@ -169,7 +169,7 @@ class AsnFieldTreeResolverTest {
 
     /**
      * Without the InvolvedParty fingerprint (no module in this fixture defines
-     * it), {@link AsnFieldTreeResolver#effectiveExplicit} must leave every
+     * it), {@code AsnFieldTreeResolver.effectiveExplicit} must leave every
      * written EXPLICIT untouched - scalar CHOICE, plain SEQUENCE, plain
      * repeated element alike. This is the GGSN/LTE-family baseline: those
      * modules are outside the verified lineage, so nothing here should ever
@@ -220,7 +220,7 @@ class AsnFieldTreeResolverTest {
      * scalar/repeated SET, scalar/repeated SEQUENCE) was confirmed wrong. This
      * fixture reproduces all three neutralized shapes with the {@code
      * InvolvedParty} fingerprint present (as in every real MMTel/AIMS/IMS/
-     * UAG/ATS module), so {@link AsnFieldTreeResolver#effectiveExplicit}
+     * UAG/ATS module), so {@code AsnFieldTreeResolver.effectiveExplicit}
      * fires for all of them.
      */
     @Test
@@ -466,5 +466,87 @@ class AsnFieldTreeResolverTest {
     void unknownRootReturnsEmptyList() {
         assertTrue(resolve("M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { a [0] INTEGER } END",
                 "Missing").isEmpty());
+    }
+
+    /**
+     * {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String} re-tags a
+     * primitive into the UNIVERSAL class: the VALUE is encoded as an IA5String
+     * but the TAG on the wire must be 25 (GraphicString), not 22.
+     *
+     * <p>{@code resolveLeafBaseType} strips every leading tag while chasing the
+     * alias chain down to a bare primitive name, so before
+     * {@code AsnFieldTreeResolver.resolveUniversalTagOverride} existed the
+     * override was silently lost and the encoder emitted tag 22. Comparing our
+     * output against two EMM-accepted MMTel reference captures showed them
+     * carrying 25 in exactly these places
+     * ({@code list-Of-SDP-Media-Components}, {@code
+     * list-Of-Early-SDP-Media-Components}, {@code listOfReasonHeader} and the
+     * nested {@code sDP-Media-Descriptions}/{@code sDP-Session-Description}),
+     * confirming the loss was a real encoding fault rather than a cosmetic one.
+     *
+     * <p>The fixture covers all three ways the chain reaches the override: a
+     * direct alias, a {@code SEQUENCE OF} over it, and a two-hop alias
+     * ({@code ListOfReasonHeader -> ReasonHeaderInformation -> GraphicStringImp})
+     * which is the exact shape of MMTel's {@code listOfReasonHeader [55]}.</p>
+     */
+    @Test
+    void universalTagOverrideSurvivesTheAliasChain() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    directAlias [0] GraphicStringImp OPTIONAL,
+                    inlineList [4] SEQUENCE OF GraphicStringImp OPTIONAL,
+                    twoHopList [55] ListOfReasonHeader OPTIONAL
+                }
+                GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String
+                ListOfReasonHeader ::= SEQUENCE OF ReasonHeaderInformation
+                ReasonHeaderInformation ::= GraphicStringImp
+                END
+                """, "Root");
+
+        assertEquals(Integer.valueOf(25), fields.get(0).getUniversalTagOverride(),
+                "a direct [UNIVERSAL 25] alias must keep its tag override");
+        assertEquals(Integer.valueOf(25), fields.get(1).getUniversalTagOverride(),
+                "SEQUENCE OF <re-tagged primitive>: the override belongs to the ELEMENT type");
+        assertEquals(Integer.valueOf(25), fields.get(2).getUniversalTagOverride(),
+                "the override must survive a multi-hop alias chain (MMTel's listOfReasonHeader shape)");
+
+        // The value encoding still follows the underlying primitive - only the
+        // tag changes, so fieldType must stay IA5String.
+        assertEquals("IA5String", fields.get(0).getFieldType());
+    }
+
+    /**
+     * The override is deliberately narrow: it must fire ONLY for a UNIVERSAL-class
+     * re-tag. Plain primitives keep {@code null} so the encoder falls back to the
+     * tag implied by their type, and APPLICATION/CONTEXT tags on an alias target
+     * are a different mechanism - {@code AsnFieldTreeResolver.resolveEffectiveTag}
+     * already applies those for CHOICE alternatives, so reading them here too
+     * would double-apply them.
+     */
+    @Test
+    void nonUniversalTagsDoNotProduceAnOverride() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    plain [0] IA5String OPTIONAL,
+                    plainAlias [1] Msisdn OPTIONAL,
+                    appTagged [2] AppString OPTIONAL,
+                    enumerated [3] Cause OPTIONAL
+                }
+                Msisdn ::= IA5String
+                AppString ::= [APPLICATION 2] IA5String
+                Cause ::= INTEGER { normal(0), abnormal(1) }
+                END
+                """, "Root");
+
+        assertNull(fields.get(0).getUniversalTagOverride(), "a bare primitive must not get an override");
+        assertNull(fields.get(1).getUniversalTagOverride(), "an untagged alias must not get an override");
+        assertNull(fields.get(2).getUniversalTagOverride(),
+                "an APPLICATION tag is not a universal re-tag and must be left to resolveEffectiveTag");
+        assertNull(fields.get(3).getUniversalTagOverride(),
+                "a named-number body ends the chain without yielding an override");
     }
 }
