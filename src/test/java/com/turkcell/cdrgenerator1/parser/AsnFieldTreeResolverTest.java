@@ -168,13 +168,17 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
-     * The neutralization in {@link #choiceFlagSurvivesRepetitionIntroducedByANamedAlias}
-     * must stay scoped to SEQUENCE/SET-OF-CHOICE: every other EXPLICIT usage -
-     * scalar CHOICE, plain SEQUENCE, plain repeated element - keeps behaving
-     * exactly as before.
+     * Without the InvolvedParty fingerprint (no module in this fixture defines
+     * it), {@link AsnFieldTreeResolver#effectiveExplicit} must leave every
+     * written EXPLICIT untouched - scalar CHOICE, plain SEQUENCE, plain
+     * repeated element alike. This is the GGSN/LTE-family baseline: those
+     * modules are outside the verified lineage, so nothing here should ever
+     * change without EMM evidence for that family specifically (see
+     * {@link #explicitIsPreservedOutsideTheVerifiedInvolvedPartyFamily} for
+     * the SET/plain-SEQUENCE-focused sibling of this test).
      */
     @Test
-    void explicitIsPreservedForEveryShapeOtherThanSequenceOfChoice() {
+    void explicitIsPreservedForEveryShapeOutsideAnyVerifiedFamily() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
@@ -193,33 +197,42 @@ class AsnFieldTreeResolverTest {
                 """, "Root");
 
         assertTrue(fields.get(0).isExplicit(), "scalar CHOICE must keep its EXPLICIT tag");
-        assertTrue(fields.get(1).isExplicit(), "a plain SEQUENCE field must keep its written EXPLICIT");
+        assertTrue(fields.get(1).isExplicit(),
+                "outside any verified family, a plain SEQUENCE field must keep its written EXPLICIT");
         assertTrue(fields.get(2).isExplicit(),
-                "a SEQUENCE OF <non-CHOICE> must keep its written EXPLICIT - only the "
-                        + "SEQUENCE-OF-CHOICE shape is neutralized");
+                "outside any verified family, a SEQUENCE OF <non-CHOICE> must keep its written EXPLICIT too");
     }
 
     /**
-     * berTreeDump against a freshly generated MMTelChargingDataTypes-3.ber
-     * caught 3 more violations the CHOICE-only fix above didn't cover:
-     * {@code recordExtensions [25] EXPLICIT ManagementExtensions} (scalar
-     * SET), {@code mMTelInformation [110] EXPLICIT MMTelInformation} (scalar
-     * SET), and {@code list-of-subscription-ID [31] EXPLICIT SEQUENCE OF
-     * SubscriptionID} (repeated SET) - same "extra universal-tag layer EMM
-     * doesn't accept" mechanism, just on SET instead of CHOICE. This fixture
-     * reproduces both shapes with the {@code InvolvedParty} fingerprint
-     * present (as it is in every real MMTel/AIMS/IMS/UAG/ATS module), so
-     * {@link AsnFieldTreeResolver#isVerifiedSetNeutralizationFamily} fires.
+     * berTreeDump against freshly generated files caught violations the
+     * CHOICE-only fix above didn't cover - {@code recordExtensions [25]
+     * EXPLICIT ManagementExtensions} (scalar SET), {@code mMTelInformation
+     * [110] EXPLICIT MMTelInformation} (scalar SET), {@code
+     * list-of-subscription-ID [31] EXPLICIT SEQUENCE OF SubscriptionID}
+     * (repeated SET). Re-diffing the ORIGINAL schema text against the
+     * EMM-verified fix commit (44b5bfb) then showed the anomaly is broader
+     * still: {@code interOperatorIdentifiers}, {@code
+     * list-Of-SDP-Media-Components} and two more fields were ALSO stripped
+     * there even though their target is a plain repeated SEQUENCE - no CHOICE,
+     * no SET involved at all. Of the ~20 EXPLICIT-marked fields in
+     * MMTelChargingDataTypes, every single one that survived the reference-file
+     * diff resolves to a scalar CHOICE; every other shape (repeated CHOICE,
+     * scalar/repeated SET, scalar/repeated SEQUENCE) was confirmed wrong. This
+     * fixture reproduces all three neutralized shapes with the {@code
+     * InvolvedParty} fingerprint present (as in every real MMTel/AIMS/IMS/
+     * UAG/ATS module), so {@link AsnFieldTreeResolver#effectiveExplicit}
+     * fires for all of them.
      */
     @Test
-    void explicitOnSetIsNeutralizedWithinTheVerifiedInvolvedPartyFamily() {
+    void explicitIsNeutralizedForEveryNonScalarChoiceShapeWithinTheVerifiedInvolvedPartyFamily() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
                 Root ::= SET {
                     recordExtensions [25] EXPLICIT ManagementExtensions OPTIONAL,
                     subscriptions [31] EXPLICIT ListOfSubscriptionID OPTIONAL,
-                    parties [6] EXPLICIT ListOfInvolvedParties OPTIONAL
+                    parties [6] EXPLICIT ListOfInvolvedParties OPTIONAL,
+                    interOperatorIdentifiers [14] EXPLICIT ListOfIOI OPTIONAL
                 }
                 ManagementExtensions ::= SET { a [0] INTEGER OPTIONAL }
                 ListOfSubscriptionID ::= SEQUENCE OF SubscriptionID
@@ -229,6 +242,8 @@ class AsnFieldTreeResolverTest {
                     sIP-URI [0] GraphicString,
                     tEL-URI [1] GraphicString
                 }
+                ListOfIOI ::= SEQUENCE OF IOIPair
+                IOIPair ::= SEQUENCE { originatingIOI [0] GraphicString OPTIONAL }
                 END
                 """, "Root");
 
@@ -236,31 +251,39 @@ class AsnFieldTreeResolverTest {
                 "scalar SET (recordExtensions-shape) must be neutralized within the verified family");
         assertFalse(fields.get(1).isExplicit(),
                 "SEQUENCE OF <SET> (list-of-subscription-ID-shape) must be neutralized within the verified family");
+        assertFalse(fields.get(3).isExplicit(),
+                "SEQUENCE OF <plain SEQUENCE> (interOperatorIdentifiers-shape) must ALSO be neutralized - "
+                        + "the reference-file diff confirmed this shape is wrong too, not just CHOICE/SET");
     }
 
     /**
-     * The exact same SET shape, but WITHOUT the InvolvedParty fingerprint -
+     * The exact same shapes, but WITHOUT the InvolvedParty fingerprint -
      * simulating LTE-R10's {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress}
-     * (PDPAddress is a SET in that module). There is no EMM verification for
-     * this CDR family, so the written EXPLICIT must be left exactly as-is;
-     * this is what keeps the fix from becoming a blanket "ignore EXPLICIT on
-     * SET" rule.
+     * (PDPAddress is a SET in that module) and any GGSN/LTE-family field that
+     * writes EXPLICIT on a plain SEQUENCE or SET. There is no EMM verification
+     * for that CDR family, so every written EXPLICIT must be left exactly as
+     * written; this is what keeps the fix from becoming a blanket "ignore
+     * EXPLICIT" rule applied to the whole data set.
      */
     @Test
-    void explicitOnSetIsPreservedOutsideTheVerifiedInvolvedPartyFamily() {
+    void explicitIsPreservedOutsideTheVerifiedInvolvedPartyFamily() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
                 Root ::= SEQUENCE {
-                    servedPDPPDNAddress [9] EXPLICIT PDPAddress OPTIONAL
+                    servedPDPPDNAddress [9] EXPLICIT PDPAddress OPTIONAL,
+                    plainList [12] EXPLICIT ListOfInts OPTIONAL
                 }
                 PDPAddress ::= SET { a [0] INTEGER OPTIONAL }
+                ListOfInts ::= SEQUENCE OF INTEGER
                 END
                 """, "Root");
 
         assertTrue(fields.get(0).isExplicit(),
                 "without the InvolvedParty fingerprint (e.g. LTE-R10) a written EXPLICIT on a SET "
                         + "must be left untouched - there is no EMM evidence for that CDR family");
+        assertTrue(fields.get(1).isExplicit(),
+                "same for a plain repeated SEQUENCE outside the verified family");
     }
 
     /**
