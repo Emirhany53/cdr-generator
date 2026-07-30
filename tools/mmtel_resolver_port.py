@@ -370,6 +370,21 @@ def resolve_effective_tag(registry: dict, tag_number, tag_class, explicit, inner
 MAX_RESOLVE_DEPTH = 15
 
 
+TAG_CLASS_BITS = {'UNIVERSAL': 0x00, 'APPLICATION': 0x40, 'CONTEXT': 0x80, 'PRIVATE': 0xC0}
+
+
+def sort_set_components(fields: list) -> list:
+    """Port of AsnFieldTreeResolver.sortSetComponents (X.690 11.6).
+
+    A SET's components are encoded in tag order (class, then number); a
+    SEQUENCE keeps declaration order. Sorting is valid under plain BER too, so
+    it is never wrong to sort - only sometimes wrong not to.
+    """
+    if any(f.tag_number is None for f in fields):
+        return fields
+    return sorted(fields, key=lambda f: (TAG_CLASS_BITS.get(f.tag_class, 0x80), f.tag_number))
+
+
 def resolve_by_type_name(registry: dict, type_name: Optional[str], visiting: set, depth: int,
                           cache: dict, tagging_mode: str) -> list:
     if type_name is None:
@@ -389,8 +404,11 @@ def resolve_by_type_name(registry: dict, type_name: Optional[str], visiting: set
         result = []
     elif definition.kind == 'ALIAS':
         result = resolve_alias(registry, definition, next_visiting, depth, cache, tagging_mode)
-    elif definition.kind in ('SEQUENCE', 'SET'):
+    elif definition.kind == 'SEQUENCE':
         result = parse_field_lines(registry, definition.raw_body, next_visiting, depth, cache, tagging_mode)
+    elif definition.kind == 'SET':
+        result = sort_set_components(
+            parse_field_lines(registry, definition.raw_body, next_visiting, depth, cache, tagging_mode))
     elif definition.kind == 'CHOICE':
         result = resolve_choice_alternative(registry, type_name, definition.raw_body, next_visiting, depth,
                                              cache, tagging_mode)

@@ -549,4 +549,84 @@ class AsnFieldTreeResolverTest {
         assertNull(fields.get(3).getUniversalTagOverride(),
                 "a named-number body ends the chain without yielding an override");
     }
+
+    /**
+     * X.690 11.6: a SET's components are encoded in tag order. The encoder emits
+     * fields in the order of the resolved list, so a SET declared out of order
+     * used to leak that order straight onto the wire.
+     *
+     * <p>Two SETs in MMTelChargingDataTypes are declared out of order -
+     * {@code MMTelRecord} writes {@code routeHeaderReceived [59]} after
+     * {@code mMTelInformation [110]}, and {@code ManagementExtensions} writes
+     * {@code [520]} after {@code [523]}. Across 6000 records of two EMM-accepted
+     * reference captures every SET body is sorted ascending without exception,
+     * and EMM rejected our file with "Duplicate Tag data found": a decoder that
+     * assumes ascending order sees a tag lower than the previous one and takes
+     * the component for a repeat. 120 SETs across 28 of the 808 modules are
+     * declared out of order, so this was never MMTel-specific.</p>
+     *
+     * <p>Sorting is valid under plain BER as well as DER, so it is applied
+     * everywhere rather than gated on a verified family.</p>
+     */
+    @Test
+    void setComponentsAreOrderedByTagRegardlessOfDeclarationOrder() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SET {
+                    late [110] INTEGER OPTIONAL,
+                    early [59] INTEGER OPTIONAL,
+                    first [2] INTEGER OPTIONAL
+                }
+                END
+                """, "Root");
+
+        assertEquals(List.of(2, 59, 110),
+                fields.stream().map(AsnField::getTagNumber).toList(),
+                "a SET's components must be encoded in ascending tag order (X.690 11.6), "
+                        + "not in the order the schema happens to declare them");
+    }
+
+    /**
+     * The counterpart guard: a SEQUENCE is positional, so its declared order is
+     * meaningful and must survive untouched. Sorting it would reorder the wire
+     * format of every SEQUENCE-based record in the data set.
+     */
+    @Test
+    void sequenceComponentsKeepTheirDeclarationOrder() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    late [110] INTEGER OPTIONAL,
+                    early [59] INTEGER OPTIONAL,
+                    first [2] INTEGER OPTIONAL
+                }
+                END
+                """, "Root");
+
+        assertEquals(List.of(110, 59, 2),
+                fields.stream().map(AsnField::getTagNumber).toList(),
+                "a SEQUENCE is positional - reordering it would corrupt the wire format");
+    }
+
+    /**
+     * A SET whose components are not all tagged offers nothing reliable to sort
+     * by, so the declaration order is kept rather than guessed at.
+     */
+    @Test
+    void aSetWithUntaggedComponentsIsLeftInDeclarationOrder() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SET {
+                    tagged [110] INTEGER OPTIONAL,
+                    untagged INTEGER OPTIONAL
+                }
+                END
+                """, "Root");
+
+        assertEquals(List.of("tagged", "untagged"),
+                fields.stream().map(AsnField::getFieldName).toList());
+    }
 }

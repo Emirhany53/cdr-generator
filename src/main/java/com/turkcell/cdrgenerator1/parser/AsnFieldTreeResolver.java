@@ -156,12 +156,60 @@ public class AsnFieldTreeResolver {
         List<AsnField> result = switch (definition.getKind()) {
             case ENUMERATED -> List.of();
             case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache, taggingMode);
-            case SEQUENCE, SET -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+            case SEQUENCE -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+            case SET -> sortSetComponents(
+                    parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode));
             case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
         };
 
         cache.put(cacheKey, result);
         return result;
+    }
+
+    /**
+     * Orders a SET's components by tag, as X.690 11.6 requires.
+     *
+     * <p>A SEQUENCE is positional - its components must stay in declaration
+     * order - but a SET is unordered, and DER fixes a canonical order: the
+     * encodings appear sorted by tag (class first, then number). Plain BER
+     * tolerates any order, so sorting is valid under BOTH rule sets; it is
+     * never wrong to sort, only sometimes wrong not to.</p>
+     *
+     * <p>The encoder emits fields in the order of this list, so the source
+     * schema's declaration order used to leak straight into the wire format.
+     * Two SETs in MMTelChargingDataTypes are declared out of order -
+     * {@code MMTelRecord} has {@code routeHeaderReceived [59]} written after
+     * {@code mMTelInformation [110]}, and {@code ManagementExtensions} has
+     * {@code [520]} after {@code [523]} - so every generated record carried
+     * those two components out of sequence. Across 6000 records of two
+     * EMM-accepted reference captures, EVERY SET body is sorted ascending with
+     * no exception, and EMM rejected our file with a "Duplicate Tag" error: a
+     * decoder that assumes ascending order sees a tag lower than the previous
+     * one and concludes the component must be a repeat.</p>
+     *
+     * <p>Fields with no tag of their own are left alone: a SET's components
+     * must have distinct tags, and without a resolved number there is nothing
+     * to sort by, so the declaration order is kept rather than guessed at.</p>
+     */
+    private List<AsnField> sortSetComponents(List<AsnField> fields) {
+        boolean everyComponentIsTagged = fields.stream()
+                .allMatch(field -> Objects.nonNull(field.getTagNumber()));
+        if (!everyComponentIsTagged) {
+            return fields;
+        }
+        List<AsnField> sorted = new ArrayList<>(fields);
+        sorted.sort(Comparator
+                .comparingInt((AsnField field) -> tagClassRank(field.getTagClass()))
+                .thenComparingInt(AsnField::getTagNumber));
+        return sorted;
+    }
+
+    /**
+     * X.690 tag-class ordering: universal &lt; application &lt; context-specific
+     * &lt; private, which is exactly the order of the class bits.
+     */
+    private int tagClassRank(BerTagClass tagClass) {
+        return Objects.isNull(tagClass) ? BerTagClass.CONTEXT.getClassBits() : tagClass.getClassBits();
     }
 
     private String buildCacheKey(String typeName, Map<String, String> choiceSelections) {
