@@ -71,6 +71,86 @@ class StructureParserServiceTest {
         assertEquals(2, structure.getFields().size());
     }
 
+    /**
+     * An inline {@code field CHOICE { ... }} is lifted into the registry under a
+     * synthetic name ({@code ISOCdr$cdr}) and the parent body is rewritten to
+     * reference it. The reference scan split tokens on {@code $}, so the
+     * synthetic name was never recognised, the type looked unreferenced, and -
+     * on a field-count tie - it beat its own parent to become the root.
+     *
+     * <p>A CHOICE root is encoded as the bare selected alternative, so the
+     * parent {@code SEQUENCE} vanished from the wire: FCMSTAPIN records began at
+     * {@code AA} ({@code [10]}, the {@code mo} alternative) instead of
+     * {@code 30 .. AA ..}. 58 of the 808 modules picked a synthetic root this
+     * way.</p>
+     */
+    @Test
+    void anInlineChoiceDoesNotStealRootFromItsEnclosingSequence() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS ::= BEGIN
+                ISOCdr ::= SEQUENCE {
+                    cdr CHOICE {
+                        mo [10] IMPLICIT MOCDR,
+                        mt [20] IMPLICIT MTCDR
+                    }
+                }
+                MOCDR ::= SEQUENCE { entity [1] IA5String OPTIONAL }
+                MTCDR ::= SEQUENCE { entity [1] IA5String OPTIONAL }
+                END
+                """);
+
+        assertNotNull(structure);
+        assertFalse(structure.isChoiceRoot(),
+                "the root is ISOCdr (a SEQUENCE); its inline CHOICE member must not win root selection");
+        assertEquals(1, structure.getFields().size());
+        assertEquals("cdr", structure.getFields().get(0).getFieldName());
+    }
+
+    /** The same guard holds when the enclosing type is a SET rather than a SEQUENCE. */
+    @Test
+    void aSyntheticChoiceTypeIsNeverARootCandidate() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS ::= BEGIN
+                Wrapper ::= SET {
+                    payload CHOICE { only [0] IMPLICIT Inner }
+                }
+                Inner ::= SEQUENCE { a [1] IA5String OPTIONAL }
+                END
+                """);
+
+        assertNotNull(structure);
+        assertFalse(structure.isChoiceRoot());
+        assertTrue(structure.isSetRoot(), "Wrapper is a SET, so the record wraps in universal SET (0x31)");
+        assertEquals("payload", structure.getFields().get(0).getFieldName());
+    }
+
+    /**
+     * X.680 49.4: {@code SIZE(n)} fixes the length exactly while
+     * {@code SIZE(a..b)} does not. The resolver used to read the constraint into
+     * an Integer (taking a range's UPPER bound) and re-emit it as a fixed
+     * {@code SIZE(upper)}, which erased that distinction - and the encoder pads
+     * only fixed-width fields, so 807 ranged character-string fields across the
+     * schema would have been padded out to their maximum.
+     */
+    @Test
+    void aRangedSizeConstraintStaysRangedOnTheResolvedField() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS ::= BEGIN
+                Record ::= SEQUENCE {
+                    variable [1] IA5String (SIZE(1..20)) OPTIONAL,
+                    fixed    [2] IA5String (SIZE(15) CODE("LEFT")) OPTIONAL
+                }
+                END
+                """);
+
+        assertNotNull(structure);
+        assertTrue(structure.getFields().get(0).getFieldType().contains("SIZE(1..20)"),
+                "a range must survive resolution, not collapse to its upper bound");
+        assertTrue(structure.getFields().get(1).getFieldType().contains("SIZE(15)"));
+        assertTrue(structure.getFields().get(1).getFieldType().contains("CODE(\"LEFT\")"),
+                "the justification marker decides which side is padded");
+    }
+
     @Test
     void emptyContentYieldsNull() {
         assertNull(parser.parseFromContents("X", "   "));

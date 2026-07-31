@@ -26,7 +26,10 @@ public class AsnFieldTreeResolver {
     private static final String IMPLICIT_KEYWORD = "IMPLICIT";
     private static final Pattern SIZE_CONSTRAINT = Pattern.compile(
             "SIZE\\s*\\(\\s*(\\d+)\\s*(?:\\.\\.\\s*(\\d+)\\s*)?\\)");
-    private static final String SIZE_SUFFIX_TEMPLATE = " (SIZE(%d))";
+    /** {@code CODE("LEFT")} / {@code CODE("RIGHT")}: sabit genislikli alanin hizalamasi. */
+    private static final Pattern CODE_MARKER = Pattern.compile(
+            "CODE\\s*\\(\\s*\"[^\"]*\"\\s*\\)", Pattern.CASE_INSENSITIVE);
+    private static final String SIZE_SUFFIX_TEMPLATE = " (%s)";
     private static final int ALIAS_SIZE_MAX_DEPTH = 15;
 
     /** Root resolution result: the root type's kind plus its resolved fields. */
@@ -807,7 +810,8 @@ public class AsnFieldTreeResolver {
         // SIZE kisiti stripConstraint tarafindan silinmeden once okunur; alan
         // ifadesinde varsa alias zincirinden gelenden onceliklidir.
         String rawTypeExpr = matcher.group(5);
-        Integer inlineSize = readSizeConstraint(rawTypeExpr);
+        String inlineSize = readSizeConstraintText(rawTypeExpr);
+        String inlineCode = readCodeText(rawTypeExpr);
 
         String typeExpr = stripConstraint(rawTypeExpr).replace("OPTIONAL", "").trim();
 
@@ -816,7 +820,7 @@ public class AsnFieldTreeResolver {
 
         return AsnField.builder()
                 .fieldName(fieldName)
-                .fieldType(appendSizeConstraint(fieldType, inlineSize))
+                .fieldType(appendSizeConstraint(fieldType, inlineSize, inlineCode))
                 .optional(optional)
                 .repeated(repeated)
                 .tagNumber(tagNumber)
@@ -849,26 +853,36 @@ public class AsnFieldTreeResolver {
     }
 
     /**
-     * Bir tip ifadesindeki SIZE(n) kisitini okur. SIZE(a..b) formunda ust sinir alinir.
-     * Kisit yoksa null doner.
+     * Bir tip ifadesindeki SIZE kisitini HAM METIN olarak okur.
+     *
+     * <p>Sayiya cevirmek bilgi kaybettirir: {@code SIZE(1..20)} ile
+     * {@code SIZE(20)} ayni ust sinira sahiptir ama ilki degisken, ikincisi SABIT
+     * uzunluklu bir alandir (X.680 49.4). Kodlayici bu ayrimi sabit genislikli
+     * alanlari bosluklarla tamamlamak icin kullanir, dolayisiyla kisit metni
+     * oldugu gibi tasinmalidir.</p>
      */
-    private Integer readSizeConstraint(String typeExpression) {
+    private String readSizeConstraintText(String typeExpression) {
         if (typeExpression == null) {
             return null;
         }
         Matcher matcher = SIZE_CONSTRAINT.matcher(typeExpression);
-        if (!matcher.find()) {
+        return matcher.find() ? matcher.group() : null;
+    }
+
+    /** Sabit genislikli bir alanin hizalamasini bildiren {@code CODE("LEFT")} isareti. */
+    private String readCodeText(String typeExpression) {
+        if (typeExpression == null) {
             return null;
         }
-        String upperBound = matcher.group(2);
-        return Integer.valueOf(upperBound != null ? upperBound : matcher.group(1));
+        Matcher matcher = CODE_MARKER.matcher(typeExpression);
+        return matcher.find() ? matcher.group() : null;
     }
 
     /**
      * Alan satirinda SIZE yoksa alias zincirini takip ederek ilk SIZE kisitini bulur.
-     * Ornek: mSISDN -> MSISDN -> IA5STRING (SIZE(30)) icin 30 doner.
+     * Ornek: mSISDN -> MSISDN -> IA5STRING (SIZE(30)) icin "SIZE(30)" doner.
      */
-    private Integer findSizeThroughAliases(Map<String, AsnTypeDefinition> registry, String typeName) {
+    private String findSizeThroughAliases(Map<String, AsnTypeDefinition> registry, String typeName) {
         String current = stripAliasTag(typeName);
         Set<String> guard = new HashSet<>();
         int depth = 0;
@@ -879,7 +893,7 @@ public class AsnFieldTreeResolver {
                 return null;
             }
             String target = definition.getAliasTarget();
-            Integer size = readSizeConstraint(target);
+            String size = readSizeConstraintText(target);
             if (size != null) {
                 return size;
             }
@@ -890,18 +904,20 @@ public class AsnFieldTreeResolver {
     }
 
     /**
-     * Cozulmus temel tipe SIZE kisitini geri ekler.
+     * Cozulmus temel tipe SIZE kisitini (ve varsa hizalama isaretini) geri ekler.
      *
      * Kisitlar arama sirasinda kaldirilir (registry anahtarlari kisitsizdir), ancak
      * yaprak alanin fieldType degerinde tutulmasi gerekir: yapay zeka katmani ve
-     * dogrulayici azami uzunlugu buradan okur. BerPrimitiveType startsWith ile
-     * calistigi icin sondaki kisit tip tanimayi bozmaz.
+     * dogrulayici azami uzunlugu, kodlayici ise sabit genislik dolgusunu buradan
+     * okur. BerPrimitiveType startsWith ile calistigi icin sondaki kisit tip
+     * tanimayi bozmaz.
      */
-    private String appendSizeConstraint(String baseType, Integer size) {
-        if (size == null || baseType == null || readSizeConstraint(baseType) != null) {
+    private String appendSizeConstraint(String baseType, String sizeText, String codeText) {
+        if (sizeText == null || baseType == null || readSizeConstraintText(baseType) != null) {
             return baseType;
         }
-        return baseType + SIZE_SUFFIX_TEMPLATE.formatted(size);
+        String constraint = codeText == null ? sizeText : sizeText + " " + codeText;
+        return baseType + SIZE_SUFFIX_TEMPLATE.formatted(constraint);
     }
 
     private String stripConstraint(String text) {
@@ -919,10 +935,11 @@ public class AsnFieldTreeResolver {
         if (!children.isEmpty()) {
             return innerType;
         }
-        Integer size = readSizeConstraint(declaredType);
+        String size = readSizeConstraintText(declaredType);
+        String code = readCodeText(declaredType);
         if (size == null) {
             size = findSizeThroughAliases(registry, innerType);
         }
-        return appendSizeConstraint(resolveLeafBaseType(registry, innerType), size);
+        return appendSizeConstraint(resolveLeafBaseType(registry, innerType), size, code);
     }
 }

@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.junit.jupiter.api.Test;
@@ -36,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 class BerNullEncodingTest {
 
-    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter());
+    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
 
     private AsnField nullField(String name, Integer tag, boolean explicit) {
         return AsnField.builder()

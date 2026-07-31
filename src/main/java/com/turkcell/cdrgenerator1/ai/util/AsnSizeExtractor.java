@@ -30,4 +30,24 @@ public class AsnSizeExtractor {
         return Optional.of(Integer.valueOf(
                 Objects.nonNull(upperBound) ? upperBound : matcher.group(1)));
     }
+
+    /**
+     * The length a {@code SIZE(n)} constraint fixes exactly, if it fixes one.
+     *
+     * <p>X.680 49.4: a single-value size constraint means the value has EXACTLY
+     * that many units - {@code IA5String (SIZE(15))} is a 15-character field, not
+     * an "up to 15" one. A range ({@code SIZE(1..15)}) fixes nothing, so it
+     * returns empty and callers must leave such a value at its natural
+     * length.</p>
+     */
+    public Optional<Integer> extractFixedLength(String fieldType) {
+        if (Objects.isNull(fieldType) || fieldType.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher matcher = SIZE_PATTERN.matcher(fieldType);
+        if (!matcher.find() || Objects.nonNull(matcher.group(2))) {
+            return Optional.empty();
+        }
+        return Optional.of(Integer.valueOf(matcher.group(1)));
+    }
 }

@@ -59,6 +59,7 @@ public class BerEncoderService {
     private static final String BOOLEAN_FALSE_DIGIT = "0";
 
     private final TlvWriter tlvWriter;
+    private final FixedWidthTextFormatter fixedWidthTextFormatter;
 
     /**
      * Encodes one record according to its root kind.
@@ -237,7 +238,11 @@ public class BerEncoderService {
                     ? tlvWriter.encodeHex(text)
                     : tlvWriter.encodeString(text);
             case NULL -> new byte[0];
-            case STRING -> tlvWriter.encodeString(text);
+            // Only a character-string type is padded. An OCTET STRING's SIZE
+            // counts BYTES and its text is a hex dump (two characters per byte),
+            // so spaces would corrupt it; an INTEGER's SIZE bounds its value
+            // range, which fitIntegerToByteWidth already handles.
+            case STRING -> tlvWriter.encodeString(fixedWidthTextFormatter.pad(fieldType, text));
         };
     }
 

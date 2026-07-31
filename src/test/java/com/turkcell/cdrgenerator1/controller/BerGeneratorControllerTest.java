@@ -2,6 +2,7 @@ package com.turkcell.cdrgenerator1.controller;
 
 import com.turkcell.cdrgenerator1.ai.AiFieldValueProvider;
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
+import com.turkcell.cdrgenerator1.service.FixedWidthTextFormatter;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.GlobalExceptionHandler;
@@ -66,7 +67,7 @@ class BerGeneratorControllerTest {
                         new EnumValueResolver()),
                 new RandomValueSource(new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));
 
-        BerEncoderService encoder = new BerEncoderService(new TlvWriter());
+        BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
 
         AiRecordSupplier aiRecordSupplier = TestAiSupport.disabledSupplier(aiProperties);
 

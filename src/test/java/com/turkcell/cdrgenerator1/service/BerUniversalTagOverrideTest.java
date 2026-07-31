@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.junit.jupiter.api.Test;
@@ -35,7 +36,7 @@ class BerUniversalTagOverrideTest {
 
     private static final int GRAPHIC_STRING = 25;
 
-    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter());
+    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
 
     /** {@code sDP-Session-Description [4] SEQUENCE OF GraphicStringImp} */
     @Test

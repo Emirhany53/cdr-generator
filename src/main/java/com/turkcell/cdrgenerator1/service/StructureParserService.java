@@ -28,7 +28,22 @@ import java.util.regex.Matcher;
 public class StructureParserService {
 
     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
-    private static final String TYPE_TOKEN_DELIMITER = "[^A-Za-z0-9_-]+";
+    /**
+     * Splits a type body into candidate type-reference tokens.
+     *
+     * <p>{@code $} counts as a NAME character, not a delimiter. An inline
+     * {@code fieldName CHOICE { ... }} is lifted into the registry under a
+     * synthetic name like {@code ISOCdr$cdr} and the parent's body is rewritten
+     * to reference it. While {@code $} was treated as a separator that reference
+     * tokenised into {@code ISOCdr} + {@code cdr}, so the synthetic name itself
+     * was never seen and the type looked unreferenced - which made it eligible to
+     * win root selection over its own parent. The parent {@code ISOCdr ::=
+     * SEQUENCE} then never got encoded, and every record lost its outer SEQUENCE
+     * wrapper: FCMSTAPIN records started at {@code AA ...} ({@code [10]} = the
+     * chosen alternative) instead of {@code 30 .. AA ..}. 58 of the 808 modules
+     * picked a synthetic type as their root this way.</p>
+     */
+    private static final String TYPE_TOKEN_DELIMITER = "[^A-Za-z0-9_$-]+";
 
     /** "SEQUENCE OF TypeName" biçimindeki alias hedeflerini yakalar. */
     private static final Pattern SEQUENCE_OF_ALIAS = Pattern.compile(
@@ -152,6 +167,11 @@ public class StructureParserService {
         for (String candidate : registry.keySet()) {
             AsnTypeDefinition definition = registry.get(candidate);
 
+            if (isSyntheticMemberType(candidate)) {
+                // Lifted out of an enclosing type's body - a member, never a root.
+                continue;
+            }
+
             if (isStructured(definition.getKind()) && !referenced.contains(candidate)) {
                 int fieldCount = fieldTreeResolver
                         .resolveRoot(registry, candidate, choiceSelections, taggingMode)
@@ -188,6 +208,9 @@ public class StructureParserService {
         }
 
         for (String candidate : registry.keySet()) {
+            if (isSyntheticMemberType(candidate)) {
+                continue;
+            }
             if (!fieldTreeResolver.resolveRoot(registry, candidate, choiceSelections, taggingMode)
                     .fields().isEmpty()) {
                 log.debug("Selected root type '{}' (first resolvable fallback)", candidate);
@@ -228,6 +251,19 @@ public class StructureParserService {
             }
         }
         return referenced;
+    }
+
+    /**
+     * True for a type the registry minted for an inline {@code fieldName CHOICE
+     * { ... }} (name shaped {@code Parent$field}).
+     *
+     * <p>Such a type exists only as a member of the type it was lifted out of, so
+     * it can never be the module's root record. Excluding it is a guard that
+     * holds even if the reference scan misses it for some other reason.</p>
+     */
+    private boolean isSyntheticMemberType(String typeName) {
+        return Objects.nonNull(typeName)
+                && typeName.contains(AsnTypeRegistryBuilder.SYNTHETIC_NAME_SEPARATOR);
     }
 
     private boolean isStructured(AsnTypeKind kind) {

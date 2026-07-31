@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.exception.BerEncodingException;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
@@ -18,7 +19,7 @@ class BerEncoderServiceTest {
 
     private static final int UNIVERSAL_SEQUENCE_TAG = 0x30;
 
-    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter());
+    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
 
     private AsnField field(String name, String type, Integer tag) {
         return AsnField.builder().fieldName(name).fieldType(type)

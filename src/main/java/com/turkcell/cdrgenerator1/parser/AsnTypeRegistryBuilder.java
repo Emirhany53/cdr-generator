@@ -31,6 +31,18 @@ public class AsnTypeRegistryBuilder {
     private static final Pattern ANONYMOUS_CHOICE_FIELD = Pattern.compile(
             "([A-Za-z][\\w-]*)\\s+CHOICE\\s*\\{");
 
+    /**
+     * Separates the parent type name from the field name in the synthetic type
+     * name minted for an inline {@code fieldName CHOICE { ... }} (for example
+     * {@code ISOCdr$cdr}).
+     *
+     * <p>The character cannot appear in a real ASN.1 type reference, so it
+     * unambiguously marks a name as generated. Callers outside the parser rely
+     * on that: a synthetic type is by construction a MEMBER of the type it was
+     * lifted out of, so it can never be a module's root record.</p>
+     */
+    public static final String SYNTHETIC_NAME_SEPARATOR = "$";
+
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
         if (contents == null || contents.isBlank()) {
@@ -138,7 +150,7 @@ public class AsnTypeRegistryBuilder {
             int choiceEnd = findMatchingBraceEnd(body, choiceBraceIndex);
 
             String fieldName = matcher.group(1);
-            String syntheticName = parentTypeName + "$" + fieldName;
+            String syntheticName = parentTypeName + SYNTHETIC_NAME_SEPARATOR + fieldName;
 
             registry.putIfAbsent(syntheticName, AsnTypeDefinition.builder()
                     .typeName(syntheticName)

@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
@@ -24,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
  */
 class BerSetUniversalTagTest {
 
-    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter());
+    private final BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
 
     private AsnField intLeaf(String name, int tag) {
         return AsnField.builder()

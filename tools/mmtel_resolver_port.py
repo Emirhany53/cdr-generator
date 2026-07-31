@@ -177,6 +177,38 @@ def strip_constraint(text: str) -> str:
         current = nxt
 
 
+SIZE_CONSTRAINT = re.compile(r'SIZE\s*\(\s*(\d+)\s*(?:\.\.\s*(\d+)\s*)?\)')
+CODE_MARKER = re.compile(r'CODE\s*\(\s*"[^"]*"\s*\)', re.IGNORECASE)
+
+
+def read_size_constraint_text(type_expression: Optional[str]) -> Optional[str]:
+    """Port of AsnFieldTreeResolver.readSizeConstraintText.
+
+    The constraint travels as TEXT, not as a number: SIZE(1..20) and SIZE(20)
+    share an upper bound but only the second fixes the length (X.680 49.4), and
+    the encoder pads only fixed-length fields.
+    """
+    if type_expression is None:
+        return None
+    m = SIZE_CONSTRAINT.search(type_expression)
+    return m.group(0) if m else None
+
+
+def read_code_text(type_expression: Optional[str]) -> Optional[str]:
+    if type_expression is None:
+        return None
+    m = CODE_MARKER.search(type_expression)
+    return m.group(0) if m else None
+
+
+def append_size_constraint(base_type, size_text, code_text=None):
+    """Port of AsnFieldTreeResolver.appendSizeConstraint."""
+    if size_text is None or base_type is None or read_size_constraint_text(base_type):
+        return base_type
+    constraint = size_text if code_text is None else size_text + ' ' + code_text
+    return f'{base_type} ({constraint})'
+
+
 def is_repeated_expression(type_expr: str) -> bool:
     return type_expr.startswith('SEQUENCE OF') or type_expr.startswith('SET OF')
 
@@ -256,11 +288,15 @@ def parse_field_line(line: str, tagging_mode: str) -> Optional[AsnField]:
     explicit = resolve_explicit(tagging_keyword, tagging_mode)
 
     raw_type_expr = m.group(5)
+    inline_size = read_size_constraint_text(raw_type_expr)
+    inline_code = read_code_text(raw_type_expr)
     type_expr = strip_constraint(raw_type_expr).replace('OPTIONAL', '').strip()
     repeated = is_repeated_expression(type_expr)
     field_type = extract_repeated_inner_type(type_expr) if repeated else normalize_type_text(type_expr)
 
-    return AsnField(field_name=field_name, field_type=field_type, optional=optional,
+    return AsnField(field_name=field_name,
+                     field_type=append_size_constraint(field_type, inline_size, inline_code),
+                     optional=optional,
                      repeated=repeated, tag_number=tag_number, tag_class=tag_class, explicit=explicit)
 
 
@@ -466,6 +502,53 @@ def attach_children(registry, field: AsnField, visiting, depth, cache, tagging_m
     )
 
 
+def find_size_through_aliases(registry: dict, type_name: str, max_depth: int = 15):
+    """Port of AsnFieldTreeResolver.findSizeThroughAliases (returns the SIZE text)."""
+    current = strip_alias_tag(type_name)
+    guard = set()
+    depth = 0
+    while current is not None and current not in guard and depth < max_depth:
+        guard.add(current)
+        depth += 1
+        definition = registry.get(current)
+        if definition is None or definition.kind != 'ALIAS':
+            return None
+        target = definition.alias_target
+        size = read_size_constraint_text(target)
+        if size is not None:
+            return size
+        stripped = strip_alias_tag(strip_constraint(target))
+        current = extract_repeated_inner_type(stripped) if is_repeated_expression(stripped) else stripped
+    return None
+
+
+def resolve_field_type(registry: dict, declared_type, inner_type, children):
+    """Port of AsnFieldTreeResolver.resolveFieldType."""
+    if children:
+        return inner_type
+    size = read_size_constraint_text(declared_type)
+    code = read_code_text(declared_type)
+    if size is None:
+        size = find_size_through_aliases(registry, inner_type)
+    return append_size_constraint(resolve_leaf_base_type(registry, inner_type), size, code)
+
+
+def resolve_leaf_base_type(registry: dict, type_name):
+    """Follows the alias chain down to the underlying primitive type name."""
+    current = strip_constraint(type_name)
+    guard = set()
+    while current is not None and current not in guard:
+        guard.add(current)
+        definition = registry.get(current)
+        if definition is None or definition.kind != 'ALIAS':
+            return current
+        target = strip_alias_tag(strip_constraint(definition.alias_target))
+        if not target or target == current:
+            return current
+        current = extract_repeated_inner_type(target) if is_repeated_expression(target) else target
+    return current
+
+
 def parse_field_lines(registry, raw_body, visiting, depth, cache, tagging_mode):
     parsed_leaves = []
     for line in split_field_entries(raw_body):
@@ -493,7 +576,7 @@ def parse_field_lines(registry, raw_body, visiting, depth, cache, tagging_mode):
         set_element = is_set_type(registry, inner_type)
         fields.append(AsnField(
             field_name=parsed.field_name,
-            field_type=inner_type,
+            field_type=resolve_field_type(registry, parsed.field_type, inner_type, children),
             optional=parsed.optional,
             repeated=repeated,
             choice=choice_element,
@@ -528,6 +611,72 @@ def resolve_root(registry: dict, root_type_name: str, tagging_mode: str):
 
     fields = resolve_by_type_name(registry, resolved_name, set(), 0, cache, tagging_mode)
     return current.kind, fields
+
+
+# --------------------------------------------------------------------------
+# Root selection (mirrors StructureParserService.selectRootTypeName)
+# --------------------------------------------------------------------------
+
+SYNTHETIC_NAME_SEPARATOR = '$'
+# '$' is a NAME character, not a delimiter: an inline "field CHOICE {...}" is
+# registered under a synthetic name (ISOCdr$cdr) and the parent body is
+# rewritten to reference it. Splitting on '$' hid that reference, so the
+# synthetic type looked unreferenced and could beat its own parent in root
+# selection - dropping the parent SEQUENCE wrapper from every record.
+TYPE_TOKEN_DELIMITER = re.compile(r'[^A-Za-z0-9_$-]+')
+SEQUENCE_OF_ALIAS = re.compile(r'^\s*SEQUENCE\s+OF\s+([A-Za-z][\w-]*)\s*$')
+STRUCTURED_KINDS = ('SEQUENCE', 'SET', 'CHOICE')
+
+
+def is_synthetic_member_type(type_name) -> bool:
+    """A type lifted out of an enclosing body is a member, never a root."""
+    return type_name is not None and SYNTHETIC_NAME_SEPARATOR in type_name
+
+
+def collect_referenced_type_names(registry: dict) -> set:
+    referenced = set()
+    for name, definition in registry.items():
+        text = definition.raw_body if definition.raw_body else definition.alias_target
+        if not text:
+            continue
+        for token in TYPE_TOKEN_DELIMITER.split(text):
+            if token and token != name and token in registry:
+                referenced.add(token)
+    return referenced
+
+
+def select_root_type_name(registry: dict, tagging_mode: str):
+    referenced = collect_referenced_type_names(registry)
+    best, best_count = None, -1
+
+    for candidate, definition in registry.items():
+        if is_synthetic_member_type(candidate):
+            continue
+
+        if definition.kind in STRUCTURED_KINDS and candidate not in referenced:
+            count = len(resolve_root(registry, candidate, tagging_mode)[1])
+            if count > best_count:
+                best, best_count = candidate, count
+
+        if definition.kind == 'ALIAS' and candidate not in referenced:
+            match = SEQUENCE_OF_ALIAS.match(definition.alias_target or '')
+            inner = match.group(1) if match else None
+            inner_definition = registry.get(inner) if inner else None
+            if inner_definition is not None and inner_definition.kind in STRUCTURED_KINDS:
+                count = len(resolve_root(registry, inner, tagging_mode)[1])
+                if count > best_count:
+                    best, best_count = inner, count
+
+    if best is not None and best_count > 0:
+        return best
+
+    for candidate in registry:
+        if is_synthetic_member_type(candidate):
+            continue
+        if resolve_root(registry, candidate, tagging_mode)[1]:
+            return candidate
+
+    return next(iter(registry), None)
 
 # --------------------------------------------------------------------------
 # Shape prediction (mirrors BerEncoderService.wrapInTlv / encodeRepeated,
