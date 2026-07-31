@@ -25,6 +25,35 @@ public class CdrRecordBuilder {
 
     private static final int MIN_REPEAT_COUNT = 1;
     private static final int MAX_REPEAT_COUNT = 2;
+    /**
+     * A repeated CHOICE field emits exactly one element.
+     *
+     * <p>{@code AsnFieldTreeResolver.resolveChoiceAlternative} collapses a CHOICE
+     * to a SINGLE alternative, and {@code BerEncoderService.encodeRepeated} reuses
+     * that one alternative for every element of the collection. Asking for two
+     * elements therefore does not produce two different alternatives - it writes
+     * the SAME alternative tag twice, side by side, inside the collection. That is
+     * a literal duplicate tag on the wire, and it is what EMM rejected:</p>
+     *
+     * <pre>
+     * Duplicate Tag data found for MMTelChargingDataTypes.MMTelServiceRecord
+     *     .mMTelRecord.recordExtensions.enhancedPhoneFeatures1.[0]
+     * </pre>
+     *
+     * <p>Confirmed against both EMM-accepted reference captures: every repeated
+     * CHOICE that carries two elements uses two DISTINCT alternatives - tags
+     * {@code (0, 1)} in 17512 of 17512 cases for list-Of-Calling-Party-Address and
+     * list-Of-Called-Asserted-Identity, never {@code (0, 0)}. Our output carried
+     * {@code (0, 0)}. Emitting a single element matches the other shape those same
+     * captures show (1442 + 1869 single-element cases for [6], 564 + 659 for
+     * [102]), so it is a shape EMM demonstrably accepts.</p>
+     *
+     * <p>Only CHOICE-valued collections are capped. A repeated SEQUENCE/SET keeps
+     * the random 1..2 count: its elements are full bodies, not alternatives, so
+     * repetition is legitimate there and the references show it (up to 19
+     * elements for extListOfAccessTransferInformation).</p>
+     */
+    private static final int CHOICE_ELEMENT_COUNT = 1;
     private static final String PATH_SEPARATOR = ".";
     private static final String INDEX_OPEN = "[";
     private static final String INDEX_CLOSE = "]";
@@ -128,7 +157,7 @@ public class CdrRecordBuilder {
 
     private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
-        int repeatCount = randomRepeatCount();
+        int repeatCount = repeatCountFor(field);
         List<Map<String, Object>> items = new ArrayList<>(repeatCount);
         for (int index = 0; index < repeatCount; index++) {
             String elementPath = fieldPath + INDEX_OPEN + index + INDEX_CLOSE;
@@ -142,7 +171,7 @@ public class CdrRecordBuilder {
         if (resolved.isPresent()) {
             return List.of(formatAsnLiteral(resolved.get(), field.getFieldType()));
         }
-        int repeatCount = randomRepeatCount();
+        int repeatCount = repeatCountFor(field);
         List<String> values = new ArrayList<>(repeatCount);
         for (int index = 0; index < repeatCount; index++) {
             values.add(formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType()));
@@ -169,6 +198,14 @@ public class CdrRecordBuilder {
                 .map(source -> source.resolve(pathAwareContext, field))
                 .flatMap(Optional::stream)
                 .findFirst();
+    }
+
+    /**
+     * How many elements a repeated field gets: always one for a CHOICE
+     * collection (see {@link #CHOICE_ELEMENT_COUNT}), otherwise a random 1..2.
+     */
+    private int repeatCountFor(AsnField field) {
+        return field.isChoice() ? CHOICE_ELEMENT_COUNT : randomRepeatCount();
     }
 
     private int randomRepeatCount() {

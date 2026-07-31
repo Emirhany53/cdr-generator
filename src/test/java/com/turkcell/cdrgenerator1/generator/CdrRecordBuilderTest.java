@@ -126,5 +126,49 @@ class CdrRecordBuilderTest {
         assertEquals(List.of("first", "second", "third"), List.copyOf(record.keySet()));
     }
 
+    /**
+     * A CHOICE collection must stay single-element. The resolver hands the
+     * encoder ONE alternative, and encodeRepeated reuses it for every element,
+     * so a second element writes the SAME alternative tag again - the literal
+     * duplicate tag EMM rejected with
+     * "Duplicate Tag data found for ...enhancedPhoneFeatures1.[0]". Both
+     * EMM-accepted reference captures back this up: a two-element repeated
+     * CHOICE always carries two DISTINCT alternative tags (0,1) - 17512/17512
+     * cases - never (0,0).
+     */
+    @Test
+    void aRepeatedChoiceNeverBuildsMoreThanOneElement() {
+        AsnField repeatedChoice = AsnField.builder()
+                .fieldName("list-Of-Called-Asserted-Identity").fieldType("InvolvedParty")
+                .repeated(true).choice(true)
+                .tagNumber(102).tagClass(BerTagClass.CONTEXT)
+                .children(List.of(leaf("e164", "IA5String")))
+                .build();
+
+        for (int i = 0; i < 50; i++) {
+            Map<String, Object> record = builder.buildRecordFromFields(List.of(repeatedChoice), Map.of());
+            List<?> items = assertInstanceOf(List.class, record.get("list-Of-Called-Asserted-Identity"));
+            assertEquals(1, items.size(),
+                    "a repeated CHOICE would emit the same alternative tag twice, was " + items.size());
+        }
+    }
+
+    /** A repeated SEQUENCE/SET is unaffected: its elements are bodies, not alternatives. */
+    @Test
+    void aRepeatedNonChoiceGroupStillVaries() {
+        AsnField repeated = AsnField.builder()
+                .fieldName("items").fieldType("Inner").repeated(true)
+                .tagNumber(6).tagClass(BerTagClass.CONTEXT)
+                .children(List.of(leaf("a", "INTEGER")))
+                .build();
+
+        boolean sawTwo = false;
+        for (int i = 0; i < 100; i++) {
+            Map<String, Object> record = builder.buildRecordFromFields(List.of(repeated), Map.of());
+            sawTwo |= assertInstanceOf(List.class, record.get("items")).size() == 2;
+        }
+        assertTrue(sawTwo, "non-CHOICE collections must still be able to hold two elements");
+    }
+
 
 }

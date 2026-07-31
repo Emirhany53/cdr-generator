@@ -24,8 +24,17 @@ kendini sinirlayan ayri bir TLV'dir). Bu script bu farki semadan turetilen
     bu sarmalin ICINDE (yani BIR elemanin kendi govdesinde) tag tekrari
     ihlaldir, ama ELEMANLAR ARASI ayni-tag'e sahip iki eleman olmasi ihlal
     DEGILDIR (kontrol edilmez).
-  - (repeated_)choice_direct: elemanlarin kendisi bare CONTEXT tag'lerdir,
-    aralarinda tekrar tamamen normaldir - hic kontrol edilmez.
+  - (repeated_)choice_direct: elemanlarin kendisi bare CONTEXT tag'lerdir.
+    ASN.1 acisindan iki elemanin AYNI alternatifi secmesi teorik olarak
+    gecerlidir, ancak EMM bunu KABUL ETMIYOR: iki referans yakalamasinda
+    cok-elemanli her repeated CHOICE her zaman FARKLI alternatifler tasiyor
+    (list-Of-Calling-Party-Address ve list-Of-Called-Asserted-Identity icin
+    17512/17512 vakada (0,1); hicbirinde (0,0) yok). Bizim uretimimiz (0,0)
+    yaziyordu ve EMM tam olarak bunu reddetti:
+      Duplicate Tag data found for ...enhancedPhoneFeatures1.[0]
+    Bu script eskiden bu durumu "tamamen normal" sayip HIC kontrol etmiyordu;
+    hatanin haftalarca gozden kacmasinin sebebi bu varsayimdi. Artik ayri bir
+    UYARI olarak raporlaniyor.
 
 Kullanim:
     python3 checkDuplicateTags.py /yol/dosya.ber [/yol/datastructure.json]
@@ -56,6 +65,18 @@ def check_fixed_body(buf, cs, ce, path, problems, record_no, is_set=False):
                         f"(X.690 11.6 ihlali), bozulma noktalari={bad}")
 
 
+def check_choice_alternatives(buf, cs, ce, path, problems, record_no):
+    """Repeated CHOICE: elemanlar bare CONTEXT tag'lerdir. EMM ayni alternatifin
+    iki kez secilmesini duplicate tag sayip kaydi reddediyor (referans
+    yakalamalarda cok-elemanli hicbir repeated CHOICE ayni alternatifi
+    tekrarlamiyor)."""
+    tags = [tn for tc, tn, con, i, e in _v.children(buf, cs, ce) if tc == CONTEXT]
+    dups = {t: c for t, c in Counter(tags).items() if c > 1}
+    if dups:
+        problems.append(f"kayit #{record_no} yol={path}: repeated CHOICE AYNI alternatifi "
+                        f"birden fazla kez secmis={dups} - EMM bunu 'Duplicate Tag' sayiyor")
+
+
 def walk(buf, cs, ce, path, expected, problems, record_no, depth=0):
     if depth > 12:
         return
@@ -64,6 +85,8 @@ def walk(buf, cs, ce, path, expected, problems, record_no, depth=0):
             continue
         new_path = path + (tn,)
         shape = expected.get(new_path)
+        if shape and shape.startswith('repeated_choice_direct'):
+            check_choice_alternatives(buf, ics, ice, new_path, problems, record_no)
         if shape in ('scalar_set_implicit', 'scalar_seq_implicit',
                      'scalar_set_explicit', 'scalar_seq_explicit'):
             rcs, rce = _v.real_content_bounds(buf, ics, ice, shape)
