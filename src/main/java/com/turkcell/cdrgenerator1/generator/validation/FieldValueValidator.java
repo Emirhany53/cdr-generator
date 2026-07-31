@@ -15,6 +15,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -45,6 +46,18 @@ public class FieldValueValidator {
      * dusmesi gerekiyordu.
      */
     private static final Pattern HEX_DUMP_PATTERN = Pattern.compile("^(?:[0-9A-Fa-f]{2})+$");
+    /**
+     * Same pattern FieldValueGenerator uses to read the {@code name(number)}
+     * pairs the resolver compacts a named-number body into. That fix only
+     * closed the RandomValueSource path: FieldValueGenerator now keeps a
+     * generated INTEGER/ENUMERATED inside its declared list. AiValueSource
+     * goes through this class instead, and matchesPrimitiveType used to only
+     * check "is this numeric" - an AI value like the original
+     * epf1-Role-of-Node = 85038 (declared range 0..7) would have sailed
+     * through here just as easily as it used to through the generator.
+     */
+    private static final Pattern NAMED_NUMBER_ENTRY = Pattern.compile(
+            "[A-Za-z][\\w-]*\\s*\\(\\s*(-?\\d+)\\s*\\)");
 
     private final TbcdCodec tbcdCodec;
     private final AiConfigProperties aiConfigProperties;
@@ -89,7 +102,8 @@ public class FieldValueValidator {
      */
     private boolean matchesPrimitiveType(AsnField field, String value) {
         return switch (BerPrimitiveType.fromTypeExpression(field.getFieldType())) {
-            case INTEGER, ENUMERATED -> value.matches(NUMERIC_LITERAL_PATTERN);
+            case INTEGER, ENUMERATED -> value.matches(NUMERIC_LITERAL_PATTERN)
+                    && isDeclaredNumber(field.getFieldType(), value);
             case BOOLEAN -> TRUE_LITERAL.equals(value) || FALSE_LITERAL.equals(value);
             case OCTET_STRING -> matchesOctetString(field, value);
             // A NULL encodes as zero-length whatever stands here (X.690 8.8), so
@@ -98,6 +112,24 @@ public class FieldValueValidator {
             case NULL -> true;
             case STRING -> true;
         };
+    }
+
+    /** True when the type declares no named-number list at all, or declares exactly this value. */
+    private boolean isDeclaredNumber(String fieldType, String value) {
+        if (Objects.isNull(fieldType) || fieldType.indexOf('{') < 0) {
+            return true;
+        }
+        Matcher matcher = NAMED_NUMBER_ENTRY.matcher(fieldType);
+        boolean any = false;
+        while (matcher.find()) {
+            any = true;
+            if (matcher.group(1).equals(value.trim())) {
+                return true;
+            }
+        }
+        // No named-number pairs actually matched despite the '{' - not a named-number
+        // type after all (e.g. a SIZE/CODE annotation), so nothing to restrict.
+        return !any;
     }
 
     /**
