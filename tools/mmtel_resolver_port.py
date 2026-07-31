@@ -533,16 +533,54 @@ def resolve_field_type(registry: dict, declared_type, inner_type, children):
     return append_size_constraint(resolve_leaf_base_type(registry, inner_type), size, code)
 
 
+NAMED_NUMBER_ENTRY = re.compile(r'([A-Za-z][\w-]*)\s*\(\s*(-?\d+)\s*\)')
+
+
+def contains_named_number_list(type_expression) -> bool:
+    return bool(type_expression) and '{' in type_expression \
+        and NAMED_NUMBER_ENTRY.search(type_expression) is not None
+
+
+def extract_base_type_token(type_expression: str) -> str:
+    brace = type_expression.find('{')
+    prefix = type_expression if brace == -1 else type_expression[:brace]
+    return (strip_alias_tag(prefix) or '').strip()
+
+
+def format_with_named_numbers(base_type_token: str, raw_body) -> str:
+    """Port of AsnFieldTreeResolver.formatWithNamedNumbers.
+
+    Compacts an ENUMERATED / named-number INTEGER body into
+    "TYPE{name(number),name(number)}" so the declared values survive into
+    AsnField.fieldType - that string is what FieldValueGenerator reads to keep
+    generated values inside the type's declared set.
+    """
+    if raw_body is None:
+        return base_type_token
+    pairs = [f'{m.group(1)}({m.group(2)})' for m in NAMED_NUMBER_ENTRY.finditer(raw_body)]
+    return base_type_token + '{' + ','.join(pairs) + '}' if pairs else base_type_token
+
+
 def resolve_leaf_base_type(registry: dict, type_name):
-    """Follows the alias chain down to the underlying primitive type name."""
+    """Port of AsnFieldTreeResolver.resolveLeafBaseType."""
     current = strip_constraint(type_name)
     guard = set()
     while current is not None and current not in guard:
         guard.add(current)
         definition = registry.get(current)
-        if definition is None or definition.kind != 'ALIAS':
+        if definition is None:
             return current
-        target = strip_alias_tag(strip_constraint(definition.alias_target))
+        if definition.kind == 'ENUMERATED':
+            return format_with_named_numbers('ENUMERATED', definition.raw_body)
+        if definition.kind != 'ALIAS':
+            return current
+        alias_target = definition.alias_target
+        # A named-number INTEGER is an alias whose body is a dictionary;
+        # strip_constraint would mistake those numbers for a SIZE constraint and
+        # delete them, so the chain ends here.
+        if contains_named_number_list(alias_target):
+            return format_with_named_numbers(extract_base_type_token(alias_target), alias_target)
+        target = strip_alias_tag(strip_constraint(alias_target))
         if not target or target == current:
             return current
         current = extract_repeated_inner_type(target) if is_repeated_expression(target) else target

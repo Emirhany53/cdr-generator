@@ -8,9 +8,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Son care ureticisi. Yapay zeka kapali, erisilemez veya gecersiz deger
@@ -32,6 +36,23 @@ public class FieldValueGenerator {
      * OPTIONAL and drop it instead of emitting the zero-length marker.
      */
     private static final String NULL_MARKER_VALUE = "";
+    /**
+     * Captures the {@code name(number)} pairs the resolver compacts a named-number
+     * body into - {@code ENUMERATED{sDP-offer(0),sDP-answer(1)}} or
+     * {@code INTEGER{native(0),barred(1),...}}.
+     *
+     * <p>Such a type admits ONLY the listed numbers. The generator used to fill
+     * every INTEGER/ENUMERATED with {@code nextInt(100_000)} and ignore the list
+     * entirely, so a generated MMTel record carried
+     * {@code epf1-Role-of-Node = 85038} where {@code Epf1RoleType ::= INTEGER
+     * {native(0) ... cmfbMember(7)}} allows 0..7 - 27 of the 37 named-number
+     * fields in one record were out of range. Across 2000 records of an
+     * EMM-accepted reference capture all 26912 such fields hold a declared
+     * value, without a single exception. 2545 types across 130 of the 808
+     * schema modules declare a named-number list.</p>
+     */
+    private static final Pattern NAMED_NUMBER_ENTRY = Pattern.compile(
+            "[A-Za-z][\\w-]*\\s*\\(\\s*(-?\\d+)\\s*\\)");
     private static final String JITTER_SUFFIX_PATTERN = ".*\\d{4}$";
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
     private static final String HEX_LITERAL_PATTERN = "^([0-9A-Fa-f]{2})+$";
@@ -75,8 +96,9 @@ public class FieldValueGenerator {
             return seeded.get();
         }
         return switch (BerPrimitiveType.fromTypeExpression(field.getFieldType())) {
-            case INTEGER, ENUMERATED ->
-                    String.valueOf(ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND));
+            case INTEGER, ENUMERATED -> pickDeclaredNumber(field.getFieldType())
+                    .orElseGet(() -> String.valueOf(
+                            ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND)));
             case BOOLEAN -> ThreadLocalRandom.current().nextBoolean() ? TRUE_VALUE : FALSE_VALUE;
             case OCTET_STRING -> randomHex(hexLengthFor(field));
             // A NULL carries no value at all - its presence IS the information
@@ -125,7 +147,13 @@ public class FieldValueGenerator {
 
     private boolean isCompatibleWithFieldType(AsnField field, List<String> examples) {
         return switch (BerPrimitiveType.fromTypeExpression(field.getFieldType())) {
-            case INTEGER, ENUMERATED -> examples.stream().allMatch(this::isNumericLiteral);
+            // A yml rule matches on a NAME SUBSTRING, so it can easily land on a
+            // named-number field it knows nothing about ("direction" admits only
+            // {0,1}, but a rule seeded with 15/127/842 would happily fill it).
+            // Its examples are therefore only usable when every one of them is a
+            // value the type actually declares.
+            case INTEGER, ENUMERATED -> examples.stream().allMatch(this::isNumericLiteral)
+                    && examples.stream().allMatch(example -> isDeclaredNumber(field.getFieldType(), example));
             case BOOLEAN -> examples.stream().allMatch(this::isBooleanLiteral);
             case OCTET_STRING -> examples.stream().allMatch(this::isHexLiteral);
             // A NULL field holds no value, so no example can ever be compatible
@@ -148,6 +176,36 @@ public class FieldValueGenerator {
         // Kural motorundan gecerli bir rakam dizisi al (ornek: msisdn kurali
         // "905321112233" verir), sonra TBCD'ye paketle.
         return generateFromRuleExample(field).flatMap(tbcdCodec::encode);
+    }
+
+    /**
+     * The numbers a named-number type declares, in declaration order; empty when
+     * the type expression carries no such list.
+     */
+    private List<String> declaredNumbers(String fieldType) {
+        if (Objects.isNull(fieldType) || fieldType.indexOf('{') < 0) {
+            return List.of();
+        }
+        Matcher matcher = NAMED_NUMBER_ENTRY.matcher(fieldType);
+        List<String> numbers = new ArrayList<>();
+        while (matcher.find()) {
+            numbers.add(matcher.group(1));
+        }
+        return numbers;
+    }
+
+    /** Picks one of the type's declared numbers, or empty for an unconstrained INTEGER. */
+    private Optional<String> pickDeclaredNumber(String fieldType) {
+        List<String> numbers = declaredNumbers(fieldType);
+        return numbers.isEmpty()
+                ? Optional.empty()
+                : Optional.of(numbers.get(ThreadLocalRandom.current().nextInt(numbers.size())));
+    }
+
+    /** True when the type declares no list at all, or declares exactly this value. */
+    private boolean isDeclaredNumber(String fieldType, String value) {
+        List<String> numbers = declaredNumbers(fieldType);
+        return numbers.isEmpty() || numbers.contains(value.trim());
     }
 
     private boolean isNumericLiteral(String value) {

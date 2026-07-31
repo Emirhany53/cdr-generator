@@ -172,4 +172,73 @@ class FieldValueGeneratorTest {
         String value = generator.generate(field("msisdnCount", "INTEGER"));
         assertTrue(value.matches("\\d+"), "INTEGER alan sayi almali: " + value);
     }
+
+    /**
+     * Adlandirilmis sayi listesi olan bir tip YALNIZCA listedeki sayilari kabul
+     * eder. Uretici bu listeyi hic okumuyor, her INTEGER/ENUMERATED alani
+     * {@code nextInt(100_000)} ile dolduruyordu; uretilen bir MMTel kaydinda
+     * {@code epf1-Role-of-Node = 85038} cikiyordu, oysa
+     * {@code Epf1RoleType ::= INTEGER {native(0) ... cmfbMember(7)}} 0..7'ye izin
+     * verir. Tek kayitta 37 adlandirilmis-sayi alaninin 27'si sema disiydi;
+     * EMM'in kabul ettigi referansta ayni alanlarin 26912/26912'si gecerli.
+     */
+    @Test
+    void aNamedNumberTypeOnlyProducesDeclaredValues() {
+        String type = "INTEGER{native(0),barred(1),asserted(2),unbarred(3),"
+                + "origCldPN(4),hGMember(5),mSIMMember(6),cmfbMember(7)}";
+        for (int attempt = 0; attempt < 200; attempt++) {
+            String value = generator.generate(field("epf1-Role-of-Node", type));
+            int number = Integer.parseInt(value);
+            assertTrue(number >= 0 && number <= 7,
+                    "sema disi deger uretildi: " + number);
+        }
+    }
+
+    /** ENUMERATED govdeleri de ayni bicimde tasinir, ayni kural gecerlidir. */
+    @Test
+    void anEnumeratedTypeOnlyProducesDeclaredValues() {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            assertEquals("6", generator.generate(field("sSType", "ENUMERATED{cDiversion(6)}")),
+                    "tek gecerli degeri olan bir ENUMERATED baska deger uretemez");
+        }
+        for (int attempt = 0; attempt < 100; attempt++) {
+            String value = generator.generate(field("direction", "ENUMERATED{forward(0),backward(1)}"));
+            assertTrue(List.of("0", "1").contains(value), "sema disi deger: " + value);
+        }
+    }
+
+    /** Listedeki sayilar bitisik olmak zorunda degil - 1040..1043 gibi bosluklu degerler de gecerli. */
+    @Test
+    void nonContiguousDeclaredValuesAreProducedAsDeclared() {
+        String type = "INTEGER{c2CwoAssertion(0),c2CwAssertion(1),pull-transferredOut(1040),"
+                + "push-transferredIn(1041),push-transferredOut(1042),pull-transferredIn(1043)}";
+        List<String> allowed = List.of("0", "1", "1040", "1041", "1042", "1043");
+        for (int attempt = 0; attempt < 200; attempt++) {
+            String value = generator.generate(field("epf1-ServiceMode", type));
+            assertTrue(allowed.contains(value), "sema disi deger: " + value);
+        }
+    }
+
+    /** Listesi olmayan sade bir INTEGER eskisi gibi serbest uretilir. */
+    @Test
+    void anUnconstrainedIntegerIsStillGeneratedFreely() {
+        String value = generator.generate(field("someCounter", "INTEGER"));
+        assertTrue(value.matches("\\d+"), "sade INTEGER sayi almali: " + value);
+    }
+
+    /**
+     * yml kurallari alan adinin bir PARCASINA gore eslesiyor, dolayisiyla
+     * tanimadigi bir adlandirilmis-sayi alanina rahatlikla carpabilir:
+     * "duration" kurali 15/127/842 ornekleriyle {0,1} kabul eden bir alani
+     * doldurmamali.
+     */
+    @Test
+    void aRuleWhoseExamplesAreNotDeclaredValuesIsIgnored() {
+        for (int attempt = 0; attempt < 100; attempt++) {
+            String value = generator.generate(
+                    field("duration", "ENUMERATED{forward(0),backward(1)}"));
+            assertTrue(List.of("0", "1").contains(value),
+                    "kural ornekleri sema disi oldugu icin yok sayilmaliydi: " + value);
+        }
+    }
 }
