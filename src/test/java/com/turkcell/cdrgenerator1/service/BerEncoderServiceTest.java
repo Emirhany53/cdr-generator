@@ -84,7 +84,9 @@ class BerEncoderServiceTest {
                 .fieldName("cmd").fieldType("OCTET STRING")
                 .tagNumber(0).tagClass(BerTagClass.APPLICATION).build();
 
-        byte[] out = encoder.encodeRecord(List.of(appField), Map.of("cmd", "\"Z\""));
+        // "5A" is the hex dump of the same single byte 0x5A ('Z') the test
+        // used before OCTET STRING values were required to be valid hex.
+        byte[] out = encoder.encodeRecord(List.of(appField), Map.of("cmd", "\"5A\""));
         assertEquals(0x40, out[2] & 0xFF, "APPLICATION class primitive tag 0 must be 0x40");
     }
 
@@ -209,6 +211,26 @@ class BerEncoderServiceTest {
     void invalidBooleanTextThrowsBerEncodingException() {
         assertThrows(BerEncodingException.class, () -> encoder.encodeRecord(
                 List.of(field("f", "BOOLEAN", 1)), Map.of("f", "\"maybe\"")));
+    }
+
+    @Test
+    void malformedHexForOctetStringThrowsInsteadOfSilentlyMisencoding() {
+        // Regression: an OCTET STRING's text is always a hex dump by this
+        // codebase's convention. A value that isn't valid hex (here, an odd
+        // number of characters) used to fall through to encodeString and get
+        // written as raw UTF-8 bytes with no error at all - quietly wrong BER
+        // instead of a caught mistake.
+        BerEncodingException ex = assertThrows(BerEncodingException.class,
+                () -> encoder.encodeRecord(
+                        List.of(field("ts", "OCTET STRING", 3)), Map.of("ts", "\"ABC\"")));
+        assertTrue(ex.getMessage().contains("ABC"));
+    }
+
+    @Test
+    void emptyOctetStringTextEncodesAsZeroLengthContent() {
+        byte[] out = encoder.encodeRecord(
+                List.of(field("ts", "OCTET STRING", 3)), Map.of("ts", "\"\""));
+        assertArrayEquals(new byte[]{0x30, 0x02, (byte) 0x83, 0x00}, out);
     }
 
     @Test

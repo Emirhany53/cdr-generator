@@ -234,9 +234,7 @@ public class BerEncoderService {
         return switch (primitiveType) {
             case BOOLEAN -> encodeBooleanText(fieldType, text);
             case INTEGER, ENUMERATED -> encodeIntegerText(fieldType, text);
-            case OCTET_STRING -> BARE_HEX.matcher(text).matches()
-                    ? tlvWriter.encodeHex(text)
-                    : tlvWriter.encodeString(text);
+            case OCTET_STRING -> encodeOctetStringText(fieldType, text);
             case NULL -> new byte[0];
             // Only a character-string type is padded. An OCTET STRING's SIZE
             // counts BYTES and its text is a hex dump (two characters per byte),
@@ -264,6 +262,28 @@ public class BerEncoderService {
             throw new BerEncodingException(
                     "Value '" + text + "' is not a valid integer for type " + fieldType);
         }
+    }
+
+    /**
+     * An OCTET STRING's text is always a hex dump (two hex characters per
+     * byte) by this codebase's convention - never literal characters. Before
+     * this check existed, a malformed hex value (odd length, or a stray
+     * non-hex character) silently fell through to {@link TlvWriter#encodeString},
+     * which wrote the text's raw UTF-8 bytes as if it were the intended
+     * content: no exception, just quietly wrong bytes on the wire. An empty
+     * value is allowed through as zero content octets (a valid empty OCTET
+     * STRING), matching the same "absent means empty, not literal" rule as
+     * NULL above.
+     */
+    private byte[] encodeOctetStringText(String fieldType, String text) {
+        if (text.isEmpty()) {
+            return new byte[0];
+        }
+        if (!BARE_HEX.matcher(text).matches()) {
+            throw new BerEncodingException(
+                    "Value '" + text + "' is not a valid hex dump for OCTET STRING type " + fieldType);
+        }
+        return tlvWriter.encodeHex(text);
     }
 
     /** A field is constructed when the resolver attached child definitions to it. */
