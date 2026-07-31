@@ -31,6 +31,38 @@ public class AsnFieldTreeResolver {
             "CODE\\s*\\(\\s*\"[^\"]*\"\\s*\\)", Pattern.CASE_INSENSITIVE);
     private static final String SIZE_SUFFIX_TEMPLATE = " (%s)";
     private static final int ALIAS_SIZE_MAX_DEPTH = 15;
+    /**
+     * Keywords that can only ever CONTINUE a field declaration, never start one.
+     *
+     * <p>{@link #splitFieldEntries} ends an entry at a newline as well as at a
+     * comma, because some modules omit the trailing comma. That is fine until a
+     * declaration wraps across lines, which real schemas do constantly:</p>
+     *
+     * <pre>
+     * communityDataInfo           [30] SEQUENCE OF CommunityDataInfo
+     *                                  OPTIONAL,
+     * </pre>
+     *
+     * <p>The lone {@code OPTIONAL} then became its own entry and
+     * {@link #parseFieldLine} happily read it as a field named {@code OPTIONA}
+     * of type {@code L} - a phantom field that the generator fills and the
+     * encoder emits as a real TLV, corrupting the record. 768 such entries exist
+     * across 32 of the 808 modules (SCFPDPRecord, Transit, CCAccountData,
+     * DiameterCreditControlRecord and friends).</p>
+     */
+    private static final Pattern FIELD_CONTINUATION_KEYWORD = Pattern.compile(
+            "^(OPTIONAL|DEFAULT\\b|OF\\b)", Pattern.CASE_INSENSITIVE);
+    /**
+     * An ENUMERATED / named-number member such as {@code default (0)}. It looks
+     * like a DEFAULT continuation but is a genuine entry of its own, so it must
+     * NOT be merged into the previous one.
+     */
+    private static final Pattern NAMED_NUMBER_MEMBER = Pattern.compile(
+            "^[A-Za-z][\\w-]*\\s*\\(\\s*-?\\d+\\s*\\)$");
+    /** A declaration ending in one of these is obviously unfinished. */
+    private static final Pattern UNFINISHED_TYPE_KEYWORD = Pattern.compile(
+            "(SEQUENCE|SET|OF)$", Pattern.CASE_INSENSITIVE);
+    private static final String ENTRY_JOIN_SEPARATOR = " ";
 
     /** Root resolution result: the root type's kind plus its resolved fields. */
     public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
@@ -447,7 +479,34 @@ public class AsnFieldTreeResolver {
         if (!last.isEmpty()) {
             entries.add(last);
         }
-        return entries;
+        return mergeContinuationEntries(entries);
+    }
+
+    /**
+     * Re-joins entries that a line break split out of the middle of a field
+     * declaration, so a wrapped {@code OPTIONAL} / {@code DEFAULT x} /
+     * {@code SEQUENCE OF Type} stays part of the field it belongs to instead of
+     * becoming a phantom field (see {@link #FIELD_CONTINUATION_KEYWORD}).
+     */
+    private List<String> mergeContinuationEntries(List<String> entries) {
+        List<String> merged = new ArrayList<>();
+        for (String entry : entries) {
+            if (!merged.isEmpty() && isContinuationOf(entry, merged.get(merged.size() - 1))) {
+                merged.set(merged.size() - 1,
+                        merged.get(merged.size() - 1) + ENTRY_JOIN_SEPARATOR + entry);
+            } else {
+                merged.add(entry);
+            }
+        }
+        return merged;
+    }
+
+    private boolean isContinuationOf(String entry, String previous) {
+        if (NAMED_NUMBER_MEMBER.matcher(entry).matches()) {
+            return false;
+        }
+        return FIELD_CONTINUATION_KEYWORD.matcher(entry).find()
+                || UNFINISHED_TYPE_KEYWORD.matcher(previous).find();
     }
 
     private List<AsnField> parseFieldLines(Map<String, AsnTypeDefinition> registry, String rawBody,

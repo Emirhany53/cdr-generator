@@ -651,4 +651,76 @@ class AsnFieldTreeResolverTest {
         assertEquals(List.of("tagged", "untagged"),
                 fields.stream().map(AsnField::getFieldName).toList());
     }
+
+    /**
+     * Real schemas wrap long declarations, putting OPTIONAL on the next line.
+     * Entries end at a newline as well as a comma, so the lone OPTIONAL used to
+     * become its own entry and parse into a phantom field named OPTIONA of type
+     * L - which the generator filled and the encoder emitted as a real TLV,
+     * corrupting the record. 768 such entries exist across 32 of 808 modules.
+     */
+    @Test
+    void aWrappedOptionalKeywordDoesNotBecomeItsOwnField() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    familyAndFriendsIndicator   [17] INTEGER
+                                                     OPTIONAL,
+                    numberOfInterrogations      [18] INTEGER
+                }
+                END
+                """, "Root");
+
+        assertEquals(List.of("familyAndFriendsIndicator", "numberOfInterrogations"),
+                fields.stream().map(AsnField::getFieldName).toList());
+        assertTrue(fields.get(0).isOptional(),
+                "the wrapped OPTIONAL must attach to the field it belongs to");
+    }
+
+    /** The same wrapping happens mid-type, splitting "SEQUENCE OF" from its element. */
+    @Test
+    void aWrappedSequenceOfKeepsItsElementType() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    communityDataInfo [30] SEQUENCE OF CommunityDataInfo
+                                           OPTIONAL
+                }
+                CommunityDataInfo ::= SEQUENCE { a [0] INTEGER }
+                END
+                """, "Root");
+
+        assertEquals(1, fields.size(), "no phantom entry may be produced");
+        AsnField field = fields.get(0);
+        assertEquals("communityDataInfo", field.getFieldName());
+        assertTrue(field.isRepeated(), "SEQUENCE OF must survive the line break");
+        assertTrue(field.isOptional());
+    }
+
+    /**
+     * Guards the fix from over-reaching: an ENUMERATED member that happens to be
+     * called "default" looks like a wrapped DEFAULT keyword but is a real entry.
+     */
+    @Test
+    void anEnumeratedMemberNamedDefaultIsNotSwallowed() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    method [0] PartialRecordMethod
+                }
+                PartialRecordMethod ::= ENUMERATED {
+                    default (0),
+                    aFieldChange (1)
+                }
+                END
+                """, "Root");
+
+        assertEquals(1, fields.size());
+        String type = fields.get(0).getFieldType();
+        assertTrue(type.contains("default(0)") && type.contains("aFieldChange(1)"),
+                "both declared members must survive, was: " + type);
+    }
 }

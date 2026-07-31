@@ -329,7 +329,38 @@ def split_field_entries(raw_body: str) -> list:
     last = ''.join(current).strip()
     if last:
         entries.append(last)
-    return entries
+    return merge_continuation_entries(entries)
+
+
+# Bir alan bildiriminin ORTASINDAN satir sonu ile kopan parcalari geri
+# birlestirir. splitFieldEntries virgulun yaninda satir sonunu da ayirac
+# saydigi icin, satira sigmayip alta tasan bir OPTIONAL / DEFAULT x /
+# SEQUENCE OF Type kendi basina bir "alan" oluyordu: parse_field_line onu
+# 'OPTIONA' adli, 'L' tipli hayalet bir alan olarak okuyor, uretici ona deger
+# yaziyor ve encoder gercek bir TLV olarak dosyaya basiyordu. 808 modulun
+# 32'sinde toplam 768 boyle girdi var.
+FIELD_CONTINUATION_KEYWORD = re.compile(r'^(OPTIONAL|DEFAULT\b|OF\b)', re.I)
+# ENUMERATED govdesindeki 'default (0)' gibi bir uye DEFAULT devamina benzer
+# ama kendi basina gecerli bir girdidir - birlestirilmemeli.
+NAMED_NUMBER_MEMBER = re.compile(r'^[A-Za-z][\w-]*\s*\(\s*-?\d+\s*\)$')
+UNFINISHED_TYPE_KEYWORD = re.compile(r'(SEQUENCE|SET|OF)$', re.I)
+
+
+def is_continuation_of(entry: str, previous: str) -> bool:
+    if NAMED_NUMBER_MEMBER.match(entry):
+        return False
+    return bool(FIELD_CONTINUATION_KEYWORD.search(entry)
+                or UNFINISHED_TYPE_KEYWORD.search(previous))
+
+
+def merge_continuation_entries(entries: list) -> list:
+    merged = []
+    for entry in entries:
+        if merged and is_continuation_of(entry, merged[-1]):
+            merged[-1] = merged[-1] + ' ' + entry
+        else:
+            merged.append(entry)
+    return merged
 
 
 def is_alias_repeated(registry: dict, type_name: str) -> bool:
