@@ -448,18 +448,40 @@ class AsnFieldTreeResolverTest {
         assertNull(fields.get(0).getChildren());
     }
 
+    /**
+     * SIZE kisiti yaprak alanin fieldType degerinde HAM METIN olarak tutulur.
+     *
+     * <p>Onceden kisit bir Integer'a okunur (aralikta UST SINIR alinir) ve sabit
+     * bir {@code SIZE(ustSinir)} olarak geri yazilirdi. Bu, X.680 49.4'un ayrimini
+     * siliyordu: {@code SIZE(20)} uzunlugu TAM olarak sabitler,
+     * {@code SIZE(1..20)} sabitlemez. Kodlayici yalnizca sabit genislikli alanlari
+     * bosluklarla tamamladigi icin, sema genelindeki 807 aralikli karakter-string
+     * alani da azami uzunluga kadar doldurulmus olurdu.</p>
+     */
     @Test
-    void sizeConstraintIsPreservedOnLeafTypes() {
+    void aRangedSizeConstraintKeepsItsRange() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS ::=
                 BEGIN
                 Root ::= SEQUENCE { a [0] IA5String (SIZE(1..20)) }
                 END
                 """, "Root");
-        // CODE("LEFT") gibi kisitlar kaldirilir, ancak SIZE(n) yaprak alanin
-        // fieldType degerinde tutulur: yapay zeka katmani ve dogrulayici
-        // azami uzunlugu buradan okur. SIZE(1..20) formunda ust sinir alinir.
-        assertEquals("IA5String (SIZE(20))", fields.get(0).getFieldType());
+        assertEquals("IA5String (SIZE(1..20))", fields.get(0).getFieldType());
+    }
+
+    /**
+     * Sabit SIZE(n) ve yanindaki hizalama isareti oldugu gibi tasinir: kodlayici
+     * dolgunun hangi tarafa gidecegine {@code CODE} degerine bakarak karar verir.
+     */
+    @Test
+    void aFixedSizeConstraintKeepsItsCodeMarker() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS ::=
+                BEGIN
+                Root ::= SEQUENCE { a [0] IA5String (SIZE(15) CODE("LEFT")) }
+                END
+                """, "Root");
+        assertEquals("IA5String (SIZE(15) CODE(\"LEFT\"))", fields.get(0).getFieldType());
     }
 
     @Test
