@@ -34,6 +34,17 @@ public class FieldValueValidator {
     private static final int BITS_PER_BYTE = 8;
     /** OCTET STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir. */
     private static final int HEX_CHARS_PER_BYTE = 2;
+    /**
+     * BerEncoderService.encodeOctetStringText'in kabul ettigi tek bicim: cift
+     * uzunlukta, yalnizca hex karakter. Uretimde AI, SIZE'i olmayan (dolayisiyla
+     * BCD/TBCD adi da eslesmeyen) bir OCTET STRING alana "41253", "90212" gibi
+     * tek basamak sayisi tek (5 haneli) duz sayilar dondurdu; asagidaki kontrol
+     * olmadan bu deger "uyumlu" sayilip encoder'a kadar ilerliyor ve orada
+     * BerEncodingException ile patliyordu - halbuki burada reddedilip zincirin
+     * rastgele uretime (RandomValueSource, her zaman gecerli hex dokumu uretir)
+     * dusmesi gerekiyordu.
+     */
+    private static final Pattern HEX_DUMP_PATTERN = Pattern.compile("^(?:[0-9A-Fa-f]{2})+$");
 
     private final TbcdCodec tbcdCodec;
     private final AiConfigProperties aiConfigProperties;
@@ -108,7 +119,9 @@ public class FieldValueValidator {
             // bu ikinci yolu deniyor, burada sadece bicimsel gecerliligi kontrol ediyoruz.
             return tbcdCodec.decode(value).isPresent();
         }
-        return true;
+        // Ozel bir BCD/TBCD alani degilse deger yine de bir OCTET STRING'dir:
+        // encoder'in kabul ettigi TEK bicim cift uzunlukta hex dokumudur.
+        return HEX_DUMP_PATTERN.matcher(value).matches();
     }
 
     private boolean exceedsMaxLength(AsnField field, String value) {
