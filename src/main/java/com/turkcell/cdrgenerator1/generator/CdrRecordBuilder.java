@@ -4,6 +4,7 @@ import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.generator.source.ValueSource;
 import com.turkcell.cdrgenerator1.generator.source.ValueSourceContext;
 import com.turkcell.cdrgenerator1.model.AsnField;
+import com.turkcell.cdrgenerator1.model.RecordFieldKeys;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import lombok.extern.slf4j.Slf4j;
@@ -137,19 +138,26 @@ public class CdrRecordBuilder {
     private Map<String, Object> buildFields(List<AsnField> fields, ValueSourceContext context,
                                             String pathPrefix) {
         Map<String, Object> record = new LinkedHashMap<>();
+        // Keyed per FIELD, not per name: the same name can appear twice in one
+        // body under different tags, and keying by name alone let the second
+        // field overwrite the first (see RecordFieldKeys).
+        List<String> keys = RecordFieldKeys.forFields(fields);
 
-        for (AsnField field : fields) {
-            String fieldName = field.getFieldName();
-            String fieldPath = buildPath(pathPrefix, fieldName);
+        for (int index = 0; index < fields.size(); index++) {
+            AsnField field = fields.get(index);
+            String recordKey = keys.get(index);
+            // The PATH stays name-based: it addresses user-supplied and
+            // AI-supplied values, which are keyed by the schema's own names.
+            String fieldPath = buildPath(pathPrefix, field.getFieldName());
 
             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
-                record.put(fieldName, field.isRepeated()
+                record.put(recordKey, field.isRepeated()
                         ? buildRepeatedGroup(field, context, fieldPath)
                         : buildFields(field.getChildren(), context, fieldPath));
             } else if (field.isRepeated()) {
-                record.put(fieldName, buildRepeatedLeaf(field, context, fieldPath));
+                record.put(recordKey, buildRepeatedLeaf(field, context, fieldPath));
             } else {
-                record.put(fieldName, resolveLeafValue(field, context, fieldPath));
+                record.put(recordKey, resolveLeafValue(field, context, fieldPath));
             }
         }
         return record;

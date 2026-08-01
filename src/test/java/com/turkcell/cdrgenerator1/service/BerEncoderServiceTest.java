@@ -349,6 +349,30 @@ class BerEncoderServiceTest {
         assertEquals(BerPrimitiveType.REAL, BerPrimitiveType.fromTypeExpression("REAL (1..5)"));
     }
 
+    /**
+     * Two fields may share a name under different tags (IMSTCELLCDRS declares
+     * eventTypeContentLength at both [7] and [41]). The encoder used to look
+     * both up by name and so wrote ONE value under BOTH tags; it now uses the
+     * same per-field keys CdrRecordBuilder wrote them under.
+     */
+    @Test
+    void twoFieldsSharingANameEncodeTheirOwnValues() {
+        List<AsnField> fields = List.of(
+                field("eventTypeContentLength", "IA5String", 7),
+                field("eventTypeContentLength", "IA5String", 41));
+        Map<String, Object> record = new LinkedHashMap<>();
+        record.put("eventTypeContentLength", "\"A\"");
+        record.put("eventTypeContentLength#1", "\"B\"");
+
+        byte[] out = encoder.encodeRecord(fields, record);
+
+        // 30 06 | 87 01 41 ('A') | 9F 29 01 42 ('B' under tag 41)
+        assertArrayEquals(new byte[]{
+                0x30, 0x07,
+                (byte) 0x87, 0x01, 0x41,
+                (byte) 0x9F, 0x29, 0x01, 0x42}, out);
+    }
+
     @Test
     void constructedFieldWithScalarValueThrows() {
         AsnField parent = AsnField.builder()

@@ -4,6 +4,7 @@ import com.turkcell.cdrgenerator1.exception.BerEncodingException;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
+import com.turkcell.cdrgenerator1.model.RecordFieldKeys;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -115,12 +116,21 @@ public class BerEncoderService {
         return encoded;
     }
 
-    /** Concatenates the TLV of every field, pulling each value by field name. */
+    /**
+     * Concatenates the TLV of every field, pulling each value by its record key.
+     *
+     * <p>The key is the field name only while that name is unique in this body.
+     * A body may declare the same name twice under different tags, and looking
+     * both up by name handed the encoder ONE value to write under BOTH tags -
+     * so the keys come from {@link RecordFieldKeys}, exactly as
+     * {@code CdrRecordBuilder} produced them from this same field list.</p>
+     */
     private byte[] encodeFieldList(List<AsnField> fields, Map<?, ?> values) {
+        List<String> keys = RecordFieldKeys.forFields(fields);
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        for (AsnField field : fields) {
-            Object value = values.get(field.getFieldName());
-            buffer.writeBytes(encodeField(field, value));
+        for (int index = 0; index < fields.size(); index++) {
+            Object value = values.get(keys.get(index));
+            buffer.writeBytes(encodeField(fields.get(index), value));
         }
         return buffer.toByteArray();
     }

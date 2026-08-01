@@ -153,6 +153,37 @@ class CdrRecordBuilderTest {
         }
     }
 
+    /**
+     * 26 bodies across 23 modules declare the same field name twice under
+     * DIFFERENT tags - IMSTCELLCDRS has eventTypeContentLength at [7] and [41],
+     * BroadSoftEnriched has startTime at [8] and [33]. The record is a Map, so
+     * keying it by field name alone let the second field overwrite the first and
+     * the encoder then wrote that single value under both tags.
+     */
+    @Test
+    void twoFieldsSharingANameEachKeepTheirOwnValue() {
+        AsnField first = AsnField.builder().fieldName("eventTypeContentLength")
+                .fieldType("IA5String").tagNumber(7).tagClass(BerTagClass.CONTEXT).build();
+        AsnField second = AsnField.builder().fieldName("eventTypeContentLength")
+                .fieldType("IA5String").tagNumber(41).tagClass(BerTagClass.CONTEXT).build();
+
+        Map<String, Object> record = builder.buildRecordFromFields(List.of(first, second), Map.of());
+
+        assertEquals(2, record.size(), "both fields need their own entry, not one shared one");
+        assertTrue(record.containsKey("eventTypeContentLength"),
+                "the first occurrence keeps the bare name");
+        assertTrue(record.containsKey("eventTypeContentLength#1"),
+                "the second occurrence is disambiguated");
+    }
+
+    /** A body without duplicates must keep plain field names as keys. */
+    @Test
+    void uniqueFieldNamesAreNotDisambiguated() {
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(leaf("first", "INTEGER"), leaf("second", "IA5String")), Map.of());
+        assertEquals(List.of("first", "second"), List.copyOf(record.keySet()));
+    }
+
     /** A repeated SEQUENCE/SET is unaffected: its elements are bodies, not alternatives. */
     @Test
     void aRepeatedNonChoiceGroupStillVaries() {
