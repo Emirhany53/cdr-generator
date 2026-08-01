@@ -134,6 +134,29 @@ class BerGeneratorControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    /**
+     * A module can parse fine and still resolve to no fields - Array,
+     * LteReturnTypes and SMSCLookupStructures are helper type modules, not CDR
+     * records. Inline mode already rejected that; the registered path did not,
+     * so it answered 200 with a file full of empty "30 00" records. A silent
+     * success like that reads as a generator fault rather than a bad choice of
+     * structure.
+     */
+    @Test
+    void aStructureThatResolvesToNoFieldsReturnsBadRequest() throws Exception {
+        String body = """
+                {
+                  "structureName": "EmptyRoot",
+                  "content": "M DEFINITIONS ::= BEGIN Str ::= IA5STRING StringArray ::= SEQUENCE OF Str END"
+                }
+                """;
+
+        mockMvc.perform(post("/api/cdr/generate-ber")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void recordCountAboveMaxReturnsBadRequest() throws Exception {
         String body = """

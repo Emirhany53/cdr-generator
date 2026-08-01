@@ -138,6 +138,16 @@ public class BerGeneratorController {
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }
+        // Inline mode already refuses a structure with no fields; a registered one
+        // deserves the same answer. Without this, picking a module whose root
+        // resolves to nothing (Array, LteReturnTypes and SMSCLookupStructures are
+        // helper type modules, not CDR records) returns a file full of empty
+        // "30 00" records - a silent success that looks like a generator fault.
+        if (Objects.isNull(structure.getFields()) || structure.getFields().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Structure '" + request.getStructureName()
+                            + "' resolves to no fields, so it cannot produce a CDR record");
+        }
         return structure;
     }
 }

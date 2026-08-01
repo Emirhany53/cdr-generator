@@ -81,6 +81,12 @@ public class StructureParserService {
 
         AsnStructure structure = buildStructure(dto.getName(), dto.getContents(), Map.of());
         if (Objects.isNull(structure)) {
+            // buildStructure returns null only when the module declares no types at
+            // all. Three of the 808 modules are empty stubs - ModuleNamedsds,
+            // ModuleNameff and GlobalTKDataCDR are just "DEFINITIONS ::= BEGIN END" -
+            // and were being dropped in total silence, which is why the startup
+            // banner reports 805 structures and nothing explains the missing three.
+            log.warn("Module '{}' declares no ASN.1 type and was skipped", dto.getName());
             return;
         }
 
