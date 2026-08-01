@@ -30,6 +30,8 @@ import java.util.regex.Pattern;
 public class FieldValueValidator {
 
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
+    private static final String DOTTED_OID_PATTERN = "^\\d+(\\.\\d+)+$";
+    private static final String DECIMAL_LITERAL_PATTERN = "^-?\\d+(\\.\\d+)?$";
     private static final String TRUE_LITERAL = "1";
     private static final String FALSE_LITERAL = "0";
     private static final int BITS_PER_BYTE = 8;
@@ -109,6 +111,10 @@ public class FieldValueValidator {
             // A NULL encodes as zero-length whatever stands here (X.690 8.8), so
             // there is no value shape to reject - and rejecting would only push
             // the chain into a pointless regeneration loop.
+            // The encoder parses these; a malformed value must be rejected here so
+            // the chain falls through to random generation instead of throwing.
+            case OBJECT_IDENTIFIER -> value.matches(DOTTED_OID_PATTERN);
+            case REAL -> value.matches(DECIMAL_LITERAL_PATTERN);
             case NULL -> true;
             case STRING -> true;
         };

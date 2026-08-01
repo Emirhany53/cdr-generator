@@ -238,6 +238,8 @@ public class BerEncoderService {
             // A BIT STRING's value is a hex dump like an OCTET STRING's, but its
             // contents must additionally carry the leading unused-bit count.
             case BIT_STRING -> tlvWriter.encodeBitString(encodeOctetStringText(fieldType, text));
+            case OBJECT_IDENTIFIER -> tlvWriter.encodeObjectIdentifier(text);
+            case REAL -> tlvWriter.encodeReal(text);
             case NULL -> new byte[0];
             // Only a character-string type is padded. An OCTET STRING's SIZE
             // counts BYTES and its text is a hex dump (two characters per byte),

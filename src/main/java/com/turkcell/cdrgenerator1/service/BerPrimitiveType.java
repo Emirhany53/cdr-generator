@@ -31,6 +31,24 @@ public enum BerPrimitiveType {
      */
     BIT_STRING,
     /**
+     * ASN.1 OBJECT IDENTIFIER. X.690 8.19: the arcs are packed - the first two
+     * share one subidentifier (40*arc1+arc2) and the rest are base-128 - so the
+     * dotted text "1.3.6.1" is NOT its own encoding. While this fell through to
+     * {@link #STRING} the characters were written verbatim under OCTET STRING's
+     * tag 4. 6 fields across 6 modules (CDRF-R7/R9, CHFChargingDataTypes16,
+     * Newchf, MAVENIRTEST) are declared OBJECT IDENTIFIER, all untagged, so both
+     * their tag and their contents were wrong.
+     */
+    OBJECT_IDENTIFIER,
+    /**
+     * ASN.1 REAL. X.690 8.5: zero has no contents octets at all, and a non-zero
+     * value needs a leading octet selecting the representation before the
+     * number. No REAL field is reachable from any module's selected root today
+     * (UAGRecordsBer declares some, but not under its root), so this is
+     * defensive rather than a fix for observed output.
+     */
+    REAL,
+    /**
      * ASN.1 NULL: a pure presence marker. X.690 8.8 requires its contents octets
      * to be ABSENT, so it always encodes with length 0 no matter what value the
      * generator produced for it.
@@ -68,6 +86,14 @@ public enum BerPrimitiveType {
         }
         if (upper.startsWith("BIT STRING") || upper.startsWith("BITSTRING")) {
             return BIT_STRING;
+        }
+        if (upper.startsWith("OBJECT IDENTIFIER") || upper.startsWith("OBJECTIDENTIFIER")) {
+            return OBJECT_IDENTIFIER;
+        }
+        // Guarded against a merely REAL-prefixed name: RealUnit is a SEQUENCE of
+        // two INTEGERs in GPRS-Charging-Extensions, not an ASN.1 REAL.
+        if (upper.equals("REAL") || upper.startsWith("REAL ") || upper.startsWith("REAL(")) {
+            return REAL;
         }
         if (upper.equals("NULL") || upper.startsWith("NULL ") || upper.startsWith("NULL(")) {
             // Guarded against a merely NULL-prefixed name (e.g. "NullableCount")

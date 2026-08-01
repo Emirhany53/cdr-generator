@@ -14,6 +14,8 @@ public enum BerUniversalTag {
     /** X.690 8.6: contents are [unused-bit count][bit data]. */
     BIT_STRING(3),
     OCTET_STRING(4),
+    OBJECT_IDENTIFIER(6),
+    REAL(9),
     /** X.690 8.8: NULL's contents octets are always absent (length 0). */
     NULL(5),
     ENUMERATED(10),
@@ -82,6 +84,8 @@ public enum BerUniversalTag {
             case ENUMERATED -> ENUMERATED;
             case OCTET_STRING -> OCTET_STRING;
             case BIT_STRING -> BIT_STRING;
+            case OBJECT_IDENTIFIER -> OBJECT_IDENTIFIER;
+            case REAL -> REAL;
             case NULL -> NULL;
             case STRING -> forStringType(typeExpression);
         };

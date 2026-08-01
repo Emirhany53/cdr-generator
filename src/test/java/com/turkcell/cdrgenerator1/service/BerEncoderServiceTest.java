@@ -279,6 +279,76 @@ class BerEncoderServiceTest {
                 List.of(field("s", "GeneralString", null)), Map.of("s", "\"A\""))[2] & 0xFF);
     }
 
+    /**
+     * X.690 8.19: the first two arcs are packed into one subidentifier
+     * (40*arc1 + arc2) and every later arc is base-128 with a continuation bit.
+     * The dotted text is NOT its own encoding - while OBJECT IDENTIFIER fell
+     * through to the text types those characters went out verbatim under OCTET
+     * STRING's tag 4, so both the tag and the contents were wrong. All 6 such
+     * fields in the schema are untagged, so both errors were visible.
+     *
+     * <p>Values below are the standard published encodings.</p>
+     */
+    @Test
+    void objectIdentifierIsEncodedAsPackedArcs() {
+        // 1.2.840.113549 (RSA) -> 2A 86 48 86 F7 0D, under universal tag 6.
+        byte[] out = encoder.encodeRecord(
+                List.of(field("identifier", "OBJECT IDENTIFIER", null)),
+                Map.of("identifier", "\"1.2.840.113549\""));
+        assertArrayEquals(new byte[]{
+                0x30, 0x08, 0x06, 0x06,
+                0x2A, (byte) 0x86, 0x48, (byte) 0x86, (byte) 0xF7, 0x0D}, out);
+    }
+
+    @Test
+    void objectIdentifierPacksTheLeadingArcPair() {
+        // 2.5.4.3 -> 55 04 03: 2*40+5 = 85 = 0x55.
+        byte[] out = encoder.encodeRecord(
+                List.of(field("identifier", "OBJECT IDENTIFIER", null)),
+                Map.of("identifier", "\"2.5.4.3\""));
+        assertArrayEquals(new byte[]{0x30, 0x05, 0x06, 0x03, 0x55, 0x04, 0x03}, out);
+    }
+
+    @Test
+    void malformedObjectIdentifierThrows() {
+        // Leading arc must be 0..2, and arc2 < 40 unless arc1 is 2.
+        for (String bad : new String[] {"3.1.1", "0.40.1", "7", "a.b"}) {
+            assertThrows(BerEncodingException.class,
+                    () -> encoder.encodeRecord(
+                            List.of(field("identifier", "OBJECT IDENTIFIER", null)),
+                            Map.of("identifier", "\"" + bad + "\"")),
+                    "should have rejected " + bad);
+        }
+    }
+
+    /** X.690 8.5.2: REAL zero carries NO contents octets at all. */
+    @Test
+    void realZeroHasNoContentsOctets() {
+        byte[] out = encoder.encodeRecord(
+                List.of(field("v", "REAL", null)), Map.of("v", "\"0\""));
+        assertArrayEquals(new byte[]{0x30, 0x02, 0x09, 0x00}, out);
+    }
+
+    /** A non-zero REAL leads with the octet selecting the decimal (NR3) form. */
+    @Test
+    void nonZeroRealUsesTheDecimalForm() {
+        byte[] out = encoder.encodeRecord(
+                List.of(field("v", "REAL", null)), Map.of("v", "\"1.5\""));
+        assertEquals(0x09, out[2] & 0xFF, "universal tag REAL");
+        assertEquals(0x03, out[4] & 0xFF, "first contents octet selects ISO 6093 NR3");
+    }
+
+    /**
+     * RealUnit in GPRS-Charging-Extensions is a SEQUENCE of two INTEGERs, not an
+     * ASN.1 REAL. A prefix match would misclassify it and destroy 21 fields.
+     */
+    @Test
+    void aTypeMerelyNamedLikeRealIsNotTreatedAsReal() {
+        assertEquals(BerPrimitiveType.STRING, BerPrimitiveType.fromTypeExpression("RealUnit"));
+        assertEquals(BerPrimitiveType.REAL, BerPrimitiveType.fromTypeExpression("REAL"));
+        assertEquals(BerPrimitiveType.REAL, BerPrimitiveType.fromTypeExpression("REAL (1..5)"));
+    }
+
     @Test
     void constructedFieldWithScalarValueThrows() {
         AsnField parent = AsnField.builder()

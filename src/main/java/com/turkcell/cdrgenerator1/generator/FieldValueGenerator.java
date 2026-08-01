@@ -56,6 +56,11 @@ public class FieldValueGenerator {
     private static final String JITTER_SUFFIX_PATTERN = ".*\\d{4}$";
     private static final String NUMERIC_LITERAL_PATTERN = "^-?\\d+$";
     private static final String HEX_LITERAL_PATTERN = "^([0-9A-Fa-f]{2})+$";
+    private static final String DOTTED_OID_PATTERN = "^\\d+(\\.\\d+)+$";
+    private static final String DECIMAL_LITERAL_PATTERN = "^-?\\d+(\\.\\d+)?$";
+    /** Enterprise arc: any subtree under it is a structurally valid OID. */
+    private static final String ENTERPRISE_OID_PREFIX = "1.3.6.1.4.1.";
+    private static final double REAL_SCALE = 100.0d;
     private static final int JITTER_LENGTH = 4;
     private static final int DEFAULT_STRING_LENGTH = 8;
     private static final int DEFAULT_INTEGER_BOUND = 100_000;
@@ -108,6 +113,12 @@ public class FieldValueGenerator {
             // representation: NOT null, because a null value would make the
             // encoder omit the field entirely instead of emitting the marker.
             // BerEncoderService discards whatever stands here regardless.
+            // A dotted OID is what the encoder parses into X.690 8.19 arcs. The
+            // enterprise arc 1.3.6.1.4.1.x is always structurally valid.
+            case OBJECT_IDENTIFIER -> ENTERPRISE_OID_PREFIX
+                    + ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND);
+            case REAL -> String.valueOf(
+                    ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND) / REAL_SCALE);
             case NULL -> NULL_MARKER_VALUE;
             case STRING -> randomFrom(ALPHABET, lengthFor(field));
         };
@@ -162,6 +173,8 @@ public class FieldValueGenerator {
             // with it. Returning false keeps a loosely-matched yml rule (matching
             // is by name substring) from seeding content into a field that must
             // encode as zero-length.
+            case OBJECT_IDENTIFIER -> examples.stream().allMatch(this::isDottedOid);
+            case REAL -> examples.stream().allMatch(this::isDecimalLiteral);
             case NULL -> false;
             case STRING -> true;
         };
@@ -222,6 +235,14 @@ public class FieldValueGenerator {
         return value.matches(HEX_LITERAL_PATTERN);
     }
 
+    private boolean isDottedOid(String value) {
+        return value.matches(DOTTED_OID_PATTERN);
+    }
+
+    private boolean isDecimalLiteral(String value) {
+        return value.matches(DECIMAL_LITERAL_PATTERN);
+    }
+
     private String pickAndJitter(List<String> examples) {
         final String example = examples.get(ThreadLocalRandom.current().nextInt(examples.size()));
         if (!example.matches(JITTER_SUFFIX_PATTERN)) {
@@ -263,6 +284,11 @@ public class FieldValueGenerator {
         BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
             return fitIntegerToByteWidth(value, sizeConstraint.get());
+        }
+        // Cutting a dotted OID or a decimal REAL mid-way leaves a value the
+        // encoder can only reject ("1.3.6." / "12."), so length never applies.
+        if (type == BerPrimitiveType.OBJECT_IDENTIFIER || type == BerPrimitiveType.REAL) {
+            return value;
         }
 
         int effectiveMax = effectiveMaxLength(field, sizeConstraint.get());

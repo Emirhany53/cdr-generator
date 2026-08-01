@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.exception.BerEncodingException;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.springframework.stereotype.Component;
 
@@ -39,6 +40,16 @@ public class TlvWriter {
     private static final int BITS_PER_BYTE = 8;
     /** Leading BIT STRING octet when the value occupies whole bytes (X.690 8.6.2). */
     private static final byte NO_UNUSED_BITS = 0;
+    /** An OID needs at least the two arcs that share the first subidentifier. */
+    private static final int MIN_OID_ARCS = 2;
+    /** X.690 8.19.4: first subidentifier is {@code 40 * arc1 + arc2}. */
+    private static final int FIRST_ARC_MULTIPLIER = 40;
+    /** X.690 8.19.4: the leading arc of an OID is 0, 1 or 2. */
+    private static final int MAX_FIRST_ARC = 2;
+    /** X.690 8.5.7: first REAL contents octet selecting ISO 6093 NR3. */
+    private static final byte NR3_DECIMAL_FORM = 0x03;
+    /** NR3 always shows a fraction and an explicit, signed exponent. */
+    private static final String NR3_FORMAT = "%.6E";
 
     /**
      * Builds the identifier (tag) bytes for a context-class field.
@@ -171,6 +182,94 @@ public class TlvWriter {
         byte[] out = new byte[bitData.length + 1];
         out[0] = NO_UNUSED_BITS;
         System.arraycopy(bitData, 0, out, 1, bitData.length);
+        return out;
+    }
+
+    /**
+     * BER OBJECT IDENTIFIER contents (X.690 8.19).
+     *
+     * <p>The first two arcs share one subidentifier, {@code 40 * arc1 + arc2};
+     * every subidentifier after that is base-128, most significant group first,
+     * with bit 8 set on all octets but the last. An OID written out as text
+     * ("1.3.6.1.4.1.9") is NOT its own encoding - writing the characters, which
+     * is what happened while OBJECT IDENTIFIER was lumped in with the text
+     * types, produces something no decoder can read as an OID.</p>
+     *
+     * @throws BerEncodingException if the dotted form is not a valid OID
+     */
+    public byte[] encodeObjectIdentifier(String dottedOid) {
+        String[] parts = dottedOid.trim().split("\\.");
+        if (parts.length < MIN_OID_ARCS) {
+            throw new BerEncodingException(
+                    "OBJECT IDENTIFIER '" + dottedOid + "' needs at least two arcs");
+        }
+        long[] arcs = new long[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            try {
+                arcs[i] = Long.parseLong(parts[i].trim());
+            } catch (NumberFormatException e) {
+                throw new BerEncodingException(
+                        "OBJECT IDENTIFIER '" + dottedOid + "' has a non-numeric arc '" + parts[i] + "'");
+            }
+            if (arcs[i] < 0) {
+                throw new BerEncodingException(
+                        "OBJECT IDENTIFIER '" + dottedOid + "' has a negative arc");
+            }
+        }
+        // X.690 8.19.4: arc1 is 0..2, and when it is 0 or 1 arc2 cannot exceed 39,
+        // because the two are packed into a single subidentifier.
+        if (arcs[0] > MAX_FIRST_ARC || (arcs[0] < MAX_FIRST_ARC && arcs[1] >= FIRST_ARC_MULTIPLIER)) {
+            throw new BerEncodingException(
+                    "OBJECT IDENTIFIER '" + dottedOid + "' has an out-of-range leading arc pair");
+        }
+
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        buffer.writeBytes(encodeBase128(arcs[0] * FIRST_ARC_MULTIPLIER + arcs[1]));
+        for (int i = 2; i < arcs.length; i++) {
+            buffer.writeBytes(encodeBase128(arcs[i]));
+        }
+        return buffer.toByteArray();
+    }
+
+    /** One OID subidentifier: base-128 groups, continuation bit on all but the last. */
+    private byte[] encodeBase128(long value) {
+        List<Integer> groups = new ArrayList<>();
+        groups.add(0, (int) (value & SEVEN_BIT_MASK));
+        long remaining = value >> SEVEN_BITS;
+        while (remaining > 0) {
+            groups.add(0, (int) ((remaining & SEVEN_BIT_MASK) | CONTINUATION_BIT));
+            remaining >>= SEVEN_BITS;
+        }
+        byte[] out = new byte[groups.size()];
+        for (int i = 0; i < groups.size(); i++) {
+            out[i] = (byte) (int) groups.get(i);
+        }
+        return out;
+    }
+
+    /**
+     * BER REAL contents (X.690 8.5), decimal form.
+     *
+     * <p>Zero is a special case with NO contents octets at all (8.5.2).
+     * Otherwise the first octet selects the representation - 0x03 is ISO 6093
+     * NR3, the form that always carries an explicit exponent - and the decimal
+     * text follows.</p>
+     */
+    public byte[] encodeReal(String decimalText) {
+        double value;
+        try {
+            value = Double.parseDouble(decimalText.trim());
+        } catch (NumberFormatException e) {
+            throw new BerEncodingException("Value '" + decimalText + "' is not a valid REAL");
+        }
+        if (value == 0d) {
+            return new byte[0];
+        }
+        byte[] text = String.format(java.util.Locale.ROOT, NR3_FORMAT, value)
+                .getBytes(StandardCharsets.US_ASCII);
+        byte[] out = new byte[text.length + 1];
+        out[0] = NR3_DECIMAL_FORM;
+        System.arraycopy(text, 0, out, 1, text.length);
         return out;
     }
 
