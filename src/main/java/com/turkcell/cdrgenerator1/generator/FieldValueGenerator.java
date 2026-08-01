@@ -100,7 +100,9 @@ public class FieldValueGenerator {
                     .orElseGet(() -> String.valueOf(
                             ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND)));
             case BOOLEAN -> ThreadLocalRandom.current().nextBoolean() ? TRUE_VALUE : FALSE_VALUE;
-            case OCTET_STRING -> randomHex(hexLengthFor(field));
+            // A BIT STRING value is a hex dump too; the encoder adds the
+            // leading unused-bit octet, so the generated text stays the same shape.
+            case OCTET_STRING, BIT_STRING -> randomHex(hexLengthFor(field));
             // A NULL carries no value at all - its presence IS the information
             // (X.690 8.8: no contents octets). An empty string is the honest
             // representation: NOT null, because a null value would make the
@@ -155,7 +157,7 @@ public class FieldValueGenerator {
             case INTEGER, ENUMERATED -> examples.stream().allMatch(this::isNumericLiteral)
                     && examples.stream().allMatch(example -> isDeclaredNumber(field.getFieldType(), example));
             case BOOLEAN -> examples.stream().allMatch(this::isBooleanLiteral);
-            case OCTET_STRING -> examples.stream().allMatch(this::isHexLiteral);
+            case OCTET_STRING, BIT_STRING -> examples.stream().allMatch(this::isHexLiteral);
             // A NULL field holds no value, so no example can ever be compatible
             // with it. Returning false keeps a loosely-matched yml rule (matching
             // is by name substring) from seeding content into a field that must
@@ -307,7 +309,7 @@ public class FieldValueGenerator {
     private int effectiveMaxLength(AsnField field, int sizeConstraint) {
         BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         return switch (type) {
-            case OCTET_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
+            case OCTET_STRING, BIT_STRING -> sizeConstraint * HEX_CHARS_PER_BYTE;
             default -> sizeConstraint;
         };
     }

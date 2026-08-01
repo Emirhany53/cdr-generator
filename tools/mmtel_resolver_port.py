@@ -770,10 +770,21 @@ def expected_leaf_tag(field: AsnField) -> int:
         return 1
     if upper.startswith('OCTET STRING') or upper.startswith('OCTETSTRING'):
         return 4
+    if upper.startswith('BIT STRING') or upper.startswith('BITSTRING'):
+        return 3
     if upper.startswith('UTF8STRING'):
         return 12
     if upper.startswith('IA5STRING'):
         return 22
+    # Restricted character strings - longest keyword first so GENERALIZEDTIME
+    # is not matched by GENERAL.
+    for keyword, tag in (('GENERALIZEDTIME', 24), ('GENERALSTRING', 27),
+                         ('GRAPHICSTRING', 25), ('PRINTABLESTRING', 19),
+                         ('NUMERICSTRING', 18), ('VISIBLESTRING', 26),
+                         ('TELETEXSTRING', 20), ('VIDEOTEXSTRING', 21),
+                         ('BMPSTRING', 30), ('UTCTIME', 23)):
+        if upper.startswith(keyword):
+            return tag
     return 4  # unknown textual/custom types fall back to OCTET STRING
 
 

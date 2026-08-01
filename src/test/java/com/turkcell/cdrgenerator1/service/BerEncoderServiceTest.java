@@ -233,6 +233,52 @@ class BerEncoderServiceTest {
         assertArrayEquals(new byte[]{0x30, 0x02, (byte) 0x83, 0x00}, out);
     }
 
+    /**
+     * X.690 8.6.2: a BIT STRING's first contents octet is the number of unused
+     * bits in the final octet. BIT STRING used to fall through to the text
+     * types, so the value went out as raw characters with no such octet - a
+     * value no decoder can read back. IMPLICIT tagging does not rescue it,
+     * because a context tag replaces the TAG, not the CONTENTS rule.
+     */
+    @Test
+    void aBitStringCarriesTheLeadingUnusedBitCount() {
+        byte[] out = encoder.encodeRecord(
+                List.of(field("flags", "BIT STRING", 3)), Map.of("flags", "\"DEAD\""));
+        // 30 05 | 83 03 | 00 DE AD  - the 0x00 is the unused-bit count
+        assertArrayEquals(new byte[]{
+                0x30, 0x05, (byte) 0x83, 0x03, 0x00, (byte) 0xDE, (byte) 0xAD}, out);
+    }
+
+    /** An untagged BIT STRING must carry universal tag 3, not OCTET STRING's 4. */
+    @Test
+    void anUntaggedBitStringUsesUniversalTagThree() {
+        byte[] out = encoder.encodeRecord(
+                List.of(field("flags", "BIT STRING", null)), Map.of("flags", "\"FF\""));
+        assertArrayEquals(new byte[]{0x30, 0x04, 0x03, 0x02, 0x00, (byte) 0xFF}, out);
+    }
+
+    /**
+     * The restricted character-string types all collapsed to OCTET STRING (4).
+     * That is only visible where a universal tag is actually emitted - here an
+     * untagged field.
+     */
+    @Test
+    void restrictedCharacterStringsKeepTheirOwnUniversalTag() {
+        assertEquals(25, encoder.encodeRecord(
+                List.of(field("s", "GraphicString", null)), Map.of("s", "\"A\""))[2] & 0xFF);
+        assertEquals(19, encoder.encodeRecord(
+                List.of(field("s", "PrintableString", null)), Map.of("s", "\"A\""))[2] & 0xFF);
+        assertEquals(18, encoder.encodeRecord(
+                List.of(field("s", "NumericString", null)), Map.of("s", "\"1\""))[2] & 0xFF);
+        assertEquals(26, encoder.encodeRecord(
+                List.of(field("s", "VisibleString", null)), Map.of("s", "\"A\""))[2] & 0xFF);
+        // GeneralizedTime must not be swallowed by the GeneralString prefix.
+        assertEquals(24, encoder.encodeRecord(
+                List.of(field("s", "GeneralizedTime", null)), Map.of("s", "\"20260101\""))[2] & 0xFF);
+        assertEquals(27, encoder.encodeRecord(
+                List.of(field("s", "GeneralString", null)), Map.of("s", "\"A\""))[2] & 0xFF);
+    }
+
     @Test
     void constructedFieldWithScalarValueThrows() {
         AsnField parent = AsnField.builder()

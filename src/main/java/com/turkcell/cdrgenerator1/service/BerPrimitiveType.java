@@ -19,6 +19,18 @@ public enum BerPrimitiveType {
     /** OCTET STRING: value supplied as a hex string (the 'H dump values). */
     OCTET_STRING,
     /**
+     * ASN.1 BIT STRING. X.690 8.6.2: the FIRST contents octet states how many
+     * bits of the final octet are unused (0..7); the bit data follows.
+     *
+     * <p>Without this constant a BIT STRING fell through to {@link #STRING} and
+     * was written as plain text with no leading unused-bits octet, which no
+     * decoder can read back as a bit string. IMPLICIT tagging does not rescue
+     * this: a context tag replaces the type's TAG, it does not change the
+     * CONTENTS rule. 6 fields across 6 modules (CDRF-R7, CHFChargingDataTypes16,
+     * LTE-R10 among them) are declared BIT STRING.</p>
+     */
+    BIT_STRING,
+    /**
      * ASN.1 NULL: a pure presence marker. X.690 8.8 requires its contents octets
      * to be ABSENT, so it always encodes with length 0 no matter what value the
      * generator produced for it.
@@ -53,6 +65,9 @@ public enum BerPrimitiveType {
         }
         if (upper.startsWith("OCTET STRING") || upper.startsWith("OCTETSTRING")) {
             return OCTET_STRING;
+        }
+        if (upper.startsWith("BIT STRING") || upper.startsWith("BITSTRING")) {
+            return BIT_STRING;
         }
         if (upper.equals("NULL") || upper.startsWith("NULL ") || upper.startsWith("NULL(")) {
             // Guarded against a merely NULL-prefixed name (e.g. "NullableCount")

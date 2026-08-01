@@ -37,6 +37,8 @@ public class TlvWriter {
     private static final int SHORT_LENGTH_LIMIT = 0x80;
     private static final int BYTE_MASK = 0xFF;
     private static final int BITS_PER_BYTE = 8;
+    /** Leading BIT STRING octet when the value occupies whole bytes (X.690 8.6.2). */
+    private static final byte NO_UNUSED_BITS = 0;
 
     /**
      * Builds the identifier (tag) bytes for a context-class field.
@@ -153,6 +155,23 @@ public class TlvWriter {
     /** Text value bytes (IA5String / UTF8String). */
     public byte[] encodeString(String value) {
         return value.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * BER BIT STRING contents: a leading octet giving how many bits of the
+     * final octet are unused, followed by the bit data (X.690 8.6.2).
+     *
+     * <p>The generator supplies whole bytes, so no bits are ever left over and
+     * the leading octet is 0. Emitting the bit data alone - which is what
+     * happened while BIT STRING was lumped in with the text types - produces a
+     * value a decoder reads with the first data byte mistaken for the unused-bit
+     * count.</p>
+     */
+    public byte[] encodeBitString(byte[] bitData) {
+        byte[] out = new byte[bitData.length + 1];
+        out[0] = NO_UNUSED_BITS;
+        System.arraycopy(bitData, 0, out, 1, bitData.length);
+        return out;
     }
 
     /** Converts a hex string (the 'H dump values) into raw bytes. */

@@ -235,6 +235,9 @@ public class BerEncoderService {
             case BOOLEAN -> encodeBooleanText(fieldType, text);
             case INTEGER, ENUMERATED -> encodeIntegerText(fieldType, text);
             case OCTET_STRING -> encodeOctetStringText(fieldType, text);
+            // A BIT STRING's value is a hex dump like an OCTET STRING's, but its
+            // contents must additionally carry the leading unused-bit count.
+            case BIT_STRING -> tlvWriter.encodeBitString(encodeOctetStringText(fieldType, text));
             case NULL -> new byte[0];
             // Only a character-string type is padded. An OCTET STRING's SIZE
             // counts BYTES and its text is a hex dump (two characters per byte),
