@@ -348,7 +348,13 @@ public class AsnFieldTreeResolver {
                                     Map<String, String> choiceSelections, Set<String> visiting, int depth,
                                     Map<String, List<AsnField>> cache, AsnTaggingMode taggingMode) {
         String innerType = stripConstraint(field.getFieldType());
-        boolean repeated = field.isRepeated() || isAliasRepeated(registry, innerType);
+        // Same split as in parseFieldLines: an inline "SEQUENCE OF Type" must be
+        // reduced to its ELEMENT type before the registry is consulted.
+        boolean inlineCollection = isRepeatedExpression(innerType);
+        if (inlineCollection) {
+            innerType = extractRepeatedInnerType(innerType);
+        }
+        boolean repeated = field.isRepeated() || inlineCollection || isAliasRepeated(registry, innerType);
         List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                 cache, taggingMode);
         String fieldType = resolveFieldType(registry, field.getFieldType(), innerType, children);
@@ -541,7 +547,14 @@ public class AsnFieldTreeResolver {
             // parsed.fieldType SIZE kisiti tasiyor olabilir; registry aramalari
             // kisitsiz ada gore yapilmalidir.
             String innerType = stripConstraint(parsed.getFieldType());
-            boolean repeated = parsed.isRepeated() || isAliasRepeated(registry, innerType);
+            // An inline "SEQUENCE OF Type" on the field itself must be split so
+            // the registry is searched for the ELEMENT type; looking up the whole
+            // collection expression finds nothing and silently drops the children.
+            boolean inlineCollection = isRepeatedExpression(innerType);
+            if (inlineCollection) {
+                innerType = extractRepeatedInnerType(innerType);
+            }
+            boolean repeated = parsed.isRepeated() || inlineCollection || isAliasRepeated(registry, innerType);
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                     cache, taggingMode);
 
@@ -899,12 +912,38 @@ public class AsnFieldTreeResolver {
         return taggingMode == AsnTaggingMode.EXPLICIT;
     }
 
+    /**
+     * Matches the collection prefix of a {@code SEQUENCE OF} / {@code SET OF}
+     * expression, tolerating anything the schema puts between the keyword and
+     * {@code OF} - most importantly the size constraint, which ASN.1 writes as
+     * {@code SEQUENCE (SIZE(1..5)) OF Type}, and stray extra whitespace.
+     *
+     * <p>The old test was {@code startsWith("SEQUENCE OF")}, which missed both
+     * {@code SEQUENCE  OF UsedServiceUnit} (two spaces) and
+     * {@code SEQUENCE (SIZE(1..5)) OF AccumulatorValueInfo}. When it missed, the
+     * element type was never split off, the registry lookup for the whole
+     * expression found nothing, the field ended up with no children AND without
+     * its repeated flag, and the encoder wrote a collection of structures out as
+     * a single flat text leaf. 70 fields across 19 modules were affected.</p>
+     *
+     * <p>{@code .*?} is reluctant and {@code OF} is anchored on word boundaries,
+     * so an element type that merely contains the letters "of"
+     * ({@code SEQUENCE OF ListOfThings}) still splits at the collection's own
+     * {@code OF}. {@code SEQUENCE\b} likewise cannot match a type merely named
+     * {@code SequenceOfferData}.</p>
+     */
+    private static final Pattern COLLECTION_PREFIX = Pattern.compile(
+            "^(?:SEQUENCE|SET)\\b.*?\\bOF\\b\\s*",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     private boolean isRepeatedExpression(String typeExpr) {
-        return typeExpr.startsWith("SEQUENCE OF") || typeExpr.startsWith("SET OF");
+        return Objects.nonNull(typeExpr)
+                && typeExpr.indexOf('{') < 0
+                && COLLECTION_PREFIX.matcher(typeExpr).lookingAt();
     }
 
     private String extractRepeatedInnerType(String typeExpr) {
-        return typeExpr.replaceFirst("^(SEQUENCE|SET)\\s+OF\\s+", "").trim();
+        return COLLECTION_PREFIX.matcher(typeExpr).replaceFirst("").trim();
     }
 
     private String normalize(String typeExpr) {

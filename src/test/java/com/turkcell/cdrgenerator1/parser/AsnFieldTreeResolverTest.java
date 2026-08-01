@@ -700,6 +700,63 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
+     * ASN.1 puts a collection's size constraint between the keyword and OF:
+     * {@code SEQUENCE (SIZE(1..5)) OF Type}. The old check was
+     * {@code startsWith("SEQUENCE OF")}, so this form - and the equally common
+     * {@code SEQUENCE  OF Type} with stray whitespace - never registered as a
+     * collection. The element type was then never split off, the registry lookup
+     * for the whole expression found nothing, and the field ended up with no
+     * children AND no repeated flag: a list of structures went out as one flat
+     * text leaf. 70 fields across 19 modules were affected.
+     */
+    @Test
+    void aSizeConstrainedCollectionStillResolvesItsElementType() {
+        for (String declaration : new String[] {
+                "values [26] SEQUENCE (SIZE(1..5)) OF Item OPTIONAL",
+                "values [26] SEQUENCE  OF Item OPTIONAL",
+                "values [26] SET (SIZE(1..5)) OF Item OPTIONAL" }) {
+            List<AsnField> fields = resolve("""
+                    M DEFINITIONS IMPLICIT TAGS ::=
+                    BEGIN
+                    Root ::= SEQUENCE { %s }
+                    Item ::= SEQUENCE { a [0] INTEGER, b [1] IA5String }
+                    END
+                    """.formatted(declaration), "Root");
+
+            assertEquals(1, fields.size(), declaration);
+            AsnField collection = fields.get(0);
+            assertTrue(collection.isRepeated(), "must be a collection: " + declaration);
+            assertNotNull(collection.getChildren(), "element children lost: " + declaration);
+            assertEquals(List.of("a", "b"),
+                    collection.getChildren().stream().map(AsnField::getFieldName).toList());
+        }
+    }
+
+    /** The collection split must not fire on a type merely named like the keywords. */
+    @Test
+    void aTypeNamedLikeTheCollectionKeywordsIsNotSplit() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    a [0] SequenceOfferData,
+                    b [1] SEQUENCE OF ListOfThings
+                }
+                SequenceOfferData ::= SEQUENCE { x [0] INTEGER }
+                ListOfThings ::= SEQUENCE { y [0] INTEGER }
+                END
+                """, "Root");
+
+        assertFalse(fields.get(0).isRepeated(), "SequenceOfferData is a plain type, not a collection");
+        assertEquals(List.of("x"),
+                fields.get(0).getChildren().stream().map(AsnField::getFieldName).toList());
+        // Splitting must happen at the collection's own OF, not inside "ListOfThings".
+        assertTrue(fields.get(1).isRepeated());
+        assertEquals(List.of("y"),
+                fields.get(1).getChildren().stream().map(AsnField::getFieldName).toList());
+    }
+
+    /**
      * Guards the fix from over-reaching: an ENUMERATED member that happens to be
      * called "default" looks like a wrapped DEFAULT keyword but is a real entry.
      */

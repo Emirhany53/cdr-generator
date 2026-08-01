@@ -209,12 +209,21 @@ def append_size_constraint(base_type, size_text, code_text=None):
     return f'{base_type} ({constraint})'
 
 
-def is_repeated_expression(type_expr: str) -> bool:
-    return type_expr.startswith('SEQUENCE OF') or type_expr.startswith('SET OF')
+# Koleksiyon oneki: SEQUENCE/SET ile OF arasina gireni (en onemlisi
+# 'SEQUENCE (SIZE(1..5)) OF' bicimindeki boyut kisiti) ve fazladan bosluklari
+# tolere eder. Eski hali startswith('SEQUENCE OF') idi; 'SEQUENCE  OF X' (cift
+# bosluk) ve 'SEQUENCE (SIZE(..)) OF X' bicimlerini kaciriyordu, o zaman eleman
+# tipi ayrilamiyor, registry'de bulunamiyor ve alan hem cocuksuz hem repeated
+# isaretsiz kaliyordu -> yapi listesi tek bir duz metin olarak yaziliyordu.
+COLLECTION_PREFIX = re.compile(r'^(?:SEQUENCE|SET)\b.*?\bOF\b\s*', re.I | re.S)
+
+
+def is_repeated_expression(type_expr) -> bool:
+    return bool(type_expr) and '{' not in type_expr and COLLECTION_PREFIX.match(type_expr) is not None
 
 
 def extract_repeated_inner_type(type_expr: str) -> str:
-    return re.sub(r'^(SEQUENCE|SET)\s+OF\s+', '', type_expr).strip()
+    return COLLECTION_PREFIX.sub('', type_expr, count=1).strip()
 
 
 def strip_alias_tag(type_expr: Optional[str]) -> Optional[str]:
@@ -510,7 +519,10 @@ def resolve_choice_alternative(registry, choice_type_name, raw_body, visiting, d
 
 def attach_children(registry, field: AsnField, visiting, depth, cache, tagging_mode):
     inner_type = strip_constraint(field.field_type)
-    repeated = field.repeated or is_alias_repeated(registry, inner_type)
+    inline_collection = is_repeated_expression(inner_type)
+    if inline_collection:
+        inner_type = extract_repeated_inner_type(inner_type)
+    repeated = field.repeated or inline_collection or is_alias_repeated(registry, inner_type)
     children = resolve_by_type_name(registry, inner_type, visiting, depth + 1, cache, tagging_mode)
 
     tag_number, tag_class, explicit_tag = resolve_effective_tag(
@@ -638,7 +650,10 @@ def parse_field_lines(registry, raw_body, visiting, depth, cache, tagging_mode):
             parsed.explicit = False
 
         inner_type = strip_constraint(parsed.field_type)
-        repeated = parsed.repeated or is_alias_repeated(registry, inner_type)
+        inline_collection = is_repeated_expression(inner_type)
+        if inline_collection:
+            inner_type = extract_repeated_inner_type(inner_type)
+        repeated = parsed.repeated or inline_collection or is_alias_repeated(registry, inner_type)
         children = resolve_by_type_name(registry, inner_type, visiting, depth + 1, cache, tagging_mode)
 
         choice_element = is_choice_type(registry, inner_type)
