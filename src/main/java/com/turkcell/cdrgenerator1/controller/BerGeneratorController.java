@@ -7,6 +7,7 @@ import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateBerRequest;
+import com.turkcell.cdrgenerator1.model.response.BerVerificationResponse;
 import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
@@ -21,11 +22,17 @@ import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -127,6 +134,41 @@ public class BerGeneratorController {
         request.setStructureName(structureName);
 
         return generateBerFile(request);
+    }
+
+    @Operation(summary = "Bir .ber dosyasını verilen yapıya göre doğrula",
+            description = "Bu servisin ÜRETMEDİĞİ bir .ber dosyasını (bir referans yakalama, ya da "
+                    + "EMM'in geri gönderdiği bir dosya) verilen structureName'in alan ağacına göre "
+                    + "doğrular. tools/ altındaki Python scriptlerini elle çalıştırmanın yerini alır: "
+                    + "aynı beş kural (duplicate-tag, set-ordering, tag-shape, named-number, "
+                    + "integer-range) burada da çalışır. Üretim akışından bağımsızdır; self-check.mode "
+                    + "ayarından etkilenmez, her zaman tüm bulguları döner.")
+    @PostMapping(value = "/verify-ber/{structureName}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BerVerificationResponse> verifyBerFile(
+            @PathVariable String structureName,
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(required = false) Map<String, String> choiceSelections) {
+        log.info("Incoming BER verification request for structure '{}', file '{}' ({} bytes)",
+                structureName, file.getOriginalFilename(), file.getSize());
+
+        AsnStructure structure = structureParserService.getStructureByName(structureName, choiceSelections);
+        if (Objects.isNull(structure)) {
+            throw new StructureNotFoundException(structureName);
+        }
+
+        byte[] fileBytes;
+        try {
+            fileBytes = file.getBytes();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not read uploaded file '"
+                    + file.getOriginalFilename() + "'", e);
+        }
+
+        BerVerificationResult result = berVerifier.verify(structure, fileBytes);
+        log.info("Verification of '{}' against '{}': {}",
+                file.getOriginalFilename(), structureName, result.summary());
+
+        return ResponseEntity.ok(BerVerificationResponse.from(result));
     }
 
     /**

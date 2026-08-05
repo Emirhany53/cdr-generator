@@ -22,16 +22,20 @@ import com.turkcell.cdrgenerator1.service.verify.BerVerifier;
 import com.turkcell.cdrgenerator1.service.verify.TlvReader;
 import com.turkcell.cdrgenerator1.service.verify.rule.DuplicateTagRule;
 import com.turkcell.cdrgenerator1.service.verify.rule.SetOrderingRule;
+import com.turkcell.cdrgenerator1.model.CdrStructureDto;
+import com.turkcell.cdrgenerator1.service.CdrStructureReaderService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -61,8 +65,24 @@ class BerGeneratorControllerTest {
 
         AsnTypeRegistryBuilder registryBuilder = new AsnTypeRegistryBuilder();
         AsnFieldTreeResolver resolver = new AsnFieldTreeResolver();
+        // A fake reader gives the parser one registered structure so
+        // verify-ber (which only accepts a structureName, never inline
+        // content - the whole point is checking a file against a structure
+        // the system already knows) has something to look up in its tests.
+        CdrStructureReaderService fakeReader = new CdrStructureReaderService(null, null) {
+            @Override
+            public List<CdrStructureDto> readAllStructures() {
+                return List.of(CdrStructureDto.builder()
+                        .name("SimpleRecord")
+                        .contents("M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE "
+                                + "{ msisdn [1] IMPLICIT OCTET STRING OPTIONAL, "
+                                + "duration [4] IMPLICIT INTEGER OPTIONAL } END")
+                        .build());
+            }
+        };
         StructureParserService parserService =
-                new StructureParserService(null, registryBuilder, resolver);
+                new StructureParserService(fakeReader, registryBuilder, resolver);
+        parserService.init();
 
         TbcdCodec tbcdCodec = new TbcdCodec();
 
@@ -156,6 +176,70 @@ class BerGeneratorControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk());
+    }
+
+    // --- POST /api/cdr/verify-ber: checking a file this application did not produce ---
+
+    private static byte[] hex(String text) {
+        String clean = text.replace(" ", "");
+        byte[] out = new byte[clean.length() / 2];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = (byte) Integer.parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+        }
+        return out;
+    }
+
+    @Test
+    void verifiesAnUploadedFileAgainstARegisteredStructure() throws Exception {
+        // SEQUENCE { [1] "905321234567" (IA5), [4] 42 } - what this system's own
+        // encoder would produce for SimpleRecord, built by hand here because the
+        // whole point of this endpoint is checking bytes it did NOT produce.
+        MockMultipartFile file = new MockMultipartFile("file", "reference.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                hex("30 11 81 0C 39 30 35 33 32 31 32 33 34 35 36 37 84 01 2A"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/SimpleRecord")
+                        .file(file))
+                .andExpect(status().isOk())
+                .andExpect(content().json("""
+                        {"structureName":"SimpleRecord","recordCount":1,"clean":true,
+                         "errorCount":0,"warningCount":0,"findings":[]}
+                        """));
+    }
+
+    /** The shape EMM actually rejects: two members of one body sharing a tag. */
+    @Test
+    void reportsADuplicateTagInAnUploadedFile() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "corrupt.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                hex("30 06 81 01 41 81 01 42"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/SimpleRecord")
+                        .file(file))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"clean\":false")))
+                .andExpect(content().string(containsString("duplicate-tag")));
+    }
+
+    @Test
+    void verifyingAgainstAnUnknownStructureReturnsNotFound() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "x.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE, hex("30 00"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/DoesNotExist")
+                        .file(file))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void verifyingUnreadableBytesReportsAWalkerError() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "truncated.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE, hex("81 7F 01"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/SimpleRecord")
+                        .file(file))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("not readable as BER")));
     }
 
     @Test
