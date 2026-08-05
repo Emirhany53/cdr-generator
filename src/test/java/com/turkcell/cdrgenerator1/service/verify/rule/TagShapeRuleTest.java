@@ -131,9 +131,56 @@ class TagShapeRuleTest {
         TlvNode node = reader.read(data, 0);
         AsnField field = AsnField.builder().fieldName("field1").tagNumber(null).build();
         VerificationContext context = new VerificationContext("testStruct", data);
-        
+
         rule.check(new NodeContext(node, field, false), context);
-        
+
+        assertThat(context.findings()).isEmpty();
+    }
+
+    /**
+     * Regresyon: bir alan BIRDEN COK ic ice TLV uretir ve {@code [n]} etiketini
+     * yalnizca EN DIStaki tasir. EXPLICIT bir alan {@code [1] { IA5String }}
+     * yazar; icerideki evrensel TLV ayni alanla tarif edilir ama etiketi
+     * U-[22]'dir. Kural bunu yine de {@code [1]} bekleyerek karsilastirinca
+     * DOGRU kodlanmis her EXPLICIT alan iki hata birden veriyordu:
+     * "Expected tag CONTEXT [1] but found U-[22]" ve
+     * "EXPLICIT tag should be constructed".
+     *
+     * <p>Uydurma degil: {@code X DEFINITIONS ::=} yazan (yani varsayilani
+     * EXPLICIT olan) TKMSC, Telegraph, TelcoDB, SS7, TeslaVoice ve yuzlerce
+     * modulun HER alani AllModulesRoundTripTest'te bu sekilde patladi.</p>
+     */
+    @Test
+    void doesNotJudgeTheInnerLayerOfAnExplicitTagAgainstTheOuterTag() {
+        // 'A1 0A 16 08 ...' icindeki ic dugum: dogru kodlanmis IA5String.
+        byte[] data = hex("16 08 41 42 43 44 45 46 47 48");
+        TlvNode node = reader.read(data, 0);
+        AsnField field = AsnField.builder()
+                .fieldName("cDRid").tagNumber(1).explicit(true).fieldType("IA5STRING").build();
+        VerificationContext context = new VerificationContext("TKMSC", data);
+
+        rule.check(new NodeContext(node, field, false, false), context);
+
+        assertThat(context.findings()).isEmpty();
+    }
+
+    /**
+     * Ayni sebep, ikinci sekil: bir {@code SEQUENCE OF} koleksiyonunun ELEMANI
+     * kendi evrensel SEQUENCE etiketini tasir - koleksiyonun {@code [n]}
+     * etiketi hepsinin etrafinda BIR KEZ yazilir. Elemani {@code [n]} ile
+     * karsilastirmak her koleksiyonun her elemanini yanlis etiketli ilan
+     * ediyordu (ornek: {@code productFeeDedicatedAccounts.[0]}).
+     */
+    @Test
+    void doesNotJudgeACollectionElementAgainstTheCollectionTag() {
+        byte[] data = hex("30 03 80 01 AA"); // SEQUENCE { [0] AA } - bir eleman
+        TlvNode node = reader.read(data, 0);
+        AsnField collection = AsnField.builder()
+                .fieldName("productFeeDedicatedAccounts").tagNumber(5).repeated(true).build();
+        VerificationContext context = new VerificationContext("TurkcellCDRCCNCS5", data);
+
+        rule.check(new NodeContext(node, collection, false, false), context);
+
         assertThat(context.findings()).isEmpty();
     }
 }

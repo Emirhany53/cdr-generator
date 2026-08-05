@@ -20,6 +20,14 @@ public class TagShapeRule implements VerificationRule {
         if (!nodeContext.hasField() || nodeContext.collectionWrapper()) {
             return;
         }
+        // This rule judges ONE thing: does the node carrying the field's [n] tag
+        // have the right tag and shape. A node that does not carry that tag - the
+        // universal TLV inside an EXPLICIT wrapper, or one element of a collection -
+        // is described by the same field but was never supposed to bear its tag,
+        // and comparing anyway reported every such node in the schema as wrong.
+        if (!nodeContext.carriesFieldTag()) {
+            return;
+        }
 
         AsnField field = nodeContext.field();
         TlvNode node = nodeContext.node();

@@ -121,6 +121,46 @@ class NamedNumberRuleTest {
         assertThat(context.findings()).isEmpty();
     }
 
+    /**
+     * Regresyon: kural, tip ifadesinin TAMAMINI {@code name(number)} icin
+     * tariyordu ve KISIT sozdizimi de bu kaliba uyuyor - {@code SIZE(30)},
+     * adi "SIZE" degeri 30 olan bir adlandirilmis sayi gibi okunuyordu. Sonucta
+     * sabit genislikli bir metin alaninin harfleri isaretli tamsayi olarak
+     * cozulup "aralik disi" diye raporlaniyordu.
+     *
+     * <p>Uydurma degil: AllModulesRoundTripTest 808 modulu gezdiginde
+     * VRCGPRSUsage'in 55 alaninin tamami, TelcoDB, VerazCdr, SesPlus ve
+     * onlarca modul bu sekilde binlerce sahte hata uretti. Adlandirilmis sayi
+     * YALNIZCA suslu parantez icinde ve YALNIZCA sayisal bir tipte bulunur.</p>
+     */
+    @Test
+    void aSizeConstraintIsNotANamedNumberList() {
+        // IA5String "ABCDEFGHIJ" - sema disi hicbir sey yok, sadece metin.
+        byte[] data = hex("16 0A 41 42 43 44 45 46 47 48 49 4A");
+        TlvNode node = reader.read(data, 0);
+        AsnField field = AsnField.builder()
+                .fieldName("cdrSequence").fieldType("IA5STRING (SIZE(30) CODE(\"LEFT\"))").build();
+        VerificationContext context = new VerificationContext("Test", data);
+
+        rule.check(new NodeContext(node, field, false), context);
+
+        assertThat(context.findings()).isEmpty();
+    }
+
+    /** Ayni koruma sayisal olmayan her tip icin gecerli: OCTET STRING de metin tasir. */
+    @Test
+    void anOctetStringWithASizeConstraintIsLeftAlone() {
+        byte[] data = hex("04 03 AB CD EF");
+        TlvNode node = reader.read(data, 0);
+        AsnField field = AsnField.builder()
+                .fieldName("payload").fieldType("OCTET STRING (SIZE(3))").build();
+        VerificationContext context = new VerificationContext("Test", data);
+
+        rule.check(new NodeContext(node, field, false), context);
+
+        assertThat(context.findings()).isEmpty();
+    }
+
     @Test
     void acceptsSecondValidValue() {
         byte[] data = hex("80 01 01");

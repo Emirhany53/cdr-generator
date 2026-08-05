@@ -132,14 +132,18 @@ public class BerVerifier {
      */
     private void walkRepeated(AsnField field, TlvNode node, VerificationContext context) {
         TlvNode container = node;
+        boolean containerCarriesTag = true;
         if (Objects.nonNull(field.getTagNumber()) && field.isExplicit()) {
-            offer(node, field, false, context);
+            offer(node, field, false, true, context);
             container = onlyChild(node, field, context);
             if (Objects.isNull(container)) {
                 return;
             }
+            // The universal SEQUENCE the EXPLICIT wrapper holds: same field, but
+            // the [n] tag is on the layer above, not on this one.
+            containerCarriesTag = false;
         }
-        offer(container, field, true, context);
+        offer(container, field, true, containerCarriesTag, context);
 
         int index = 0;
         for (TlvNode element : container.children()) {
@@ -153,13 +157,21 @@ public class BerVerifier {
         }
     }
 
-    /** One element of a collection: a fixed body again, never a container. */
+    /**
+     * One element of a collection: a fixed body again, never a container.
+     *
+     * <p>The element carries its OWN universal tag (SEQUENCE/SET, or the leaf's
+     * primitive tag) - {@code encodeRepeated} writes the collection's {@code [n]}
+     * once, around all of them. So the element is offered as not carrying the
+     * field's tag; judging it against {@code [n]} reported every element of every
+     * collection in the schema as wrongly tagged.</p>
+     */
     private void walkElement(AsnField field, TlvNode element, VerificationContext context) {
         if (field.isChoice()) {
             walkAlternative(field, element, context);
             return;
         }
-        offer(element, field, false, context);
+        offer(element, field, false, false, context);
         if (hasChildren(field)) {
             matchChildren(field.getChildren(), element, context);
         }
@@ -235,14 +247,19 @@ public class BerVerifier {
      */
     private void walkPlain(AsnField field, TlvNode node, VerificationContext context) {
         TlvNode body = node;
+        boolean bodyCarriesTag = true;
         if (Objects.nonNull(field.getTagNumber()) && field.isExplicit()) {
-            offer(node, field, false, context);
+            offer(node, field, false, true, context);
             body = onlyChild(node, field, context);
             if (Objects.isNull(body)) {
                 return;
             }
+            // Inside an EXPLICIT tag sits the value's own UNIVERSAL TLV. It is
+            // still this field's content - the value rules must see it - but the
+            // [n] tag lives on the wrapper above, so tag checks stop here.
+            bodyCarriesTag = false;
         }
-        offer(body, field, false, context);
+        offer(body, field, false, bodyCarriesTag, context);
         if (hasChildren(field)) {
             matchChildren(field.getChildren(), body, context);
         }
@@ -352,9 +369,15 @@ public class BerVerifier {
         return null;
     }
 
+    /** Offers a node that DOES carry its field's own tag. */
     private void offer(TlvNode node, AsnField field, boolean collectionWrapper,
                        VerificationContext context) {
-        NodeContext nodeContext = new NodeContext(node, field, collectionWrapper);
+        offer(node, field, collectionWrapper, true, context);
+    }
+
+    private void offer(TlvNode node, AsnField field, boolean collectionWrapper,
+                       boolean carriesFieldTag, VerificationContext context) {
+        NodeContext nodeContext = new NodeContext(node, field, collectionWrapper, carriesFieldTag);
         for (VerificationRule rule : rules) {
             if (properties.isRuleEnabled(rule.name())) {
                 rule.check(nodeContext, context);
