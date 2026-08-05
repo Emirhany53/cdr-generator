@@ -26,6 +26,15 @@ public class AsnFieldTreeResolver {
     private static final String IMPLICIT_KEYWORD = "IMPLICIT";
     private static final Pattern SIZE_CONSTRAINT = Pattern.compile(
             "SIZE\\s*\\(\\s*(\\d+)\\s*(?:\\.\\.\\s*(\\d+)\\s*)?\\)");
+    /**
+     * A plain INTEGER value-range constraint - {@code (0..999)} in
+     * {@code Milliseconds ::= INTEGER (0..999)} - as opposed to SIZE_CONSTRAINT,
+     * which bounds byte/character length. Only tried after SIZE_CONSTRAINT has
+     * already come back empty (see resolveFieldType), so an OCTET STRING's
+     * {@code SIZE(0..999)} is never mistaken for this.
+     */
+    private static final Pattern INTEGER_RANGE_CONSTRAINT = Pattern.compile(
+            "\\(\\s*(-?\\d+)\\s*\\.\\.\\s*(-?\\d+)\\s*\\)");
     /** {@code CODE("LEFT")} / {@code CODE("RIGHT")}: sabit genislikli alanin hizalamasi. */
     private static final Pattern CODE_MARKER = Pattern.compile(
             "CODE\\s*\\(\\s*\"[^\"]*\"\\s*\\)", Pattern.CASE_INSENSITIVE);
@@ -879,10 +888,15 @@ public class AsnFieldTreeResolver {
         String taggingKeyword = matcher.group(4) != null ? matcher.group(4).trim() : null;
         boolean explicit = resolveExplicit(taggingKeyword, taggingMode);
 
-        // SIZE kisiti stripConstraint tarafindan silinmeden once okunur; alan
-        // ifadesinde varsa alias zincirinden gelenden onceliklidir.
+        // SIZE kisiti (ya da bir INTEGER (min..max) araligi) stripConstraint
+        // tarafindan silinmeden once okunur; alan ifadesinde varsa alias
+        // zincirinden gelenden onceliklidir. Ikisi ayni alanda birlikte
+        // gorulmez, bu yuzden SIZE bulunamazsa duz aralik denenir.
         String rawTypeExpr = matcher.group(5);
         String inlineSize = readSizeConstraintText(rawTypeExpr);
+        if (inlineSize == null) {
+            inlineSize = readIntegerRangeConstraintText(rawTypeExpr);
+        }
         String inlineCode = readCodeText(rawTypeExpr);
 
         String typeExpr = stripConstraint(rawTypeExpr).replace("OPTIONAL", "").trim();
@@ -967,6 +981,29 @@ public class AsnFieldTreeResolver {
         return matcher.find() ? matcher.group() : null;
     }
 
+    /**
+     * Bir tip ifadesindeki duz INTEGER (min..max) araligini HAM METIN olarak
+     * okur - SIZE(n) disinda kalan tek kisit sekli budur. Parantezler
+     * OLMADAN dondurulur ("0..999"), cunku appendSizeConstraint zaten kendi
+     * parantezini ekliyor (readSizeConstraintText'in "SIZE(...)" doner
+     * bicimiyle simetrik degil, cunku o kisitin adi zaten kendi
+     * parantezinin icinde degil disinda).
+     *
+     * <p>Cagirilmadan once SIZE_CONSTRAINT denenmis olmalidir: bu metot hangi
+     * kisit turunun soz konusu oldugunu bilmez, sadece ilk "(min..max)"
+     * kalibina bakar.</p>
+     */
+    private String readIntegerRangeConstraintText(String typeExpression) {
+        if (typeExpression == null) {
+            return null;
+        }
+        Matcher matcher = INTEGER_RANGE_CONSTRAINT.matcher(typeExpression);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1) + ".." + matcher.group(2);
+    }
+
     /** Sabit genislikli bir alanin hizalamasini bildiren {@code CODE("LEFT")} isareti. */
     private String readCodeText(String typeExpression) {
         if (typeExpression == null) {
@@ -994,6 +1031,44 @@ public class AsnFieldTreeResolver {
             String size = readSizeConstraintText(target);
             if (size != null) {
                 return size;
+            }
+            String stripped = stripAliasTag(stripConstraint(target));
+            current = isRepeatedExpression(stripped) ? extractRepeatedInnerType(stripped) : stripped;
+        }
+        return null;
+    }
+
+    /**
+     * Alan satirinda dogrudan (min..max) yoksa alias zincirini takip ederek ilk
+     * INTEGER deger araligini bulur. Ornek: noReplyTimerValue [2] Milliseconds
+     * OPTIONAL alan satirinin kendisinde kisit yok - Milliseconds ::= INTEGER
+     * (0..999) tanimindan gelir. findSizeThroughAliases'in aynisi, sadece
+     * SIZE(...) yerine duz bir sayisal araligi ariyor.
+     *
+     * <p>Bu adim eklenmeden once bu zincirdeki HICBIR INTEGER (min..max)
+     * kisiti AsnField.fieldType'a ulasamiyordu: stripConstraint parantezi
+     * erkenden siliyor, resolveLeafBaseType da bare "INTEGER" ile donuyordu.
+     * Sonuc: alan adinda "fraction" GECEN alanlar yml'deki adi-tabanli kural
+     * sayesinde tesadufen dogru deger aliyordu, ama ayni Milliseconds tipini
+     * PAYLASAN, adinda "fraction" GECMEYEN noReplyTimerValue bunun disinda
+     * kaliyordu: AI'in urettigi 23231 (0..999 disi) hicbir katmanda
+     * reddedilmeden dogrudan kodlanan BER'e ulasti - MMTelChargingDataTypes
+     * uzerinde gozlenen, dogrulanmis bir ornek.</p>
+     */
+    private String findIntegerRangeThroughAliases(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripAliasTag(typeName);
+        Set<String> guard = new HashSet<>();
+        int depth = 0;
+
+        while (current != null && guard.add(current) && depth++ < ALIAS_SIZE_MAX_DEPTH) {
+            AsnTypeDefinition definition = registry.get(current);
+            if (definition == null || definition.getKind() != AsnTypeKind.ALIAS) {
+                return null;
+            }
+            String target = definition.getAliasTarget();
+            String range = readIntegerRangeConstraintText(target);
+            if (range != null) {
+                return range;
             }
             String stripped = stripAliasTag(stripConstraint(target));
             current = isRepeatedExpression(stripped) ? extractRepeatedInnerType(stripped) : stripped;
@@ -1037,6 +1112,15 @@ public class AsnFieldTreeResolver {
         String code = readCodeText(declaredType);
         if (size == null) {
             size = findSizeThroughAliases(registry, innerType);
+        }
+        // SIZE() ve bir INTEGER deger araligi ayni alanda birlikte gorulmez,
+        // bu yuzden SIZE hicbir asamada bulunamadiysa duz (min..max) araligi
+        // denenir - once alanin kendi satirinda, sonra alias zincirinde.
+        if (size == null) {
+            size = readIntegerRangeConstraintText(declaredType);
+        }
+        if (size == null) {
+            size = findIntegerRangeThroughAliases(registry, innerType);
         }
         return appendSizeConstraint(resolveLeafBaseType(registry, innerType), size, code);
     }
