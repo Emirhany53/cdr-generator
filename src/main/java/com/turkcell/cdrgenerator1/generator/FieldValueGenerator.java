@@ -101,7 +101,15 @@ public class FieldValueGenerator {
             return seeded.get();
         }
         return switch (BerPrimitiveType.fromTypeExpression(field.getFieldType())) {
+            // A named-number list (checked first) and a (min..max) range are
+            // mutually exclusive in practice, so trying the list, then the
+            // range, then the unconstrained default covers every INTEGER shape.
+            // Without the range step, Milliseconds ::= INTEGER (0..999) fell
+            // straight to nextInt(100_000) - wrong in the overwhelming majority
+            // of draws - whenever AiValueSource's rejection sent a Fraction
+            // field down this fallback path.
             case INTEGER, ENUMERATED -> pickDeclaredNumber(field.getFieldType())
+                    .or(() -> randomWithinDeclaredRange(field.getFieldType()))
                     .orElseGet(() -> String.valueOf(
                             ThreadLocalRandom.current().nextInt(DEFAULT_INTEGER_BOUND)));
             case BOOLEAN -> ThreadLocalRandom.current().nextBoolean() ? TRUE_VALUE : FALSE_VALUE;
@@ -217,6 +225,27 @@ public class FieldValueGenerator {
                 : Optional.of(numbers.get(ThreadLocalRandom.current().nextInt(numbers.size())));
     }
 
+    /**
+     * Picks a value inside the type's declared {@code (min..max)} range, or
+     * empty when the type expression carries no such range.
+     */
+    private Optional<String> randomWithinDeclaredRange(String fieldType) {
+        return asnSizeExtractor.extractIntegerRange(fieldType).flatMap(range -> {
+            try {
+                long min = range.min().longValueExact();
+                long max = range.max().longValueExact();
+                if (min >= max) {
+                    return Optional.of(String.valueOf(min));
+                }
+                return Optional.of(String.valueOf(ThreadLocalRandom.current().nextLong(min, max + 1)));
+            } catch (ArithmeticException ex) {
+                // Range too wide to fit a long - not seen in any current schema
+                // module; fall back to the unconstrained default rather than fail.
+                return Optional.empty();
+            }
+        });
+    }
+
     /** True when the type declares no list at all, or declares exactly this value. */
     private boolean isDeclaredNumber(String fieldType, String value) {
         List<String> numbers = declaredNumbers(fieldType);
@@ -276,12 +305,25 @@ public class FieldValueGenerator {
     }
 
     private String trimToMaxLength(AsnField field, String value) {
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+
+        // Final safety net for a declared (min..max) range, independent of any
+        // SIZE() clause: a yml rule can seed an example that is numerically
+        // compatible (isDeclaredNumber only checks a {name(n)} list, not a
+        // range) yet still outside 0..999 for a Milliseconds-shaped field.
+        if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
+            Optional<AsnSizeExtractor.IntegerRange> declaredRange =
+                    asnSizeExtractor.extractIntegerRange(field.getFieldType());
+            if (declaredRange.isPresent()) {
+                return fitIntegerToDeclaredRange(value, declaredRange.get());
+            }
+        }
+
         Optional<Integer> sizeConstraint = asnSizeExtractor.extractMaxLength(field.getFieldType());
         if (sizeConstraint.isEmpty()) {
             return value;
         }
 
-        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
             return fitIntegerToByteWidth(value, sizeConstraint.get());
         }
@@ -324,6 +366,26 @@ public class FieldValueGenerator {
             return value;
         }
         return parsed.mod(max.add(BigInteger.ONE)).toString();
+    }
+
+    /**
+     * Folds an out-of-range value back into a declared {@code (min..max)}
+     * INTEGER constraint, the same "wrap, don't clamp" approach
+     * {@link #fitIntegerToByteWidth} uses, so generated records keep some
+     * variety instead of every overflowing field showing the same boundary.
+     */
+    private String fitIntegerToDeclaredRange(String value, AsnSizeExtractor.IntegerRange range) {
+        BigInteger parsed;
+        try {
+            parsed = new BigInteger(value.trim());
+        } catch (NumberFormatException ex) {
+            return value;
+        }
+        if (parsed.compareTo(range.max()) <= 0 && parsed.compareTo(range.min()) >= 0) {
+            return value;
+        }
+        BigInteger span = range.max().subtract(range.min()).add(BigInteger.ONE);
+        return parsed.subtract(range.min()).mod(span).add(range.min()).toString();
     }
 
     /**
