@@ -16,7 +16,7 @@ app:
     # Uretilen BER'in, onu ureten alan agacina gore geri okunup dogrulanmasi.
     # strict: ERROR bulgusu varsa dosya dondurulmez | warn: loglanir, dosya doner | off: kapali
     self-check:
-      mode: warn
+      mode: strict
       rules:
         duplicate-tag: true
         set-ordering: true

@@ -115,6 +115,28 @@ class DuplicateTagRuleTest {
         assertEquals(FindingSeverity.WARNING, findings.get(0).severity());
     }
 
+    /**
+     * A repeated UNIVERSAL tag is a different statement from a repeated context
+     * tag. It says the body declares several UNTAGGED members of the same type -
+     * {@code ALLOPTIONAL ::= SEQUENCE { reportId IA5String OPTIONAL,
+     * reportVersion IA5String OPTIONAL, ... }} does it twelve times - so there
+     * is no other tag the encoder could legally write. Worth reporting, not
+     * worth refusing the file over: around 120 of the 808 modules are shaped
+     * that way, and grading it ERROR would mean STRICT mode could no longer
+     * generate a file for any of them.
+     */
+    @Test
+    void gradesARepeatedUniversalTagAsAWarning() {
+        // SEQUENCE { IA5String, IA5String } - two untagged members of one type.
+        byte[] data = hex("30 08 16 02 41 42 16 02 43 44");
+
+        List<BerFinding> findings = run(data, field("dbRecord", false), false);
+
+        assertEquals(1, findings.size());
+        assertEquals(FindingSeverity.WARNING, findings.get(0).severity());
+        assertTrue(findings.get(0).message().contains("U-[22]"));
+    }
+
     @Test
     void separatesTagsOfDifferentClasses() {
         // UNIVERSAL [2] and CONTEXT [2] are different tags, not a collision.

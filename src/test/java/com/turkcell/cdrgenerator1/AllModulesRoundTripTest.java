@@ -48,33 +48,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * what runs the whole pipeline against every module the system actually has to
  * support.
  *
- * <p>Two kinds of finding are tolerated, and both are properties of the
- * VENDORED SCHEMA that no change to this project could remove. Everything else
- * is a hard failure.</p>
+ * <p>Exactly one thing is tolerated: the modules of
+ * {@link #SCHEMA_LEVEL_DUPLICATE_TAG_MODULES}, whose vendored .asn1 text
+ * declares the same CONTEXT tag twice in one body. {@code BDCevapsiz} gives
+ * {@code cellID} tag {@code [10]} while its untagged {@code recordType} CHOICE
+ * already carries {@code [10]} for {@code mSOriginating}. That collision also
+ * makes the walker's own field-to-node matching unreliable inside those bodies,
+ * so their downstream verdicts are exempted rather than half-trusted.</p>
  *
- * <ol>
- *   <li><b>A duplicate UNIVERSAL tag</b>, tolerated for any module. It means the
- *   body declares several UNTAGGED members of the same type - {@code ALLOPTIONAL
- *   ::= SEQUENCE { reportId IA5String OPTIONAL, reportVersion IA5String
- *   OPTIONAL, ... }} - so every one of them is written with the same universal
- *   tag 22. X.680 25.6 does make that ambiguous, and the rule is right to say
- *   so, but the ambiguity is declared in the .asn1 text: the encoder has no
- *   other tag it could legally write. Around 120 of the 808 modules are shaped
- *   this way, most of them DB lookup tables.</li>
+ * <p>The other schema-level shape - a body declaring several UNTAGGED members of
+ * one type, so they all carry the same universal tag - needs no allowlist here:
+ * {@code DuplicateTagRule} already grades it WARNING, because the encoder has no
+ * other tag it could legally write. That judgement belongs in the rule, where
+ * {@code /generate-ber} sees it too, not in a test-only exception list.</p>
  *
- *   <li><b>Every finding of the modules in
- *   {@link #SCHEMA_LEVEL_DUPLICATE_TAG_MODULES}</b>, which declare the same
- *   CONTEXT tag twice in one body - {@code BDCevapsiz} gives {@code cellID} tag
- *   {@code [10]} while its {@code recordType} CHOICE already uses {@code [10]}
- *   for {@code mSOriginating}. That collision also makes the walker's own
- *   field-to-node matching unreliable inside those bodies, so their downstream
- *   verdicts are exempted too rather than half-trusted.</li>
- * </ol>
- *
- * <p>This is deliberately allowlisted by REASON, not by a list of names: a
- * schema module added tomorrow with the same untagged-OPTIONAL shape is covered
- * without anyone editing this file, while a module that starts failing for any
- * OTHER reason still fails. That is the regression this test exists to catch -
+ * <p>Anything else failing is the regression this test exists to catch -
  * something that used to produce clean BER no longer does - and the fix then
  * belongs in the generator, the encoder or the verifier, never here.</p>
  */
@@ -108,13 +96,6 @@ class AllModulesRoundTripTest {
             "SMSCMatching1",
             "VoiceSMS",
             "VoiceSmsInput");
-
-    /**
-     * How {@code TlvNode.tagLabel()} renders a UNIVERSAL tag. A duplicate-tag
-     * finding naming one of those describes untagged same-typed members, which
-     * the schema declares and the encoder cannot write any other way.
-     */
-    private static final String UNIVERSAL_TAG_MARKER = "U-[";
 
     private static StructureParserService structureParserService;
     private static CdrRecordBuilder cdrRecordBuilder;
@@ -174,7 +155,6 @@ class AllModulesRoundTripTest {
         Map<String, List<BerFinding>> unexpectedErrors = new TreeMap<>();
         int checked = 0;
         int knownDefectConfirmed = 0;
-        int untaggedAmbiguity = 0;
 
         for (Map.Entry<String, AsnStructure> entry : structures.entrySet()) {
             String name = entry.getKey();
@@ -201,24 +181,15 @@ class AllModulesRoundTripTest {
                     knownDefectConfirmed++;
                     continue;
                 }
-                List<BerFinding> unexplained = result.errors().stream()
-                        .filter(finding -> !isDeclaredSchemaAmbiguity(finding))
-                        .toList();
-                if (unexplained.isEmpty()) {
-                    untaggedAmbiguity++;
-                    continue;
-                }
-                unexpectedErrors.put(name, unexplained);
+                unexpectedErrors.put(name, result.errors());
             } catch (Exception e) {
                 crashed.put(name, e);
             }
         }
 
-        System.out.printf("AllModulesRoundTripTest: %d modules checked, %d clean, "
-                        + "%d with a declared duplicate CONTEXT tag, "
-                        + "%d whose schema declares untagged same-typed members%n",
-                checked, checked - knownDefectConfirmed - untaggedAmbiguity,
-                knownDefectConfirmed, untaggedAmbiguity);
+        System.out.printf("AllModulesRoundTripTest: %d modules checked, %d free of errors, "
+                        + "%d carrying the declared duplicate CONTEXT tag%n",
+                checked, checked - knownDefectConfirmed, knownDefectConfirmed);
 
         assertTrue(crashed.isEmpty(),
                 "generate+encode+verify threw for these modules: " + describeCrashes(crashed));
@@ -226,16 +197,6 @@ class AllModulesRoundTripTest {
                 "these modules produced an error the vendored schema does not explain - "
                         + "a real regression in the generator, the encoder or the verifier: "
                         + describeErrors(unexpectedErrors));
-    }
-
-    /**
-     * True when the finding only restates something the .asn1 text itself
-     * declares: one body holding several UNTAGGED members of the same type, so
-     * they all necessarily carry the same universal tag. See the class javadoc.
-     */
-    private boolean isDeclaredSchemaAmbiguity(BerFinding finding) {
-        return "duplicate-tag".equals(finding.ruleName())
-                && finding.message().contains(UNIVERSAL_TAG_MARKER);
     }
 
     private String describeCrashes(Map<String, Exception> crashed) {

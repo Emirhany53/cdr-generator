@@ -64,21 +64,45 @@ public class DuplicateTagRule implements VerificationRule {
         // Without a matched field the walker cannot promise this body is fixed
         // rather than an unrecognised collection, so the verdict is downgraded
         // instead of guessed.
-        FindingSeverity severity = nodeContext.hasField()
-                ? FindingSeverity.ERROR
-                : FindingSeverity.WARNING;
+        boolean bodyIsKnown = nodeContext.hasField();
 
         byTag.forEach((tag, occurrences) -> {
             if (occurrences.size() < MIN_CHILDREN_TO_COLLIDE) {
                 return;
             }
             TlvNode first = occurrences.get(0);
-            context.report(severity, NAME,
+            context.report(severityFor(tag, bodyIsKnown), NAME,
                     context.pathTo(first.tagLabel()),
                     first.start(),
                     "Duplicate Tag data found: " + first.tagLabel() + " appears "
                             + occurrences.size() + " times among the fixed members of this body");
         });
+    }
+
+    /**
+     * How much a repeated tag is worth complaining about.
+     *
+     * <p>A repeated CONTEXT/APPLICATION tag is the error EMM sends, and it is
+     * FIXABLE: the schema gave two members the same {@code [n]}, and changing
+     * one of them resolves it. That stays an ERROR, so STRICT mode refuses to
+     * hand over a file EMM would reject anyway.</p>
+     *
+     * <p>A repeated UNIVERSAL tag says something different: the body declares
+     * several UNTAGGED members of the same type, as {@code ALLOPTIONAL ::=
+     * SEQUENCE { reportId IA5String OPTIONAL, reportVersion IA5String OPTIONAL,
+     * ... }} does twelve times over. X.680 25.6 makes that ambiguous and it is
+     * worth reporting - but there is no other tag the encoder could legally
+     * write, so it is not a defect in anything this application controls.
+     * Around 120 of the 808 modules, mostly DB lookup tables, are shaped that
+     * way; grading it ERROR would mean STRICT mode could no longer generate a
+     * file for any of them, which would remove working functionality to
+     * restate a fact about the vendored .asn1 text.</p>
+     */
+    private FindingSeverity severityFor(TagKey tag, boolean bodyIsKnown) {
+        if (!bodyIsKnown || tag.tagClass() == BerTagClass.UNIVERSAL) {
+            return FindingSeverity.WARNING;
+        }
+        return FindingSeverity.ERROR;
     }
 
     /** Class and number together identify a tag; either alone does not. */
