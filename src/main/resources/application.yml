@@ -13,6 +13,13 @@ app:
     default-record-count: 1
     max-record-count: 100
 
+    # Uretilen BER'in, onu ureten alan agacina gore geri okunup dogrulanmasi.
+    # strict: ERROR bulgusu varsa dosya dondurulmez | warn: loglanir, dosya doner | off: kapali
+    self-check:
+      mode: warn
+      rules:
+        duplicate-tag: true
+
     ai:
       enabled: true
       provider: gemini
