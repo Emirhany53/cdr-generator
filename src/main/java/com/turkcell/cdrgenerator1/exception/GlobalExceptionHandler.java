@@ -34,6 +34,18 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage(), request);
     }
 
+    /**
+     * 422 rather than 500: the request was understood and processed, the bytes
+     * were produced - they just did not survive the generator's own check, so
+     * the fault is in what was asked for, not in the server.
+     */
+    @ExceptionHandler(BerSelfCheckFailedException.class)
+    public ResponseEntity<ErrorResponse> handleSelfCheckFailed(BerSelfCheckFailedException ex,
+                                                               HttpServletRequest request) {
+        log.error("Self-check refused a generated file: {}", ex.getMessage());
+        return buildResponse(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage(), request);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex,
                                                                HttpServletRequest request) {

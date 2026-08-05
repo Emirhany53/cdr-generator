@@ -17,6 +17,11 @@ import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
 import com.turkcell.cdrgenerator1.service.TlvWriter;
+import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
+import com.turkcell.cdrgenerator1.service.verify.BerVerifier;
+import com.turkcell.cdrgenerator1.service.verify.TlvReader;
+import com.turkcell.cdrgenerator1.service.verify.rule.DuplicateTagRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.SetOrderingRule;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
@@ -42,6 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class BerGeneratorControllerTest {
 
     private MockMvc mockMvc;
+    private SelfCheckProperties selfCheckProperties;
 
     @BeforeEach
     void setUp() {
@@ -71,8 +77,18 @@ class BerGeneratorControllerTest {
 
         AiRecordSupplier aiRecordSupplier = TestAiSupport.disabledSupplier(aiProperties);
 
+        // Every generated file now goes through the self-check on its way out.
+        // WARN keeps these tests about generation rather than about verification:
+        // a finding is logged, the response is unchanged. The strict path has its
+        // own test below.
+        selfCheckProperties = new SelfCheckProperties();
+        selfCheckProperties.setMode(SelfCheckProperties.Mode.WARN);
+        BerVerifier verifier = new BerVerifier(new TlvReader(), selfCheckProperties,
+                List.of(new DuplicateTagRule(), new SetOrderingRule()));
+
         BerGeneratorController controller = new BerGeneratorController(
-                parserService, recordBuilder, encoder, config, aiRecordSupplier);
+                parserService, recordBuilder, encoder, config, aiRecordSupplier,
+                verifier, selfCheckProperties);
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
@@ -97,6 +113,49 @@ class BerGeneratorControllerTest {
                 .andExpect(header().string("Content-Disposition",
                         containsString("InlineDemo.ber")))
                 .andExpect(content().contentType(MediaType.APPLICATION_OCTET_STREAM));
+    }
+
+    /**
+     * The self-check verdict travels with the file. Without it a caller has no
+     * way to know a returned .ber was flagged - the bytes look identical either
+     * way, which is exactly how a bad file used to reach EMM unnoticed.
+     */
+    @Test
+    void returnsTheSelfCheckVerdictAsAHeader() throws Exception {
+        String body = """
+                {
+                  "structureName": "InlineDemo",
+                  "content": "M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE { msisdn [1] IMPLICIT OCTET STRING OPTIONAL, duration [4] IMPLICIT INTEGER OPTIONAL } END",
+                  "fieldValues": { "msisdn": "905321234567", "duration": "42" }
+                }
+                """;
+
+        mockMvc.perform(post("/api/cdr/generate-ber")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Cdr-Self-Check", containsString("0 error(s)")));
+    }
+
+    /**
+     * A clean structure must stay clean in strict mode too: the point of
+     * strict is to stop bad files, not to stop generation.
+     */
+    @Test
+    void strictModeStillReturnsAFileThatPassesTheCheck() throws Exception {
+        selfCheckProperties.setMode(SelfCheckProperties.Mode.STRICT);
+        String body = """
+                {
+                  "structureName": "InlineDemo",
+                  "content": "M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE { msisdn [1] IMPLICIT OCTET STRING OPTIONAL, duration [4] IMPLICIT INTEGER OPTIONAL } END",
+                  "fieldValues": { "msisdn": "905321234567", "duration": "42" }
+                }
+                """;
+
+        mockMvc.perform(post("/api/cdr/generate-ber")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk());
     }
 
     @Test

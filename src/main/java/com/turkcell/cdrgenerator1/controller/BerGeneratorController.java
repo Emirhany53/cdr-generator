@@ -1,5 +1,7 @@
 package com.turkcell.cdrgenerator1.controller;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
+import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
+import com.turkcell.cdrgenerator1.exception.BerSelfCheckFailedException;
 import com.turkcell.cdrgenerator1.exception.RecordCountExceededException;
 import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
@@ -8,6 +10,8 @@ import com.turkcell.cdrgenerator1.model.request.GenerateBerRequest;
 import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
+import com.turkcell.cdrgenerator1.service.verify.BerVerificationResult;
+import com.turkcell.cdrgenerator1.service.verify.BerVerifier;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -39,12 +43,16 @@ public class BerGeneratorController {
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
     private static final int MIN_RECORD_COUNT = 1;
+    /** Response header carrying the self-check verdict for a returned file. */
+    private static final String SELF_CHECK_HEADER = "X-Cdr-Self-Check";
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
     private final BerEncoderService berEncoderService;
     private final CdrConfigProperties cdrConfigProperties;
     private final AiRecordSupplier aiRecordSupplier;
+    private final BerVerifier berVerifier;
+    private final SelfCheckProperties selfCheckProperties;
 
     @Operation(summary = "BER CDR dosyası üret ve indir",
             description = "Bir veya daha fazla kaydı binary BER olarak kodlar ve indirilebilir "
@@ -89,6 +97,8 @@ public class BerGeneratorController {
         log.info("Generated BER file for '{}': {} record(s), {} bytes",
                 structure.getStructureName(), effectiveRecordCount, fileBytes.length);
 
+        BerVerificationResult selfCheck = runSelfCheck(structure, fileBytes);
+
         String safeName = structure.getStructureName()
                 .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
         String fileName = safeName + BER_FILE_EXTENSION;
@@ -96,6 +106,7 @@ public class BerGeneratorController {
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .header(SELF_CHECK_HEADER, selfCheck.summary())
                 .contentLength(fileBytes.length)
                 .body(new ByteArrayResource(fileBytes));
     }
@@ -116,6 +127,37 @@ public class BerGeneratorController {
         request.setStructureName(structureName);
 
         return generateBerFile(request);
+    }
+
+    /**
+     * Reads the bytes we just wrote back against the field tree that produced
+     * them, and decides what to do about what it finds.
+     *
+     * <p>Every check on a generated file used to live in {@code tools/} as a
+     * script somebody had to remember to run, which meant a defect was usually
+     * discovered by EMM a day later rather than here. In {@code warn} mode -
+     * the default - nothing about the response changes except an added header
+     * and a log line, so switching this on cannot start refusing files that
+     * were being returned yesterday. {@code strict} is the setting to reach for
+     * once the findings on real structures have been looked at.</p>
+     */
+    private BerVerificationResult runSelfCheck(AsnStructure structure, byte[] fileBytes) {
+        BerVerificationResult result = berVerifier.verify(structure, fileBytes);
+
+        if (result.hasErrors()) {
+            log.error("Self-check found {} error(s) in generated '{}': {}",
+                    result.errors().size(), structure.getStructureName(), result.errors());
+        } else if (!result.warnings().isEmpty()) {
+            log.warn("Self-check: {} ({} warning(s))",
+                    result.summary(), result.warnings().size());
+        } else if (selfCheckProperties.isEnabled()) {
+            log.info("Self-check clean: {}", result.summary());
+        }
+
+        if (selfCheckProperties.getMode() == SelfCheckProperties.Mode.STRICT && result.hasErrors()) {
+            throw new BerSelfCheckFailedException(structure.getStructureName(), result.errors());
+        }
+        return result;
     }
 
     private AsnStructure resolveStructure(GenerateBerRequest request, boolean inlineMode) {
