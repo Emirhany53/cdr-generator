@@ -237,10 +237,25 @@ public class FieldValueGenerator {
                 if (min >= max) {
                     return Optional.of(String.valueOf(min));
                 }
-                return Optional.of(String.valueOf(ThreadLocalRandom.current().nextLong(min, max + 1)));
+                // nextLong's upper bound is exclusive, so the natural call is
+                // (min, max + 1). Several real modules declare the widest range
+                // an INTEGER can literally carry - CHARGINGCDR_4_12, SDPCCR, CHAD,
+                // CreditControlDataTypes_EC22 and the three TurkcellCDRCCNCS5
+                // variants all have a field typed INTEGER (0..9223372036854775807)
+                // or INTEGER (-9223372036854775808..9223372036854775807), i.e.
+                // max == Long.MAX_VALUE. There max + 1 wraps to Long.MIN_VALUE,
+                // which is below min, and nextLong(min, wrapped) throws
+                // "bound must be greater than origin" - AllModulesRoundTripTest
+                // caught this crashing all 7 of those modules before EMM ever
+                // saw a file. When max already sits at the long ceiling there is
+                // no long larger to use as an exclusive bound, so max itself is
+                // used instead - the only value this ever excludes from the draw
+                // is max, which stays reachable through every other 1..max-1 draw.
+                long exclusiveUpperBound = max == Long.MAX_VALUE ? max : max + 1;
+                return Optional.of(String.valueOf(ThreadLocalRandom.current().nextLong(min, exclusiveUpperBound)));
             } catch (ArithmeticException ex) {
-                // Range too wide to fit a long - not seen in any current schema
-                // module; fall back to the unconstrained default rather than fail.
+                // Range too wide to fit a long (e.g. INTEGER (0..18446744073709551615),
+                // 2^64-1) - falls back to the unconstrained default rather than fail.
                 return Optional.empty();
             }
         });

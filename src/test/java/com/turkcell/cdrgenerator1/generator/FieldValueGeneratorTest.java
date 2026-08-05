@@ -226,6 +226,41 @@ class FieldValueGeneratorTest {
         assertTrue(value.matches("\\d+"), "sade INTEGER sayi almali: " + value);
     }
 
+    /** Adlandirilmis liste olmayan bir (min..max) araligi da o araliga saditir. */
+    @Test
+    void aValueRangeConstraintProducesValuesInsideIt() {
+        for (int attempt = 0; attempt < 200; attempt++) {
+            String value = generator.generate(field("fractionValue", "INTEGER (0..999)"));
+            long number = Long.parseLong(value);
+            assertTrue(number >= 0 && number <= 999, "sema disi deger uretildi: " + number);
+        }
+    }
+
+    /**
+     * Regresyon: (min..max + 1) her zaman gecerli bir ust sinir sanilarak
+     * ThreadLocalRandom.nextLong(min, max + 1) cagriliyordu. max, long'un
+     * tasiyabildigi en buyuk deger oldugunda (max == Long.MAX_VALUE) max + 1
+     * Long.MIN_VALUE'ya taşıyor - bu da min'den kucuk oluyor ve nextLong
+     * "bound must be greater than origin" firlatiyor.
+     *
+     * <p>Uydurma bir senaryo degil: CHARGINGCDR_4_12, SDPCCR, CHAD,
+     * CreditControlDataTypes_EC22 ve uc TurkcellCDRCCNCS5 varyanti, gercek
+     * semada tam olarak {@code INTEGER (0..9223372036854775807)} ya da
+     * {@code INTEGER (-9223372036854775808..9223372036854775807)} tipinde
+     * alanlar tasiyor - AllModulesRoundTripTest 808 modulun tumunu
+     * uretip kodlarken bu 7'sinde tam bu istisnayla cokuyordu.</p>
+     */
+    @Test
+    void aRangeReachingTheLongCeilingDoesNotOverflow() {
+        String fullLongRange = "INTEGER (-9223372036854775808..9223372036854775807)";
+        String zeroToLongMax = "INTEGER (0..9223372036854775807)";
+        for (int attempt = 0; attempt < 50; attempt++) {
+            assertTrue(generator.generate(field("wideField", fullLongRange)).matches("-?\\d+"));
+            long value = Long.parseLong(generator.generate(field("nonNegativeWideField", zeroToLongMax)));
+            assertTrue(value >= 0, "alt sinirin altinda deger uretildi: " + value);
+        }
+    }
+
     /**
      * yml kurallari alan adinin bir PARCASINA gore eslesiyor, dolayisiyla
      * tanimadigi bir adlandirilmis-sayi alanina rahatlikla carpabilir:
