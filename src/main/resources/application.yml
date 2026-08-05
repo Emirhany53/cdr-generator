@@ -68,6 +68,12 @@ app:
           pattern: "^[0-9]{15}$"
           examples: [ "353908156170760" ]
 
+        - name: millisecondsFraction
+          match: [ "fraction" ]
+          description: "Milliseconds ::= INTEGER (0..999): saniyenin kesri, TAM ZAMAN DEGIL. 0-999 arasi duz sayi."
+          pattern: "^[0-9]{1,3}$"
+          examples: [ "0", "125", "999" ]
+
         - name: timestamp
           match: [ "timestamp", "starttime", "endtime", "openingtime", "closuretime", "eventtime", "triggertime" ]
           description: "14 hane ise yyyyMMddHHmmss, 12 hane ise yyMMddHHmmss; 2026 icinde son 30 gun"

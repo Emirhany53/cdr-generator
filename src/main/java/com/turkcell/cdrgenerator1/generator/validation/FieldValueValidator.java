@@ -163,17 +163,70 @@ public class FieldValueValidator {
     }
 
     private boolean exceedsMaxLength(AsnField field, String value) {
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+
+        // A (min..max) value-range constraint (Milliseconds ::= INTEGER (0..999))
+        // carries no SIZE() clause at all, so the byte-width check below never
+        // even ran for it: sizeConstraint came back empty and exceedsMaxLength
+        // returned false unconditionally. A generated record carried
+        // serviceRequestTimeStampFraction = 260711056963 - a timestamp-shaped
+        // number, not a 0..999 fraction - straight into the encoded BER because
+        // nothing here rejected it. This must be checked BEFORE falling back to
+        // the byte-width check, and independently of whether a SIZE() is present.
+        if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
+            Optional<AsnSizeExtractor.IntegerRange> declaredRange =
+                    asnSizeExtractor.extractIntegerRange(field.getFieldType());
+            if (declaredRange.isPresent()) {
+                return exceedsDeclaredRange(value, declaredRange.get());
+            }
+        }
+
         Optional<Integer> sizeConstraint = asnSizeExtractor.extractMaxLength(field.getFieldType());
         if (sizeConstraint.isEmpty()) {
             return false;
         }
 
-        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
         if (type == BerPrimitiveType.INTEGER || type == BerPrimitiveType.ENUMERATED) {
             return exceedsIntegerRange(value, sizeConstraint.get());
         }
 
-        return value.length() > effectiveMaxLength(field, sizeConstraint.get());
+        int effectiveMax = effectiveMaxLength(field, sizeConstraint.get());
+        if (value.length() > effectiveMax) {
+            return true;
+        }
+        return violatesFixedLength(field, value, type, effectiveMax);
+    }
+
+    /**
+     * X.680 49.4: a single-value {@code SIZE(n)} - unlike a range
+     * {@code SIZE(min..max)} - fixes the length EXACTLY. Nothing checked for
+     * "shorter than n" before this: servedIMEISV ({@code IMEI ::= OCTET
+     * STRING (SIZE(8))}) repeatedly got a 4-byte AI value and otherParty
+     * ({@code OCTET STRING (SIZE(12))}) a 6-byte one - both exactly half the
+     * required length, because the prompt's length hint stated the byte
+     * count as if it were the hex-character count (fixed separately in
+     * CdrPromptBuilder). This is the safety net for whenever that still
+     * slips - a range constraint is deliberately left alone, since SIZE(2..12)
+     * genuinely allows anything from 2 to 12 bytes.
+     */
+    private boolean violatesFixedLength(AsnField field, String value, BerPrimitiveType type, int effectiveMax) {
+        if (type != BerPrimitiveType.OCTET_STRING && type != BerPrimitiveType.BIT_STRING) {
+            return false;
+        }
+        return asnSizeExtractor.extractFixedLength(field.getFieldType()).isPresent()
+                && value.length() != effectiveMax;
+    }
+
+    /** True when the value falls outside a declared INTEGER (min..max) constraint. */
+    private boolean exceedsDeclaredRange(String value, AsnSizeExtractor.IntegerRange range) {
+        BigInteger parsed;
+        try {
+            parsed = new BigInteger(value.trim());
+        } catch (NumberFormatException ex) {
+            // Not an integer literal at all - matchesPrimitiveType already rejects that.
+            return false;
+        }
+        return parsed.compareTo(range.max()) > 0 || parsed.compareTo(range.min()) < 0;
     }
 
     /**

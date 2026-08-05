@@ -77,10 +77,31 @@ public class CdrPromptBuilder implements PromptBuilder {
                         .append("azami uzunluk: ").append(maxLength).append(" karakter");
             }
 
+            appendIntegerRangeGuidance(prompt, field);
             appendOctetStringGuidance(prompt, field, maxLength);
             appendRuleIfPresent(prompt, field, maxLength);
             prompt.append(LINE);
         });
+    }
+
+    /**
+     * INTEGER alanlarin SIZE(n) disi bir kisiti da olabilir:
+     * {@code Milliseconds ::= INTEGER (0..999)} gibi bir (min..max) araligi.
+     * Bu bilgi verilmezse AI, alan adina "timestamp" gecen bir yml kuraliyla
+     * (ornek: serviceRequestTimeStampFraction) yanlislikla eslesip 12-14
+     * haneli tam bir zaman damgasi uretiyordu - oysa alan yalnizca 0-999
+     * arasi bir milisaniye kesridir.
+     */
+    private void appendIntegerRangeGuidance(StringBuilder prompt, AsnField field) {
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) != BerPrimitiveType.INTEGER) {
+            return;
+        }
+        asnSizeExtractor.extractIntegerRange(field.getFieldType()).ifPresent(range ->
+                prompt.append(RULE_SEPARATOR)
+                        .append("bu alanin izin verilen deger araligi: ")
+                        .append(range.min()).append("..").append(range.max())
+                        .append(" (bu araligin disinda deger URETME, azami uzunluk ")
+                        .append("veya baska bir alanin ornegiyle CELISSE BILE bu araliga uy)"));
     }
 
     private void appendOctetStringGuidance(StringBuilder prompt, AsnField field, Integer maxLength) {
