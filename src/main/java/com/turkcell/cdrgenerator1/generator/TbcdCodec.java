@@ -67,8 +67,19 @@ public class TbcdCodec {
             return false;
         }
         String normalized = fieldName.toLowerCase();
+        // callingpartynumber/cameldestinationnumber/otherparty: IN/CAMEL AMA
+        // kayitlarindaki (iN-AMA-Extension) abone numarasi alanlari - yml'deki
+        // callingNumber/calledNumber kurallari bunlari zaten adi-tabanli
+        // eslestiriyor (regex+ornek veriyor), ama bu liste onlari tanimadigi
+        // icin AI'a "TBCD'ye paketle" talimati hic verilmiyordu. Sonuc: AI
+        // "OCTET STRING, hex olmali" ile "gecerli bir GSM numarasi uret"
+        // talimatlari arasinda nasil uzlasacagini bilemiyor, callingPartyNumber
+        // icin "05321112233" (duz metin, hic hex bile degil) ya da otherParty
+        // icin "303534323938" (duz numaranin ASCII-hex'i, TBCD degil)
+        // uretiyordu - ikisi de matchesOctetString'de reddediliyordu.
         return normalized.contains("msisdn") || normalized.contains("imsi")
                 || normalized.contains("imei") || normalized.contains("subscribernumber")
-                || normalized.contains("subscribermsisdn");
+                || normalized.contains("subscribermsisdn") || normalized.contains("callingparty")
+                || normalized.contains("destinationnumber") || normalized.contains("otherparty");
     }
 }
