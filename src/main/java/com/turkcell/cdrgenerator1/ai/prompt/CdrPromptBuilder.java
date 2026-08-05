@@ -20,6 +20,8 @@ public class CdrPromptBuilder implements PromptBuilder {
 
     private static final String LINE = System.lineSeparator();
     private static final String RULE_SEPARATOR = " | ";
+    /** OCTET STRING/BIT STRING'de SIZE bayt cinsindendir; hex metin uzunlugu 2 katidir. */
+    private static final int HEX_CHARS_PER_BYTE = 2;
 
     private final AiConfigProperties aiConfigProperties;
     private final AsnSizeExtractor asnSizeExtractor;
@@ -74,7 +76,7 @@ public class CdrPromptBuilder implements PromptBuilder {
             Integer maxLength = asnSizeExtractor.extractMaxLength(field.getFieldType()).orElse(null);
             if (Objects.nonNull(maxLength)) {
                 prompt.append(RULE_SEPARATOR)
-                        .append("azami uzunluk: ").append(maxLength).append(" karakter");
+                        .append("azami uzunluk: ").append(promptLengthFor(field, maxLength)).append(" karakter");
             }
 
             appendIntegerRangeGuidance(prompt, field);
@@ -82,6 +84,22 @@ public class CdrPromptBuilder implements PromptBuilder {
             appendRuleIfPresent(prompt, field, maxLength);
             prompt.append(LINE);
         });
+    }
+
+    /**
+     * SIZE(n) icin AsnSizeExtractor bayt sayisini doner (icerideki BCD/TBCD
+     * tespiti ve kodlayici bunu bekler), ama AI'a gonderilen deger OCTET
+     * STRING/BIT STRING alanlarda hex METIN'dir - iki katı karakter uzunlugundadir.
+     * Bu ayrim yapilmadan "azami uzunluk: 12 karakter" demek AI'in bunu 12 HEX
+     * KARAKTERI (6 bayt) sanmasina yol aciyordu: servedIMEISV (SIZE(8)) hep
+     * 4 bayt, otherParty (SIZE(12)) hep 6 bayt geliyordu - ikisi de tam olarak
+     * istenenin yarisi, byte/karakter karisikliginin imzasi.
+     */
+    private int promptLengthFor(AsnField field, int byteOrCharLength) {
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        return (type == BerPrimitiveType.OCTET_STRING || type == BerPrimitiveType.BIT_STRING)
+                ? byteOrCharLength * HEX_CHARS_PER_BYTE
+                : byteOrCharLength;
     }
 
     /**
