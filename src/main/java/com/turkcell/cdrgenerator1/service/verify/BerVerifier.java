@@ -5,6 +5,7 @@ import com.turkcell.cdrgenerator1.exception.BerDecodingException;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
+import com.turkcell.cdrgenerator1.service.BerUniversalTag;
 import com.turkcell.cdrgenerator1.service.verify.rule.NodeContext;
 import com.turkcell.cdrgenerator1.service.verify.rule.VerificationRule;
 import lombok.RequiredArgsConstructor;
@@ -292,18 +293,53 @@ public class BerVerifier {
                 return candidate;
             }
         }
-        // An untagged field carries the universal tag of its own type, which this
-        // walker does not re-derive; the encoder writes such fields in order, so
-        // the first untagged candidate is the one that produced this node.
+        // An untagged field carries the universal tag of its OWN type, which IS
+        // predictable - it is exactly what wrapLeafInUniversalTlv/
+        // containerUniversalTag compute on the encoder side. Matching on that
+        // number, not merely "any untagged field, in order", is what this loop
+        // used to do - and it broke the moment a body held two or more untagged
+        // OPTIONAL siblings and one of the earlier ones was omitted: the first
+        // remaining candidate was no longer the one that actually produced this
+        // byte, so a later sibling's bytes got checked against the wrong field's
+        // rules. 288 of the 808 modules' bodies carry two or more untagged
+        // fields, so this was not a corner case.
         for (Iterator<AsnField> it = remaining.iterator(); it.hasNext(); ) {
             AsnField candidate = it.next();
-            if (Objects.isNull(candidate.getTagNumber())
-                    && child.tagClass() == BerTagClass.UNIVERSAL) {
+            if (Objects.nonNull(candidate.getTagNumber())) {
+                continue;
+            }
+            Integer expectedTag = untaggedUniversalTag(candidate);
+            if (Objects.nonNull(expectedTag) && child.tagClass() == BerTagClass.UNIVERSAL
+                    && child.tagNumber() == expectedTag) {
                 it.remove();
                 return candidate;
             }
         }
         return null;
+    }
+
+    /**
+     * The universal tag an untagged field's own bytes carry, mirroring
+     * {@code BerEncoderService.wrapLeafInUniversalTlv} and
+     * {@code containerUniversalTag} exactly so the two sides never disagree.
+     *
+     * <p>{@code null} for a CHOICE: an untagged CHOICE's wire tag is whichever
+     * alternative was written, which cannot be predicted without looking at the
+     * value. That case is intentionally left unmatched rather than guessed.</p>
+     */
+    private Integer untaggedUniversalTag(AsnField field) {
+        if (field.isChoice()) {
+            return null;
+        }
+        if (field.isRepeated()) {
+            return BerUniversalTag.SEQUENCE.getTagNumber();
+        }
+        if (hasChildren(field)) {
+            return (field.isSet() ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE).getTagNumber();
+        }
+        Integer override = field.getUniversalTagOverride();
+        return Objects.nonNull(override) ? override
+                : BerUniversalTag.forPrimitiveType(field.getFieldType()).getTagNumber();
     }
 
     private TlvNode onlyChild(TlvNode node, AsnField field, VerificationContext context) {

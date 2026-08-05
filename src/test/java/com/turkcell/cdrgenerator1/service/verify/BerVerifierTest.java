@@ -1,8 +1,10 @@
 package com.turkcell.cdrgenerator1.service.verify;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.service.verify.rule.DuplicateTagRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.IntegerRangeRule;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -89,6 +91,44 @@ class BerVerifierTest {
         // Same collection, but one element now carries [3] twice.
         byte[] dirty = hex("30 0A BF 83 7D 06 31 04 83 00 83 00");
         assertTrue(verify(List.of(collection), dirty).hasErrors());
+    }
+
+    /**
+     * A body can hold more than one untagged field, and an OPTIONAL untagged
+     * field earlier in the list can be omitted. Matching an untagged sibling by
+     * "first one still unclaimed" - the way the walker used to - then attributes
+     * a LATER field's bytes to the omitted earlier one whenever the two are
+     * different types. 288 of the 808 real modules have a body shaped exactly
+     * like this (two or more untagged siblings), so it was not a corner case.
+     *
+     * <p>Demonstrated through {@link IntegerRangeRule} because {@link
+     * com.turkcell.cdrgenerator1.service.verify.rule.TagShapeRule} only checks
+     * TAGGED fields and stays silent on an untagged mismatch - the old bug
+     * produced no finding at all, which is worse than a loud one. Wiring
+     * IntegerRangeRule in makes the wrong attribution visible: bytes that are
+     * really an untagged OCTET STRING, misread as the OMITTED untagged INTEGER
+     * field that precedes it, decode as a negative number outside its declared
+     * (0..999) and are wrongly flagged.</p>
+     */
+    @Test
+    void matchesAnUntaggedFieldByItsOwnTypeNotByArrivalOrder() {
+        BerVerifier verifierWithRangeCheck = new BerVerifier(new TlvReader(), properties,
+                List.of(new DuplicateTagRule(), new IntegerRangeRule(new AsnSizeExtractor())));
+
+        AsnField omitted = AsnField.builder()
+                .fieldName("fractionValue").fieldType("INTEGER (0..999)").build();
+        AsnField present = AsnField.builder()
+                .fieldName("payload").fieldType("OCTET STRING").build();
+        // Only 'present's bytes exist: UNIVERSAL [4] OCTET STRING, content AB CD.
+        // 'omitted' carries no value in this record at all. AB CD read as a
+        // signed INTEGER is -21555 - well outside (0..999), so a wrong match
+        // onto 'omitted' is loud, not silent.
+        byte[] data = hex("30 04 04 02 AB CD");
+
+        BerVerificationResult result = verifierWithRangeCheck.verify(
+                "Test", List.of(omitted, present), false, false, data);
+
+        assertTrue(result.isClean(), result.findings().toString());
     }
 
     // --- what the walker itself catches ---
