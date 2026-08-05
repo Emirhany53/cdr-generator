@@ -19,6 +19,10 @@ app:
       mode: warn
       rules:
         duplicate-tag: true
+        set-ordering: true
+        tag-shape: true
+        named-number: true
+        integer-range: true
 
     ai:
       enabled: true
