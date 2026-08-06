@@ -174,6 +174,105 @@ app:
           pattern: "^[0-9]{1,10}$"
           examples: [ "295043" ]
 
+        # --------------------------------------------------------------
+        # MMTel/IMS alanlari. Bicimler EMM'in KABUL ETTIGI referans
+        # yakalamadan cikarildi; ornek DEGERLER sentetiktir - referans
+        # gercek abone verisi tasidigi icin numaralar kopyalanmadi.
+        # --------------------------------------------------------------
+
+        - name: sipUri
+          match: [ "sip-uri" ]
+          description: "SIP URI (RFC 3261): sip:+90<10 hane>@ims.mnc001.mcc286.3gppnetwork.org"
+          pattern: "^sip:.+@.+$"
+          examples: [ "sip:+905321112233@ims.mnc001.mcc286.3gppnetwork.org",
+                      "sip:+905428063330@ims.mnc001.mcc286.3gppnetwork.org" ]
+
+        - name: telUri
+          match: [ "tel-uri" ]
+          description: "TEL URI (RFC 3966): tel:+ ile baslayan Turkiye numarasi"
+          pattern: "^tel:\\+?[0-9]{10,15}$"
+          examples: [ "tel:+905321112233", "tel:+905428063330" ]
+
+        - name: sipMethod
+          match: [ "sip-method" ]
+          description: "SIP istek metodu, buyuk harf"
+          pattern: "^[A-Z]{3,12}$"
+          examples: [ "INVITE", "MESSAGE", "SUBSCRIBE" ]
+
+        - name: sessionId
+          match: [ "session-id", "sessionid" ]
+          description: "IMS oturum kimligi; tire ile ayrilmis onaltilik bloklar"
+          pattern: "^[A-Za-z0-9@._-]{8,80}$"
+          examples: [ "FA163E2C03F1-150a-ef7c9700-4abdc2-6925e8d0-b3a1f",
+                      "FA163EA68A0A-19b5-4a3cd700-1f2cb5-6925e8d0-4d85a" ]
+
+        - name: imsChargingIdentifier
+          match: [ "charging-identifier" ]
+          description: "IMS Charging Identifier (ICID): <dugum>.<realm>-<rakamlar>"
+          pattern: "^[A-Za-z0-9._-]+$"
+          examples: [ "GBTEST1.ims.mnc001.mcc286.3gppnetwork.org-061481617640921112624" ]
+
+        - name: accessNetworkInformation
+          match: [ "accessnetworkinformation", "lastknownpani" ]
+          description: "3GPP P-Access-Network-Info basligi (PANI)"
+          pattern: "^3GPP-[A-Za-z0-9-]+;.*$"
+          examples: [ "3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=286011234567890;network-provided",
+                      "3GPP-UTRAN-FDD;utran-cell-id-3gpp=28601abc1" ]
+
+        - name: nodeId
+          match: [ "node-id" ]
+          description: "Uretici dugum kimligi"
+          pattern: "^[A-Za-z0-9_-]+$"
+          examples: [ "vIMS_Mobile_TEST-01-1001", "vIMS_Mobile_TEST-13-3033" ]
+
+        - name: networkIdentifier
+          match: [ "visitednetworkidentifier", "originatingioi", "terminatingioi" ]
+          description: "IMS ag alan adi (3GPP realm)"
+          pattern: "^[a-z0-9.]+$"
+          examples: [ "ims.mnc001.mcc286.3gppnetwork.org" ]
+
+        - name: serviceContextId
+          match: [ "servicecontextid" ]
+          description: "3GPP Service-Context-Id"
+          pattern: "^[0-9.]+@[a-z0-9.]+$"
+          examples: [ "10.32275@3gpp.org" ]
+
+        - name: gsmaInstanceId
+          match: [ "instanceid" ]
+          description: "GSMA IMEI URN"
+          pattern: "^urn:gsma:imei:[0-9-]+$"
+          examples: [ "urn:gsma:imei:35360612-345678-0" ]
+
+        - name: userAgent
+          match: [ "useragent" ]
+          description: "SIP User-Agent basligi"
+          pattern: "^[A-Za-z0-9/. _-]+$"
+          examples: [ "VoLTE/WFC UA" ]
+
+        - name: userLocationInformation
+          match: [ "userlocationinformation" ]
+          description: "ECGI/CGI: kucuk harf onaltilik metin (16 hane)"
+          pattern: "^[0-9a-f]{12,16}$"
+          examples: [ "81821600d0c11e0c", "81821600d0eaef0d" ]
+
+        - name: cgiInformation
+          match: [ "cgiinformation" ]
+          description: "CGI/ECGI onaltilik metin"
+          pattern: "^[0-9a-f]{12,16}$"
+          examples: [ "821600d0c11e0c", "13006222b63abc" ]
+
+        - name: sdpMediaName
+          match: [ "media-name", "medianame" ]
+          description: "SDP m= satiri"
+          pattern: "^m=[a-z]+ [0-9]+ [A-Za-z0-9/ ]+$"
+          examples: [ "m=audio 49152 RTP/AVP 98 105", "m=video 51372 RTP/AVP 99" ]
+
+        - name: subscriberIdentityDigits
+          match: [ "subscriptioniddata", "addressdigit", "vplmnid" ]
+          description: "Abone tanimlayici rakam dizisi (MSISDN/IMSI), duz rakam"
+          pattern: "^[0-9]{10,15}$"
+          examples: [ "905321112233", "905428063330" ]
+
 logging:
   level:
     com.turkcell.cdrgenerator1: DEBUG
