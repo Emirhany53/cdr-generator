@@ -12,8 +12,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.util.regex.Pattern;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -158,16 +160,28 @@ public class StructureParserService {
                                       Map<String, String> choiceSelections,
                                       AsnTaggingMode taggingMode) {
         Set<String> referenced = collectReferencedTypeNames(registry);
+        Map<String, Set<String>> references = buildReferenceEdges(registry);
 
         // Kök adayı birden fazla olabilir (örnek: bir DB lookup şemasında hem
-        // "Key" hem "Record" tipi tanımlı). İlk bulunanı değil, en çok alana
-        // sahip olanı seçeriz; böylece "sub_merchant_id" gibi tek alanlı bir
-        // arama anahtarı, asıl çok alanlı kayıt tipinin (DBRecord) önüne
-        // geçmez. "SEQUENCE OF X" şeklindeki referanssız bir alias (örnek:
+        // "Key" hem "Record" tipi tanımlı). Adayları ULAŞILABİLİRLİĞE göre
+        // sıralarız: bir tipten yola çıkıp geçişli olarak kaç tipe erişildiği.
+        // Modülün gerçek kaydı, şemadaki yardımcı tiplerin neredeyse tamamını
+        // kendi ağacında toplar; "Key" gibi bir arama anahtarı ya da
+        // ChangeOfServiceCondition gibi bir konteyner ise küçük bir ada kalır.
+        //
+        // Önceki ölçüt (en çok ALANA sahip aday) kayıt bir CHOICE olduğunda
+        // yanlış sonuç veriyordu: resolveRoot bir CHOICE kökünü tek alan olarak
+        // döndürdüğü için LTE-R10'da CallEventRecord (1 alan) referanssız bir
+        // yardımcı tipe - ChangeOfServiceCondition (22 alan) - yeniliyordu ve
+        // üretilen dosya sGWRecord [78] sarmalayıcısı olmadan, CDR yerine bir
+        // servis-veri konteyneri olarak çıkıyordu. Alan sayısı artık sadece
+        // eşitlik bozucu: eski davranış beraberliklerde aynen korunur.
+        // "SEQUENCE OF X" şeklindeki referanssız bir alias (örnek:
         // DBDataRecord), X'in kendisini de geçerli bir kök adayı yapar -
         // X normalde "referanslı" sayılsa bile, bu sarmalayıcı dışında başka
         // kullanıcısı yoksa asıl veri kaydı X'tir.
         String bestCandidate = null;
+        int bestReach = -1;
         int bestFieldCount = -1;
 
         for (String candidate : registry.keySet()) {
@@ -178,38 +192,36 @@ public class StructureParserService {
                 continue;
             }
 
+            String scored = null;
             if (isStructured(definition.getKind()) && !referenced.contains(candidate)) {
-                int fieldCount = fieldTreeResolver
-                        .resolveRoot(registry, candidate, choiceSelections, taggingMode)
-                        .fields().size();
-
-                if (fieldCount > bestFieldCount) {
-                    bestCandidate = candidate;
-                    bestFieldCount = fieldCount;
-                }
-            }
-
-            if (definition.getKind() == AsnTypeKind.ALIAS && !referenced.contains(candidate)) {
+                scored = candidate;
+            } else if (definition.getKind() == AsnTypeKind.ALIAS && !referenced.contains(candidate)) {
                 String innerTypeName = extractSequenceOfInnerType(definition.getAliasTarget());
                 AsnTypeDefinition innerDefinition =
                         innerTypeName != null ? registry.get(innerTypeName) : null;
-
                 if (innerDefinition != null && isStructured(innerDefinition.getKind())) {
-                    int fieldCount = fieldTreeResolver
-                            .resolveRoot(registry, innerTypeName, choiceSelections, taggingMode)
-                            .fields().size();
-
-                    if (fieldCount > bestFieldCount) {
-                        bestCandidate = innerTypeName;
-                        bestFieldCount = fieldCount;
-                    }
+                    scored = innerTypeName;
                 }
+            }
+            if (scored == null) {
+                continue;
+            }
+
+            int fieldCount = fieldTreeResolver
+                    .resolveRoot(registry, scored, choiceSelections, taggingMode)
+                    .fields().size();
+            int reach = countReachableTypes(references, scored);
+
+            if (reach > bestReach || (reach == bestReach && fieldCount > bestFieldCount)) {
+                bestCandidate = scored;
+                bestReach = reach;
+                bestFieldCount = fieldCount;
             }
         }
 
         if (bestCandidate != null && bestFieldCount > 0) {
-            log.debug("Selected root type '{}' ({} fields, unreferenced/wrapper target)",
-                    bestCandidate, bestFieldCount);
+            log.debug("Selected root type '{}' ({} fields, reaches {} types, unreferenced/wrapper target)",
+                    bestCandidate, bestFieldCount, bestReach);
             return bestCandidate;
         }
 
@@ -236,6 +248,51 @@ public class StructureParserService {
 
         Matcher matcher = SEQUENCE_OF_ALIAS.matcher(aliasTarget);
         return matcher.matches() ? matcher.group(1) : null;
+    }
+
+    /**
+     * Tip -> gövdesinde adı geçen diğer tipler. {@link #collectReferencedTypeNames}
+     * ile aynı sözcük ayrıştırmasını kullanır, tek farkı kenarları kaynağına göre
+     * ayrı tutmasıdır; böylece bir adayın geçişli olarak kaç tipe eriştiği
+     * hesaplanabilir. Kendine referans atlanır.
+     */
+    private Map<String, Set<String>> buildReferenceEdges(Map<String, AsnTypeDefinition> registry) {
+        Set<String> typeNames = registry.keySet();
+        Map<String, Set<String>> edges = new LinkedHashMap<>();
+
+        for (Map.Entry<String, AsnTypeDefinition> entry : registry.entrySet()) {
+            AsnTypeDefinition definition = entry.getValue();
+            String text = Objects.nonNull(definition.getRawBody())
+                    ? definition.getRawBody()
+                    : definition.getAliasTarget();
+            Set<String> targets = new HashSet<>();
+            if (Objects.nonNull(text)) {
+                for (String token : text.split(TYPE_TOKEN_DELIMITER)) {
+                    if (typeNames.contains(token) && !token.equals(entry.getKey())) {
+                        targets.add(token);
+                    }
+                }
+            }
+            edges.put(entry.getKey(), targets);
+        }
+        return edges;
+    }
+
+    /** {@code start} tipinden geçişli olarak erişilen tip sayısı (start hariç). */
+    private int countReachableTypes(Map<String, Set<String>> references, String start) {
+        Set<String> seen = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(start);
+
+        while (!queue.isEmpty()) {
+            String current = queue.poll();
+            for (String target : references.getOrDefault(current, Set.of())) {
+                if (!target.equals(start) && seen.add(target)) {
+                    queue.add(target);
+                }
+            }
+        }
+        return seen.size();
     }
 
     private Set<String> collectReferencedTypeNames(Map<String, AsnTypeDefinition> registry) {

@@ -125,6 +125,82 @@ class StructureParserServiceTest {
     }
 
     /**
+     * The module's record is a CHOICE of record types, and {@code resolveRoot}
+     * reports a CHOICE root as a SINGLE field (the selected alternative). Ranking
+     * candidates by field count therefore let any unreferenced helper SEQUENCE
+     * outvote the record itself: in LTE-R10 the helper container
+     * {@code ChangeOfServiceCondition} (22 fields, never referenced because the
+     * records use the plural {@code ChangeOfServiceConditions}) beat
+     * {@code CallEventRecord} (1 field), and generated files carried a bare
+     * service-data container instead of an {@code sGWRecord [78]} CDR.
+     *
+     * <p>Candidates are now ranked by how many types they transitively reach -
+     * the real record pulls in the module's whole type graph, a helper reaches
+     * only its own corner.</p>
+     */
+    @Test
+    void aRecordChoiceOutranksAnUnreferencedHelperWithMoreFields() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                CallEventRecord ::= CHOICE {
+                    sGWRecord [78] SGWRecord,
+                    pGWRecord [79] PGWRecord
+                }
+                SGWRecord ::= SET {
+                    recordType   [0] INTEGER,
+                    servedIMSI   [3] IMSI OPTIONAL,
+                    servedMSISDN [22] MSISDN OPTIONAL
+                }
+                PGWRecord ::= SET {
+                    recordType [0] INTEGER,
+                    servedIMSI [3] IMSI OPTIONAL
+                }
+                IMSI ::= OCTET STRING (SIZE(3..8))
+                MSISDN ::= OCTET STRING (SIZE(1..20))
+                ChangeOfServiceCondition ::= SEQUENCE {
+                    ratingGroup  [1] INTEGER OPTIONAL,
+                    resultCode   [3] INTEGER OPTIONAL,
+                    timeOfReport [14] OCTET STRING OPTIONAL,
+                    rATType      [15] INTEGER OPTIONAL
+                }
+                END
+                """);
+
+        assertNotNull(structure);
+        assertTrue(structure.isChoiceRoot(),
+                "the record CHOICE must win root selection over the unreferenced helper SEQUENCE");
+        assertEquals("CallEventRecord", structure.getChoiceTypeName());
+        assertEquals("sGWRecord", structure.getFields().get(0).getFieldName());
+    }
+
+    /**
+     * The counterpart guard: a lookup schema defines a small {@code Key} type and
+     * the real {@code Record}, and the record must still win. Reachability keeps
+     * this working - {@code DBRecord} pulls in the module's types, {@code DBKey}
+     * stands alone.
+     */
+    @Test
+    void aLookupKeyDoesNotOutrankTheRecordItReachesLessOf() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS ::= BEGIN
+                DBKey ::= SEQUENCE { msisdn [1] IMPLICIT IA5String }
+                DBDataRecord ::= SEQUENCE OF DBRecord
+                DBRecord ::= SEQUENCE {
+                    msisdn  [1] IMPLICIT IA5String,
+                    tariff  [2] IMPLICIT Tariff,
+                    balance [3] IMPLICIT INTEGER
+                }
+                Tariff ::= IA5String (SIZE(1..10))
+                END
+                """);
+
+        assertNotNull(structure);
+        assertEquals(3, structure.getFields().size(),
+                "DBRecord (reached through the SEQUENCE OF wrapper) is the record, not DBKey");
+        assertEquals("balance", structure.getFields().get(2).getFieldName());
+    }
+
+    /**
      * X.680 49.4: {@code SIZE(n)} fixes the length exactly while
      * {@code SIZE(a..b)} does not. The resolver used to read the constraint into
      * an Integer (taking a range's UPPER bound) and re-emit it as a fixed
