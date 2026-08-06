@@ -7,6 +7,7 @@ import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
 import org.junit.jupiter.api.Test;
 
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -134,5 +135,92 @@ class BerFieldTagInheritanceTest {
         // 61 { 64 { 5f 6d 01 42 } } - exactly the head of a real TAP3 file.
         assertEquals("610664045f6d0142",
                 encodeHex(structure, Map.of("batchControlInfo", Map.of("fileSequenceNumber", "B"))));
+    }
+
+    /**
+     * A collection writes its own tag once and the ELEMENT type's tag on every
+     * element: {@code VasInfo ::= [APPLICATION 7] SEQUENCE OF VasDefinition}
+     * with {@code VasDefinition ::= [APPLICATION 238] SEQUENCE} is
+     * {@code 67 { 7F 81 6E {...} }}. The resolved field only ever carried the
+     * collection's tag, so encodeRepeated fell back to a universal SEQUENCE per
+     * element - 44 nodes of one TAP-0309 record, and the self-check could not
+     * see it because encoder and verifier read the same field tree.
+     */
+    @Test
+    void everyElementOfACollectionCarriesItsOwnTypesTag() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Root ::= SEQUENCE {
+                    vasInfo VasInfo
+                }
+                VasInfo ::= [APPLICATION 7] SEQUENCE OF VasDefinition
+                VasDefinition ::= [APPLICATION 238] SEQUENCE {
+                    a [1] IMPLICIT INTEGER
+                }
+                END
+                """);
+
+        // 30 { 67 { 7f 81 6e { 81 01 07 }  7f 81 6e { 81 01 07 } } }
+        assertEquals("3010670e7f816e038101077f816e03810107",
+                encodeHex(structure, Map.of("vasInfo",
+                        List.of(Map.of("a", "7"), Map.of("a", "7")))));
+    }
+
+    /** The same for a collection of a tagged PRIMITIVE type. */
+    @Test
+    void aCollectionOfATaggedPrimitiveTagsEachElement() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Root ::= SEQUENCE {
+                    operatorSpecInformation OperatorSpecInfoList
+                }
+                OperatorSpecInfoList ::= [APPLICATION 162] SEQUENCE OF OperatorSpecInformation
+                OperatorSpecInformation ::= [APPLICATION 163] IA5String
+                END
+                """);
+
+        // 30 { 7f 81 22 { 5f 81 23 01 42 } }
+        assertEquals("30097f8122055f81230142",
+                encodeHex(structure, Map.of("operatorSpecInformation", List.of("B"))));
+    }
+
+    /** An element type that tags nothing keeps the universal wrapper it always had. */
+    @Test
+    void anUntaggedElementTypeKeepsItsUniversalWrapper() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Root ::= SEQUENCE {
+                    list PlainList
+                }
+                PlainList ::= [APPLICATION 7] SEQUENCE OF Plain
+                Plain ::= SEQUENCE {
+                    a [1] IMPLICIT INTEGER
+                }
+                END
+                """);
+
+        // 30 { 67 { 30 { 81 01 07 } } }
+        assertEquals("3007670530038101" + "07",
+                encodeHex(structure, Map.of("list", List.of(Map.of("a", "7")))));
+    }
+
+    /**
+     * {@code [UNIVERSAL 25] IMPLICIT IA5String} elements stay with
+     * universalTagOverride - the mechanism the MMTel capture verified, and the
+     * shape MMTel's own SEQUENCE OF GraphicStringImp uses.
+     */
+    @Test
+    void aUniversalClassElementAnnotationStaysWithTheOverride() {
+        AsnStructure structure = parser.parseFromContents("Mod", """
+                Mod DEFINITIONS IMPLICIT TAGS ::= BEGIN
+                Root ::= SEQUENCE {
+                    notes [3] IMPLICIT SEQUENCE OF GraphicStringImp
+                }
+                GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String
+                END
+                """);
+
+        // a3 { 19 01 42 } - GraphicString (25), written once, by the override.
+        assertEquals("3005a303190142", encodeHex(structure, Map.of("notes", List.of("B"))));
     }
 }

@@ -64,6 +64,19 @@ public class AsnField {
      */
     private boolean decoderHoistsImplicitChoice;
 
+    /**
+     * For a repeated field whose ELEMENT type declares a tag of its own, the
+     * element as a field: same children and type, not repeated, carrying that
+     * tag. Null otherwise, which leaves the element on its universal tag.
+     *
+     * <p>{@code VasInfo ::= [APPLICATION 7] SEQUENCE OF VasDefinition} puts
+     * {@code [APPLICATION 7]} on this field and {@code [APPLICATION 238]} on
+     * every element. The collection tag has always been carried here; the
+     * element tag had nowhere to live, so {@code encodeRepeated} fell back to a
+     * universal SEQUENCE per element.</p>
+     */
+    private AsnField elementTagCarrier;
+
     private Integer tagNumber;
 
     /** BER tag class from the [..] annotation; CONTEXT when only a number is given. */

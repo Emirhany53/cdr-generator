@@ -181,11 +181,21 @@ public class BerEncoderService {
         // once per list element instead of once for the field.
         boolean elementIsChoice = field.isChoice();
 
+        // The element type may declare a tag of its own - VasInfo ::=
+        // [APPLICATION 7] SEQUENCE OF VasDefinition writes [APPLICATION 7] once
+        // around the collection and VasDefinition's [APPLICATION 238] on every
+        // element. The carrier IS that element as a field, so the ordinary field
+        // path writes it and the universal fallback below stays for collections
+        // whose element type tags nothing.
+        AsnField elementTagCarrier = field.getElementTagCarrier();
+
         ByteArrayOutputStream elementBuffer = new ByteArrayOutputStream();
         for (Object element : elements) {
             byte[] inner;
             if (elementIsChoice) {
                 inner = encodeConstructed(field, element);
+            } else if (Objects.nonNull(elementTagCarrier)) {
+                inner = encodeField(elementTagCarrier, element);
             } else if (isConstructed(field)) {
                 // Every element of a SEQUENCE OF <SEQUENCE> must be its own
                 // self-delimiting TLV, otherwise the elements merge together.

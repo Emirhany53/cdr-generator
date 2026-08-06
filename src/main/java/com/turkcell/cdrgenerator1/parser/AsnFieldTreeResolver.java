@@ -450,7 +450,7 @@ public class AsnFieldTreeResolver {
         // a synthetic SEQUENCE. wrapInTlv() applies its own !isRepeated() guard
         // when deciding how to wrap the field's OUTER collection tag, so this
         // flag no longer needs to pre-filter that case here.
-        return AsnField.builder()
+        AsnField resolved = AsnField.builder()
                 .fieldName(field.getFieldName())
                 .fieldType(fieldType)
                 .optional(field.isOptional())
@@ -464,6 +464,11 @@ public class AsnFieldTreeResolver {
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
+        if (repeated) {
+            resolved.setElementTagCarrier(
+                    buildElementTagCarrier(registry, resolved, field.getFieldType(), taggingMode));
+        }
+        return resolved;
     }
 
     /**
@@ -657,7 +662,7 @@ public class AsnFieldTreeResolver {
 
             boolean choiceElement = isChoiceType(registry, innerType);
             boolean setElement = isSetType(registry, innerType);
-            fields.add(AsnField.builder()
+            AsnField resolved = AsnField.builder()
                     .fieldName(parsed.getFieldName())
                     .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
@@ -670,7 +675,12 @@ public class AsnFieldTreeResolver {
                     .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
-                    .build());
+                    .build();
+            if (repeated) {
+                resolved.setElementTagCarrier(
+                        buildElementTagCarrier(registry, resolved, parsed.getFieldType(), taggingMode));
+            }
+            fields.add(resolved);
         }
         return fields;
     }
@@ -956,6 +966,87 @@ public class AsnFieldTreeResolver {
             current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
         }
         return false;
+    }
+
+    /**
+     * The ELEMENT type of a collection, following alias chains the same way
+     * {@link #isChoiceType} does: {@code VasInfo ::= [APPLICATION 7] SEQUENCE OF
+     * VasDefinition} answers {@code VasDefinition}. Null when the type is not a
+     * collection.
+     *
+     * <p>The field itself keeps the COLLECTION's tag ({@code [APPLICATION 7]}),
+     * so the element type's own tag has nowhere to go unless it is looked up
+     * separately - which is what {@link #buildElementTagCarrier} does.</p>
+     */
+    private String resolveElementTypeName(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripConstraint(typeName);
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            if (isRepeatedExpression(current)) {
+                return extractRepeatedInnerType(current);
+            }
+            AsnTypeDefinition def = registry.get(current);
+            if (def == null || def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+                return null;
+            }
+            current = stripConstraint(stripAliasTag(def.getAliasTarget()));
+        }
+        return null;
+    }
+
+    /**
+     * The tag each ELEMENT of a collection carries, when its type declares one.
+     *
+     * <p>{@code VasInfo ::= [APPLICATION 7] SEQUENCE OF VasDefinition} with
+     * {@code VasDefinition ::= [APPLICATION 238] SEQUENCE {...}} encodes as
+     * {@code 67 { 7F 81 6E {...} 7F 81 6E {...} }}: the collection's tag once,
+     * the element type's tag on every element. {@code encodeRepeated} wrote a
+     * universal SEQUENCE there instead, because the resolved field only ever
+     * held the collection's tag. 129 declarations across 37 modules are shaped
+     * this way, 91 of them in the TAP family, where it flattened 44 nodes of a
+     * single record.</p>
+     *
+     * <p>Carried as a FIELD rather than as a loose tag so the encoder writes it
+     * through the same {@code wrapInTlv} and the verifier walks it through the
+     * same {@code walkField} as any other tagged field - the element is that
+     * field, minus the repetition. UNIVERSAL-class annotations are excluded for
+     * the same reason as everywhere else: {@code [UNIVERSAL 25] IMPLICIT
+     * IA5String} belongs to {@code universalTagOverride}, which already writes
+     * it correctly on every element, and which the MMTel capture verified.</p>
+     */
+    private AsnField buildElementTagCarrier(Map<String, AsnTypeDefinition> registry, AsnField field,
+                                            String innerType, AsnTaggingMode taggingMode) {
+        String elementType = resolveElementTypeName(registry, innerType);
+        if (elementType == null) {
+            return null;
+        }
+
+        AsnTypeDefinition definition = registry.get(elementType);
+        if (definition == null) {
+            return null;
+        }
+        String annotation = definition.getKind() == AsnTypeKind.ALIAS
+                ? definition.getAliasTarget()
+                : definition.getTagPrefix();
+        EffectiveTag tag = readLeadingTag(annotation, taggingMode);
+        if (tag == null || tag.tagClass() == BerTagClass.UNIVERSAL) {
+            return null;
+        }
+
+        return AsnField.builder()
+                .fieldName(field.getFieldName())
+                .fieldType(field.getFieldType())
+                .optional(field.isOptional())
+                .repeated(false)
+                .choice(field.isChoice())
+                .set(field.isSet())
+                .decoderHoistsImplicitChoice(field.isDecoderHoistsImplicitChoice())
+                .tagNumber(tag.tagNumber())
+                .tagClass(tag.tagClass())
+                .explicit(tag.explicit())
+                .universalTagOverride(field.getUniversalTagOverride())
+                .children(field.getChildren())
+                .build();
     }
 
     /**

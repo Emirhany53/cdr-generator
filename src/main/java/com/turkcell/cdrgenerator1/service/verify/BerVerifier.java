@@ -187,6 +187,14 @@ public class BerVerifier {
             walkAlternative(field, element, context);
             return;
         }
+        // An element whose TYPE declares a tag carries it, and the carrier is the
+        // field the encoder wrote it with - so it is walked as an ordinary
+        // tagged field, tag checks included. Without this the element's tag went
+        // unchecked here just as it went unwritten there.
+        if (Objects.nonNull(field.getElementTagCarrier())) {
+            walkPlain(field.getElementTagCarrier(), element, context);
+            return;
+        }
         offer(element, field, false, false, context);
         if (hasChildren(field)) {
             matchChildren(field.getChildren(), element, context);
