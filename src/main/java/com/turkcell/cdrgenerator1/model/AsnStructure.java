@@ -46,4 +46,16 @@ public class AsnStructure {
      * root is not a CHOICE.
      */
     private List<String> choiceAlternatives;
+
+    /**
+     * Set when the root TYPE tags itself - {@code Row ::= [0] IMPLICIT SEQUENCE},
+     * {@code TransferBatch ::= [APPLICATION 1] SEQUENCE}. The record is then that
+     * tag's TLV rather than a universal SEQUENCE/SET, so the encoder and the
+     * self-check both write and read the record through this one field, whose
+     * children are {@link #fields}.
+     *
+     * <p>Null for every module whose root type carries no tag of its own, which
+     * is where it leaves the encoding untouched.</p>
+     */
+    private AsnField rootTagCarrier;
 }

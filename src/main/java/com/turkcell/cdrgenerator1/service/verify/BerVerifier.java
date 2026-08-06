@@ -53,11 +53,17 @@ public class BerVerifier {
 
     public BerVerificationResult verify(AsnStructure structure, byte[] data) {
         return verify(structure.getStructureName(), structure.getFields(),
-                structure.isChoiceRoot(), structure.isSetRoot(), data);
+                structure.isChoiceRoot(), structure.isSetRoot(), structure.getRootTagCarrier(), data);
     }
 
     public BerVerificationResult verify(String structureName, List<AsnField> fields,
                                         boolean choiceRoot, boolean setRoot, byte[] data) {
+        return verify(structureName, fields, choiceRoot, setRoot, null, data);
+    }
+
+    public BerVerificationResult verify(String structureName, List<AsnField> fields,
+                                        boolean choiceRoot, boolean setRoot,
+                                        AsnField rootTagCarrier, byte[] data) {
         VerificationContext context = new VerificationContext(structureName, data);
         if (!properties.isEnabled()) {
             return new BerVerificationResult(structureName, 0, List.of());
@@ -74,7 +80,8 @@ public class BerVerifier {
 
         for (int index = 0; index < records.size(); index++) {
             context.startRecord(index);
-            walkRecord(fields, choiceRoot, setRoot, structureName, records.get(index), context);
+            walkRecord(fields, choiceRoot, setRoot, rootTagCarrier, structureName,
+                    records.get(index), context);
         }
 
         BerVerificationResult result =
@@ -84,15 +91,24 @@ public class BerVerifier {
     }
 
     /**
-     * Mirrors {@code BerEncoderService.encodeRecord}: a CHOICE root IS its
-     * selected alternative and carries no wrapper of its own, while any other
-     * root is one universal SEQUENCE (or SET) holding the top-level fields.
+     * Mirrors {@code BerEncoderService.encodeRecord}: a root type that tags
+     * itself IS that tag's TLV, a CHOICE root IS its selected alternative and
+     * carries no wrapper of its own, and any other root is one universal
+     * SEQUENCE (or SET) holding the top-level fields.
      */
     private void walkRecord(List<AsnField> fields, boolean choiceRoot, boolean setRoot,
-                            String structureName, TlvNode record, VerificationContext context) {
+                            AsnField rootTagCarrier, String structureName, TlvNode record,
+                            VerificationContext context) {
         if (Objects.isNull(fields) || fields.isEmpty()) {
             context.report(FindingSeverity.ERROR, WALKER, context.currentPath(), record.start(),
                     "Structure resolves to no fields, so nothing can be checked");
+            return;
+        }
+        // A root type that tags itself: the record IS the carrier's TLV, so it
+        // is walked as an ordinary tagged field - the same field the encoder
+        // wrote it with, which is what keeps the two in step.
+        if (Objects.nonNull(rootTagCarrier)) {
+            walkField(rootTagCarrier, record, context);
             return;
         }
         if (choiceRoot) {

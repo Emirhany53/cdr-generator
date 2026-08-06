@@ -73,8 +73,23 @@ public class AsnFieldTreeResolver {
             "(SEQUENCE|SET|OF)$", Pattern.CASE_INSENSITIVE);
     private static final String ENTRY_JOIN_SEPARATOR = " ";
 
-    /** Root resolution result: the root type's kind plus its resolved fields. */
-    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
+    /**
+     * Root resolution result: the root type's kind, its resolved fields, and -
+     * when the root type tags ITSELF ({@code Row ::= [0] IMPLICIT SEQUENCE},
+     * {@code TransferBatch ::= [APPLICATION 1] SEQUENCE}) - a carrier field
+     * holding that tag with the resolved fields as its children.
+     *
+     * <p>The carrier exists so the record's own tag travels as an ordinary
+     * {@link AsnField}: the encoder writes it through the same {@code wrapInTlv}
+     * that handles every other tagged field, and the verifier walks it through
+     * the same {@code walkField}. Null when the root type carries no tag, which
+     * leaves every such module encoded exactly as before.</p>
+     */
+    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields, AsnField rootTagCarrier) {
+
+        public ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
+            this(kind, fields, null);
+        }
     }
 
     // ---------------------------------------------------------------------
@@ -126,13 +141,43 @@ public class AsnFieldTreeResolver {
         if (current.getKind() == AsnTypeKind.CHOICE) {
             AsnField alternative = resolveChoiceRootAlternative(registry, resolvedName, current.getRawBody(),
                     selections, new HashSet<>(), 0, cache, taggingMode);
-            return new ResolvedRoot(AsnTypeKind.CHOICE,
-                    alternative == null ? List.of() : List.of(alternative));
+            List<AsnField> alternatives = alternative == null ? List.of() : List.of(alternative);
+            return new ResolvedRoot(AsnTypeKind.CHOICE, alternatives,
+                    buildRootTagCarrier(current, resolvedName, alternatives, true, taggingMode));
         }
 
         List<AsnField> fields = resolveByTypeName(registry, resolvedName, selections, new HashSet<>(), 0,
                 cache, taggingMode);
-        return new ResolvedRoot(current.getKind(), fields);
+        return new ResolvedRoot(current.getKind(), fields,
+                buildRootTagCarrier(current, resolvedName, fields, false, taggingMode));
+    }
+
+    /**
+     * Builds the field that carries a root type's own tag, or null when the type
+     * declares none.
+     *
+     * <p>{@code set} decides which universal tag an EXPLICIT wrapper holds
+     * (X.690 8.11), and {@code choice} makes the encoder treat the tag as
+     * EXPLICIT whatever the module's default, per X.680 30.6.</p>
+     */
+    private AsnField buildRootTagCarrier(AsnTypeDefinition definition, String typeName,
+                                         List<AsnField> fields, boolean choice,
+                                         AsnTaggingMode taggingMode) {
+        EffectiveTag tag = readLeadingTag(definition.getTagPrefix(), taggingMode);
+        if (tag == null || fields.isEmpty()) {
+            return null;
+        }
+
+        return AsnField.builder()
+                .fieldName(typeName)
+                .fieldType(typeName)
+                .tagNumber(tag.tagNumber())
+                .tagClass(tag.tagClass())
+                .explicit(tag.explicit())
+                .choice(choice)
+                .set(definition.getKind() == AsnTypeKind.SET)
+                .children(fields)
+                .build();
     }
 
     /** Root-level CHOICE metadata: the CHOICE type's own name plus its alternative field names, in declaration order. */
@@ -607,24 +652,45 @@ public class AsnFieldTreeResolver {
             return new EffectiveTag(field.getTagNumber(), field.getTagClass(), field.isExplicit());
         }
 
-        AsnTypeDefinition aliasDef = registry.get(innerType);
-        if (aliasDef == null || aliasDef.getKind() != AsnTypeKind.ALIAS
-                || aliasDef.getAliasTarget() == null) {
+        AsnTypeDefinition definition = registry.get(innerType);
+        if (definition == null) {
             return new EffectiveTag(null, field.getTagClass(), field.isExplicit());
         }
 
-        Matcher aliasTag = ALIAS_TAG.matcher(aliasDef.getAliasTarget());
-        if (!aliasTag.find()) {
-            return new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+        // The annotation lives in aliasTarget for an ALIAS and in tagPrefix for a
+        // structured type - "Sender ::= [APPLICATION 196] PlmnId" and
+        // "TransferBatch ::= [APPLICATION 1] SEQUENCE {...}" tag their type the
+        // same way, and an alternative naming either of them inherits that tag.
+        String annotation = definition.getKind() == AsnTypeKind.ALIAS
+                ? definition.getAliasTarget()
+                : definition.getTagPrefix();
+        EffectiveTag inherited = readLeadingTag(annotation, taggingMode);
+        return inherited != null
+                ? inherited
+                : new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+    }
+
+    /**
+     * Reads a leading {@code [class n] IMPLICIT|EXPLICIT} annotation. Returns
+     * null when there is none. The written keyword wins; without one the
+     * module's tagging mode decides (X.680 31.2.7).
+     */
+    private EffectiveTag readLeadingTag(String annotation, AsnTaggingMode taggingMode) {
+        if (annotation == null || annotation.isBlank()) {
+            return null;
+        }
+        Matcher tag = ALIAS_TAG.matcher(annotation);
+        if (!tag.find()) {
+            return null;
         }
 
-        BerTagClass tagClass = aliasTag.group(1) != null
-                ? BerTagClass.valueOf(aliasTag.group(1))
+        BerTagClass tagClass = tag.group(1) != null
+                ? BerTagClass.valueOf(tag.group(1))
                 : BerTagClass.CONTEXT;
-        boolean explicit = aliasTag.group(3) != null
-                ? aliasTag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
+        boolean explicit = tag.group(3) != null
+                ? tag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
                 : taggingMode == AsnTaggingMode.EXPLICIT;
-        return new EffectiveTag(Integer.valueOf(aliasTag.group(2)), tagClass, explicit);
+        return new EffectiveTag(Integer.valueOf(tag.group(2)), tagClass, explicit);
     }
 
     private record EffectiveTag(Integer tagNumber, BerTagClass tagClass, boolean explicit) {

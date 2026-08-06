@@ -144,6 +144,7 @@ public class StructureParserService {
                 .setRoot(root.kind() == AsnTypeKind.SET)
                 .choiceTypeName(choiceInfo != null ? choiceInfo.choiceTypeName() : null)
                 .choiceAlternatives(choiceInfo != null ? choiceInfo.alternativeNames() : null)
+                .rootTagCarrier(root.rootTagCarrier())
                 .build();
     }
 

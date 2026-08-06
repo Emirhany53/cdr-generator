@@ -76,6 +76,18 @@ public class BerEncoderService {
         Objects.requireNonNull(structure, "structure must not be null");
         Objects.requireNonNull(record, "record must not be null");
 
+        // A root type that tags itself IS that tag's TLV. The carrier holds the
+        // tag and the record's fields as its children, so the ordinary field
+        // path writes it - IMPLICIT replaces the universal SEQUENCE/SET tag,
+        // EXPLICIT keeps it and wraps, exactly as for any other tagged field.
+        AsnField rootTagCarrier = structure.getRootTagCarrier();
+        if (Objects.nonNull(rootTagCarrier)) {
+            byte[] encoded = encodeField(rootTagCarrier, record);
+            log.debug("Encoded record tagged by its own type ('{}') into {} BER bytes",
+                    rootTagCarrier.getFieldName(), encoded.length);
+            return encoded;
+        }
+
         if (!structure.isChoiceRoot()) {
             return encodeRecord(structure.getFields(), record, structure.isSetRoot());
         }

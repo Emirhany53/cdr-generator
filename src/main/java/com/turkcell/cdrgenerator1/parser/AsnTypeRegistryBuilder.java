@@ -123,6 +123,17 @@ public class AsnTypeRegistryBuilder {
                     .typeName(typeName)
                     .kind(kind)
                     .rawBody(body)
+                    // Everything between "::=" and the kind keyword - the type's
+                    // own tag annotation, when it has one. Dropping it here left
+                    // "TransferBatch ::= [APPLICATION 1] SEQUENCE" indistinguishable
+                    // from an untagged SEQUENCE for every stage downstream.
+                    //
+                    // Kept VERBATIM, trailing whitespace included: the reader's
+                    // pattern ends the IMPLICIT/EXPLICIT keyword on whitespace, so
+                    // a trimmed "[0] IMPLICIT" loses its keyword and falls back to
+                    // the module default - which turned every "[0] IMPLICIT
+                    // SEQUENCE" record into an EXPLICIT double wrapper.
+                    .tagPrefix(statement.substring(0, kindMatcher.start()))
                     .build();
         }
 
