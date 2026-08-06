@@ -68,7 +68,7 @@ class CdrStructureControllerTest {
                 new UserProvidedValueSource(),
                 new AiValueSource(
                         new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),
-                        new EnumValueResolver()),
+                        new EnumValueResolver(), aiProperties),
                 new RandomValueSource(new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         CdrFileWriterService writer = new CdrFileWriterService();

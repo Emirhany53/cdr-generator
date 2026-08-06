@@ -49,6 +49,10 @@ public class AiConfigProperties {
     private Gemini gemini = new Gemini();
     private List<FieldRule> fieldRules = new ArrayList<>();
 
+    /** octet-string-content degerleri. */
+    private static final String TEXT_CONTENT = "text";
+    private static final String BINARY_CONTENT = "binary";
+
     @Data
     public static class Gemini {
         private String baseUrl;
@@ -64,6 +68,30 @@ public class AiConfigProperties {
         private String description;
         private String pattern;
         private List<String> examples = new ArrayList<>();
+        /**
+         * Bu kuralin dustugu bir OCTET STRING alanin icerigi ne tasir:
+         * {@code text} ise deger yazdirilabilir ASCII metindir ve baytlari o
+         * metnin ASCII karsiligidir; {@code binary} ise deger zaten paketlenmis
+         * baytlarin hex dokumudur. Bos birakilirsa uretici bicime bakip karar
+         * verir (sigiyorsa ASCII, aksi halde hex).
+         *
+         * <p>Ayrimi konfigurasyona tasiyan sey su: EMM'in kabul ettigi MMTel
+         * yakalamasinda octet-string alanlarin cogu ASCII metin tasiyor
+         * (userLocationInformation "81821600d0eaef0d", serviceContextID
+         * "10.32275@3gpp.org"), ama hepsi degil - bu yuzden tahmin yerine alan
+         * bazinda soylenebilmeli.</p>
+         */
+        private String octetStringContent;
+
+        /** OCTET STRING icerigi ASCII metin mi? */
+        public boolean isTextContent() {
+            return TEXT_CONTENT.equalsIgnoreCase(octetStringContent);
+        }
+
+        /** OCTET STRING icerigi paketlenmis ikili veri (hex dokumu) mu? */
+        public boolean isBinaryContent() {
+            return BINARY_CONTENT.equalsIgnoreCase(octetStringContent);
+        }
     }
 
     /**

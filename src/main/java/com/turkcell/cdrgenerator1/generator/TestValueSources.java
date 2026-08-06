@@ -32,7 +32,7 @@ final class TestValueSources {
 
         return List.of(
                 new UserProvidedValueSource(),
-                new AiValueSource(validator, new EnumValueResolver()),
+                new AiValueSource(validator, new EnumValueResolver(), properties),
                 new RandomValueSource(generator));
     }
 }

@@ -125,6 +125,7 @@ class ShippedFieldRulesRoundTripTest {
             rule.setDescription((String) entry.get("description"));
             rule.setPattern((String) entry.get("pattern"));
             rule.setExamples((List<String>) entry.get("examples"));
+            rule.setOctetStringContent((String) entry.get("octet-string-content"));
             rules.add(rule);
         }
         return rules;

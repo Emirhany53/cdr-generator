@@ -90,7 +90,7 @@ class BerGeneratorControllerTest {
                 new UserProvidedValueSource(),
                 new AiValueSource(
                         new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),
-                        new EnumValueResolver()),
+                        new EnumValueResolver(), aiProperties),
                 new RandomValueSource(new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));
 
         BerEncoderService encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));

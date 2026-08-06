@@ -69,6 +69,8 @@ public class FieldValueGenerator {
     /** OCTET STRING hex dump uretiminde her bayt 2 hex karakter olmali. */
     private static final int HEX_CHARS_PER_BYTE = 2;
     private static final String HEX_BYTE_FORMAT = "%02X";
+    private static final char HEX_PAD_CHARACTER = '0';
+    private static final char TEXT_PAD_CHARACTER = ' ';
     private static final int ASCII_MIN = 0x20;
     private static final int ASCII_MAX = 0x7E;
     private static final int BITS_PER_BYTE = 8;
@@ -342,10 +344,51 @@ public class FieldValueGenerator {
         Optional<Integer> declaredBytes = asnSizeExtractor.extractMaxLength(field.getFieldType());
         boolean asciiFits = isPrintableAscii(example)
                 && (declaredBytes.isEmpty() || example.length() <= declaredBytes.get());
-        if (asciiFits) {
-            return Optional.of(toAsciiHex(example));
+
+        // Kural icerigi acikca soyluyorsa ona uyulur - AI yolu (AiValueSource)
+        // ayni ayari okur, boylece iki yol ayni alani ayni bicimde doldurur.
+        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+        if (rule.isPresent() && rule.get().isBinaryContent()) {
+            return isHexLiteral(example) ? Optional.of(padHexToFixedLength(field, example)) : Optional.empty();
         }
-        return isHexLiteral(example) ? Optional.of(example) : Optional.empty();
+        if (rule.isPresent() && rule.get().isTextContent()) {
+            return asciiFits ? Optional.of(toAsciiHex(padTextToFixedLength(field, example))) : Optional.empty();
+        }
+
+        // Ayar yoksa bicime bakilir: sigan yazdirilabilir bir deger ASCII olarak
+        // yazilir (referans yakalamanin gosterdigi sekil), aksi halde hex dokumu.
+        if (asciiFits) {
+            return Optional.of(toAsciiHex(padTextToFixedLength(field, example)));
+        }
+        return isHexLiteral(example) ? Optional.of(padHexToFixedLength(field, example)) : Optional.empty();
+    }
+
+    /**
+     * {@code SIZE(n)} TAM uzunluk bildiren bir OCTET STRING'de deger tam n bayt
+     * olmalidir. Kural ornekleri alan bazinda degil kural bazinda yazildigi icin
+     * dogal olarak kisa kalabilir: {@code cellId} kurali 2-3 baytlik ornekler
+     * verir ama {@code locationRoutNum OCTET STRING (SIZE (5))} tam 5 bayt ister.
+     * Encoder yalnizca STRING alanlari dolduruyor, OCTET STRING'leri degil; bu
+     * yuzden eksik kalan bayt burada tamamlanir.
+     */
+    private String padHexToFixedLength(AsnField field, String hex) {
+        Optional<Integer> fixedBytes = asnSizeExtractor.extractFixedLength(field.getFieldType());
+        if (fixedBytes.isEmpty()) {
+            return hex;
+        }
+        int targetChars = fixedBytes.get() * HEX_CHARS_PER_BYTE;
+        return hex.length() >= targetChars
+                ? hex
+                : hex + String.valueOf(HEX_PAD_CHARACTER).repeat(targetChars - hex.length());
+    }
+
+    /** Metin icerikli sabit boyutlu alanda bosluk dolgusu - encoder'in STRING davranisiyla ayni. */
+    private String padTextToFixedLength(AsnField field, String text) {
+        Optional<Integer> fixedBytes = asnSizeExtractor.extractFixedLength(field.getFieldType());
+        if (fixedBytes.isEmpty() || text.length() >= fixedBytes.get()) {
+            return text;
+        }
+        return text + String.valueOf(TEXT_PAD_CHARACTER).repeat(fixedBytes.get() - text.length());
     }
 
     private String toAsciiHex(String value) {

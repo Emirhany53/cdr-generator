@@ -125,6 +125,7 @@ app:
           description: "Erisim noktasi adi (APN)"
           pattern: "^[a-zA-Z0-9.]+$"
           examples: [ "internet", "mms.turkcell.com.tr", "ims" ]
+          octet-string-content: text
 
         - name: pdpType
           match: [ "pdptype" ]
@@ -133,10 +134,11 @@ app:
           examples: [ "IP", "IPV6" ]
 
         - name: cellId
-          match: [ "cellid", "cellidentifier", "locationarea", "trackingarea" ]
-          description: "Sabit uzunlukta sifir dolgulu hucre veya alan kimligi"
-          pattern: "^[0-9]{4,10}$"
-          examples: [ "41253", "00000" ]
+          match: [ "cellid", "cellidentifier", "locationarea", "trackingarea", "servicearea", "locationrout" ]
+          description: "Sabit uzunlukta hucre veya alan kimligi (binary hex formatinda)"
+          pattern: "^[0-9a-fA-F]{4,20}$"
+          examples: [ "4125", "0001", "12345a" ]
+          octet-string-content: binary
 
         - name: latitude
           match: [ "latitude" ]
@@ -161,6 +163,7 @@ app:
           description: "Sunucu veya alan adi"
           pattern: "^[a-zA-Z0-9.-]+$"
           examples: [ "host01.turkcell.com.tr", "ims.mnc001.mcc286.3gppnetwork.org" ]
+          octet-string-content: text
 
         - name: booleanFlag
           match: [ "flag", "realmoneyflag", "isvowifi", "isvideo", "welcomestatus" ]
@@ -211,6 +214,7 @@ app:
           description: "IMS Charging Identifier (ICID): <dugum>.<realm>-<rakamlar>"
           pattern: "^[A-Za-z0-9._-]+$"
           examples: [ "GBTEST1.ims.mnc001.mcc286.3gppnetwork.org-061481617640921112624" ]
+          octet-string-content: text
 
         - name: accessNetworkInformation
           match: [ "accessnetworkinformation", "lastknownpani" ]
@@ -224,12 +228,14 @@ app:
           description: "Uretici dugum kimligi"
           pattern: "^[A-Za-z0-9_-]+$"
           examples: [ "vIMS_Mobile_TEST-01-1001", "vIMS_Mobile_TEST-13-3033" ]
+          octet-string-content: text
 
         - name: networkIdentifier
           match: [ "visitednetworkidentifier", "originatingioi", "terminatingioi" ]
           description: "IMS ag alan adi (3GPP realm)"
           pattern: "^[a-z0-9.]+$"
           examples: [ "ims.mnc001.mcc286.3gppnetwork.org" ]
+          octet-string-content: text
 
         - name: serviceContextId
           match: [ "servicecontextid" ]
@@ -248,13 +254,20 @@ app:
           description: "SIP User-Agent basligi"
           pattern: "^[A-Za-z0-9/. _-]+$"
           examples: [ "VoLTE/WFC UA" ]
+          octet-string-content: text
 
+        # Referans yakalamada bu alanin baytlari '3831383231...'H, yani
+        # "81821600d0eaef0d" metninin ASCII karsiligi - onaltilik GORUNEN ama
+        # metin olarak tasinan bir kimlik. EMM'den gecen P5 de boyle uretmisti.
         - name: userLocationInformation
           match: [ "userlocationinformation" ]
-          description: "ECGI/CGI: kucuk harf onaltilik metin (16 hane)"
+          description: "ECGI/CGI: kucuk harf onaltilik METIN (16 hane)"
           pattern: "^[0-9a-f]{12,16}$"
           examples: [ "81821600d0c11e0c", "81821600d0eaef0d" ]
+          octet-string-content: text
 
+        # cgiInformation semada IA5String'dir, OCTET STRING degil - bu yuzden
+        # octet-string-content ayarinin burada bir karsiligi olmaz.
         - name: cgiInformation
           match: [ "cgiinformation" ]
           description: "CGI/ECGI onaltilik metin"

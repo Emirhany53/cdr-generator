@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.generator.source;
 
+import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.generator.EnumValueResolver;
 import com.turkcell.cdrgenerator1.generator.validation.FieldValueValidator;
 import com.turkcell.cdrgenerator1.model.AsnField;
@@ -39,6 +40,7 @@ public class AiValueSource implements ValueSource {
 
     private final FieldValueValidator fieldValueValidator;
     private final EnumValueResolver enumValueResolver;
+    private final AiConfigProperties aiConfigProperties;
 
     @Override
     public int getOrder() {
@@ -120,10 +122,32 @@ public class AiValueSource implements ValueSource {
      * icin isim->sayi, BOOLEAN icin true/false->1/0. Diger tipler degismeden geçer.
      */
     private Optional<String> normalize(AsnField field, String candidate) {
-        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) == BerPrimitiveType.BOOLEAN) {
+        BerPrimitiveType type = BerPrimitiveType.fromTypeExpression(field.getFieldType());
+        if (type == BerPrimitiveType.BOOLEAN) {
             return enumValueResolver.resolveBoolean(candidate);
         }
+        if (type == BerPrimitiveType.OCTET_STRING) {
+            Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+            if (rule.isPresent() && rule.get().isTextContent()) {
+                return Optional.of(encodeAsciiHex(candidate));
+            }
+            // Bir OCTET STRING hicbir zaman isimli-sayi tasimaz, bu yuzden
+            // resolveToNumber burada yalnizca ZARAR verirdi: sayisal olmayan her
+            // degere Optional.empty() dondugu icin, AI'in urettigi gecerli ama
+            // icinde a-f gecen bir hex dokumu ("12345a") sessizce dusuyor ve alan
+            // rastgeleye kaliyordu. Deger oldugu gibi birakilir; bicimsel karari
+            // zaten FieldValueValidator veriyor.
+            return Optional.of(candidate);
+        }
         return enumValueResolver.resolveToNumber(field.getFieldType(), candidate);
+    }
+
+    private String encodeAsciiHex(String text) {
+        StringBuilder hex = new StringBuilder(text.length() * 2);
+        for (char c : text.toCharArray()) {
+            hex.append(String.format("%02x", (int) c));
+        }
+        return hex.toString();
     }
 
     /**

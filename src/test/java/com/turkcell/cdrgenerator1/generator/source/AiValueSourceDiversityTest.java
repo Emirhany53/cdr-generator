@@ -28,7 +28,7 @@ class AiValueSourceDiversityTest {
     private final AiValueSource source = new AiValueSource(
             new FieldValueValidator(new TbcdCodec(), new AiConfigProperties(),
                     new AsnSizeExtractor(), new BcdTimestampFactory()),
-            new EnumValueResolver());
+            new EnumValueResolver(), new AiConfigProperties());
 
     private AsnField leaf(String name, String type) {
         return AsnField.builder().fieldName(name).fieldType(type)

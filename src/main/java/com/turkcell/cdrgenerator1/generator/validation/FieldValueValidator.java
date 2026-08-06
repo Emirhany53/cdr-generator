@@ -73,12 +73,12 @@ public class FieldValueValidator {
             return false;
         }
         if (!matchesPrimitiveType(field, value)) {
-            log.warn("Yapay zeka degeri alan tipiyle uyumsuz. Alan: {}, Tip: {}, Deger: {}",
+            log.debug("Yapay zeka degeri alan tipiyle uyumsuz. Alan: {}, Tip: {}, Deger: {}",
                     field.getFieldName(), field.getFieldType(), value);
             return false;
         }
         if (exceedsMaxLength(field, value)) {
-            log.warn("Yapay zeka degeri azami uzunlugu asti. Alan: {}, Deger: {}",
+            log.debug("Yapay zeka degeri azami uzunlugu asti. Alan: {}, Deger: {}",
                     field.getFieldName(), value);
             return false;
         }
@@ -288,7 +288,7 @@ public class FieldValueValidator {
             }
         }
 
-        log.warn("Yapay zeka degeri kurala uymadi, reddedildi. Alan: {}, Deger: {}, Regex: {}",
+        log.debug("Yapay zeka degeri kurala uymadi, reddedildi. Alan: {}, Deger: {}, Regex: {}",
                 field.getFieldName(), value, pattern);
         return false;
     }

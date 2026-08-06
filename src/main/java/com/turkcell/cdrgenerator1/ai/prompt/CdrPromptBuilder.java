@@ -126,6 +126,12 @@ public class CdrPromptBuilder implements PromptBuilder {
         if (!isOctetString(field.getFieldType())) {
             return;
         }
+
+        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+        if (rule.isPresent() && rule.get().isTextContent()) {
+            return; // Text olarak konfigure edilmis alanlar ASCII-hex'e arka planda cevrilir
+        }
+
         prompt.append(RULE_SEPARATOR)
                 .append("bu alan OCTET STRING'dir, deger SADECE hex karakterlerden ")
                 .append("(0-9, A-F) olusmali, cift sayida karakter olmali");
