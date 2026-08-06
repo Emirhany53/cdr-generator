@@ -40,7 +40,8 @@ class SetOrderingRuleTest {
 
         assertEquals(1, context.findings().size());
         BerFinding finding = context.findings().get(0);
-        assertEquals(FindingSeverity.ERROR, finding.severity());
+        assertEquals(FindingSeverity.WARNING, finding.severity(),
+                "BER does not order SET components (X.690 8.11.2); only DER does");
         assertTrue(finding.message().contains("ascending"));
     }
 
@@ -108,7 +109,8 @@ class SetOrderingRuleTest {
 
         assertEquals(1, context.findings().size());
         BerFinding finding = context.findings().get(0);
-        assertEquals(FindingSeverity.ERROR, finding.severity());
+        assertEquals(FindingSeverity.WARNING, finding.severity(),
+                "BER does not order SET components (X.690 8.11.2); only DER does");
         assertTrue(finding.message().contains("ascending"));
     }
 

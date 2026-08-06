@@ -284,8 +284,9 @@ public class BerVerifier {
     /**
      * Pairs the children of a fixed body with the fields that could have
      * produced them, by tag. Matching by tag rather than by position is what
-     * makes this survive a SET, whose components the encoder sorts into
-     * ascending tag order regardless of declaration order.
+     * lets a body arrive with its OPTIONAL members omitted, or - in a SET, whose
+     * component order X.690 8.11.2 leaves open - in an order other than the one
+     * the fields are declared in.
      */
     private void matchChildren(List<AsnField> fields, TlvNode parent, VerificationContext context) {
         List<AsnField> remaining = new ArrayList<>(fields);
@@ -341,9 +342,7 @@ public class BerVerifier {
             if (Objects.nonNull(candidate.getTagNumber())) {
                 continue;
             }
-            Integer expectedTag = untaggedUniversalTag(candidate);
-            if (Objects.nonNull(expectedTag) && child.tagClass() == BerTagClass.UNIVERSAL
-                    && child.tagNumber() == expectedTag) {
+            if (untaggedFieldWouldProduce(candidate, child)) {
                 it.remove();
                 return candidate;
             }
@@ -352,16 +351,62 @@ public class BerVerifier {
     }
 
     /**
+     * True when this UNTAGGED field is the one that would have written this
+     * node's tag.
+     *
+     * <p>An untagged CHOICE takes the tag of its selected alternative -
+     * {@code wrapInTlv} writes that alternative's TLV through with no wrapper of
+     * its own. The resolved tree holds exactly that alternative, so the tag is
+     * predictable after all; it was previously left unmatched, which took the
+     * whole subtree out of the self-check. 81 modules had at least one body
+     * checked "without schema knowledge" for this reason, and the TAP family's
+     * {@code serviceCode ServiceCode} - an untagged CHOICE over
+     * {@code [APPLICATION 218]} and friends - is the shape that shows it.</p>
+     */
+    private boolean untaggedFieldWouldProduce(AsnField field, TlvNode child) {
+        // A repeated CHOICE is NOT this case: its elements sit inside the
+        // collection's own universal wrapper, exactly as encodeRepeated writes
+        // them, so the ordinary universal-tag comparison below applies.
+        if (field.isChoice() && !field.isRepeated()) {
+            List<AsnField> alternatives = field.getChildren();
+            if (Objects.isNull(alternatives) || alternatives.size() != CHOICE_ALTERNATIVE_COUNT) {
+                return false;
+            }
+            return fieldWouldProduce(alternatives.get(0), child);
+        }
+        Integer expectedTag = untaggedUniversalTag(field);
+        return Objects.nonNull(expectedTag)
+                && child.tagClass() == BerTagClass.UNIVERSAL
+                && child.tagNumber() == expectedTag;
+    }
+
+    /** The same question for a field of any kind: its own tag first, else its type's. */
+    private boolean fieldWouldProduce(AsnField field, TlvNode child) {
+        if (Objects.nonNull(field.getTagNumber())) {
+            BerTagClass tagClass = Objects.nonNull(field.getTagClass())
+                    ? field.getTagClass()
+                    : BerTagClass.CONTEXT;
+            return child.hasTag(tagClass, field.getTagNumber());
+        }
+        return untaggedFieldWouldProduce(field, child);
+    }
+
+    /**
      * The universal tag an untagged field's own bytes carry, mirroring
      * {@code BerEncoderService.wrapLeafInUniversalTlv} and
      * {@code containerUniversalTag} exactly so the two sides never disagree.
      *
-     * <p>{@code null} for a CHOICE: an untagged CHOICE's wire tag is whichever
-     * alternative was written, which cannot be predicted without looking at the
-     * value. That case is intentionally left unmatched rather than guessed.</p>
+     * <p>A collection is asked first, because {@code containerUniversalTag}
+     * writes SEQUENCE for every repeated field - including one whose elements
+     * are CHOICEs, which is why the CHOICE question comes second here.</p>
+     *
+     * <p>{@code null} for a scalar CHOICE: that field carries no wrapper of its
+     * own at all, so there is no universal tag to compare. Its tag comes from
+     * the selected alternative and is handled by
+     * {@link #untaggedFieldWouldProduce}.</p>
      */
     private Integer untaggedUniversalTag(AsnField field) {
-        if (field.isChoice()) {
+        if (field.isChoice() && !field.isRepeated()) {
             return null;
         }
         if (field.isRepeated()) {

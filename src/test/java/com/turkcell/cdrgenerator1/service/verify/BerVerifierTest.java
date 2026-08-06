@@ -221,4 +221,55 @@ class BerVerifierTest {
         assertTrue(result.hasErrors());
         assertTrue(result.errors().get(0).message().contains("not readable as BER"));
     }
+
+    // --- matching a member the body tags through its type ---
+
+    /**
+     * An untagged CHOICE member carries the tag of its SELECTED ALTERNATIVE -
+     * {@code wrapInTlv} writes that alternative's TLV through with no wrapper of
+     * its own. The walker used to give up on such a node ("no field of this body
+     * carries tag ..."), which silently took the whole subtree out of every
+     * rule's reach: 147 bodies across 82 modules were checked with no schema
+     * knowledge at all, and that is why a record could carry universal tags
+     * where its schema demands APPLICATION ones without the self-check noticing.
+     */
+    @Test
+    void matchesAnUntaggedChoiceMemberByItsSelectedAlternative() {
+        AsnField alternative = AsnField.builder()
+                .fieldName("teleServiceCode")
+                .tagNumber(218)
+                .tagClass(com.turkcell.cdrgenerator1.model.BerTagClass.APPLICATION)
+                .build();
+        AsnField serviceCode = AsnField.builder()
+                .fieldName("serviceCode")
+                .choice(true)
+                .children(List.of(alternative))
+                .build();
+
+        // SEQUENCE { 5F 81 5A 01 07 } - APPLICATION 218, the alternative's tag.
+        BerVerificationResult result = verify(List.of(serviceCode), hex("30 05 5F 81 5A 01 07"));
+
+        assertTrue(result.isClean(), result.findings().toString());
+    }
+
+    /** The same member, but the bytes carry an alternative the tree did not select. */
+    @Test
+    void reportsAnUntaggedChoiceMemberWhoseBytesCarryAnotherAlternative() {
+        AsnField alternative = AsnField.builder()
+                .fieldName("teleServiceCode")
+                .tagNumber(218)
+                .tagClass(com.turkcell.cdrgenerator1.model.BerTagClass.APPLICATION)
+                .build();
+        AsnField serviceCode = AsnField.builder()
+                .fieldName("serviceCode")
+                .choice(true)
+                .children(List.of(alternative))
+                .build();
+
+        BerVerificationResult result = verify(List.of(serviceCode), hex("30 03 80 01 07"));
+
+        assertTrue(result.findings().stream()
+                        .anyMatch(f -> f.message().contains("No field of this body carries tag")),
+                "a tag no member could have produced must still be reported: " + result.findings());
+    }
 }
