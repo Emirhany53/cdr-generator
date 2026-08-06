@@ -86,7 +86,7 @@ class BerGeneratorControllerTest {
 
         TbcdCodec tbcdCodec = new TbcdCodec();
 
-        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, bcdTimestampFactory, List.of(
+        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, bcdTimestampFactory, config, List.of(
                 new UserProvidedValueSource(),
                 new AiValueSource(
                         new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),

@@ -13,6 +13,11 @@ app:
     default-record-count: 1
     max-record-count: 100
 
+    # IMPLICIT tag'li CHOICE (OPTIONAL) alanlari uretime katma. Encoder onlari
+    # X.680 30.6'ya gore dogru (EXPLICIT) uretir ama EMM cozucusu bunu yanlis
+    # okuyup "Duplicate Tag" reddi veriyor (Ericsson TR). EMM duzelince false yap.
+    skip-implicit-choice-fields: true
+
     # Uretilen BER'in, onu ureten alan agacina gore geri okunup dogrulanmasi.
     # strict: ERROR bulgusu varsa dosya dondurulmez | warn: loglanir, dosya doner | off: kapali
     self-check:

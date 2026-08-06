@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.generator;
 
+import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
 import com.turkcell.cdrgenerator1.exception.StructureNotFoundException;
 import com.turkcell.cdrgenerator1.generator.source.ValueSource;
 import com.turkcell.cdrgenerator1.generator.source.ValueSourceContext;
@@ -64,14 +65,17 @@ public class CdrRecordBuilder {
 
     private final StructureParserService structureParserService;
     private final BcdTimestampFactory bcdTimestampFactory;
+    private final CdrConfigProperties cdrConfigProperties;
     private final List<ValueSource> valueSources;
     private final Random random = new Random();
 
     public CdrRecordBuilder(StructureParserService structureParserService,
                             BcdTimestampFactory bcdTimestampFactory,
+                            CdrConfigProperties cdrConfigProperties,
                             List<ValueSource> valueSources) {
         this.structureParserService = structureParserService;
         this.bcdTimestampFactory = bcdTimestampFactory;
+        this.cdrConfigProperties = cdrConfigProperties;
         this.valueSources = valueSources.stream()
                 .sorted(Comparator.comparingInt(ValueSource::getOrder))
                 .toList();
@@ -92,7 +96,8 @@ public class CdrRecordBuilder {
             log.error("Structure not found: {}", structureName);
             throw new StructureNotFoundException(structureName);
         }
-        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH);
+        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH,
+                structure.isChoiceRoot());
     }
 
     public Map<String, Object> buildRecord(String structureName, Map<String, String> userValues,
@@ -105,11 +110,12 @@ public class CdrRecordBuilder {
             log.error("Structure not found: {}", structureName);
             throw new StructureNotFoundException(structureName);
         }
-        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH);
+        return buildFields(structure.getFields(), emptyAiContext(userValues), EMPTY_PATH,
+                structure.isChoiceRoot());
     }
 
     public Map<String, Object> buildRecordFromFields(List<AsnField> fields, Map<String, String> userValues) {
-        return buildFields(fields, emptyAiContext(userValues), EMPTY_PATH);
+        return buildFields(fields, emptyAiContext(userValues), EMPTY_PATH, false);
     }
 
     // ------------------------------------------------------------------
@@ -127,7 +133,7 @@ public class CdrRecordBuilder {
                                                      List<Map<String, String>> aiGeneratedRecords) {
         ValueSourceContext context = new ValueSourceContext(
                 null, recordIndex, userValues, aiGeneratedRecords, bcdTimestampFactory.newRecordAnchor());
-        return buildFields(fields, context, EMPTY_PATH);
+        return buildFields(fields, context, EMPTY_PATH, false);
     }
 
     private ValueSourceContext emptyAiContext(Map<String, String> userValues) {
@@ -140,7 +146,7 @@ public class CdrRecordBuilder {
     // ------------------------------------------------------------------
 
     private Map<String, Object> buildFields(List<AsnField> fields, ValueSourceContext context,
-                                            String pathPrefix) {
+                                            String pathPrefix, boolean parentIsChoice) {
         Map<String, Object> record = new LinkedHashMap<>();
         // Keyed per FIELD, not per name: the same name can appear twice in one
         // body under different tags, and keying by name alone let the second
@@ -149,6 +155,16 @@ public class CdrRecordBuilder {
 
         for (int index = 0; index < fields.size(); index++) {
             AsnField field = fields.get(index);
+            // IMPLICIT-tag'li OPTIONAL CHOICE alani: hic doldurulmaz, boylece
+            // encoder onu unset OPTIONAL sayip atlar ve EMM'in hoisting kaynakli
+            // "Duplicate Tag" reddi tetiklenmez (bkz. skipImplicitChoiceFields).
+            // parentIsChoice korumasi sart: bu ayni sekle sahip bir alan bir
+            // CHOICE'un SECILI ALTERNATIFI oldugunda onu atlamak, ust katmani
+            // (ornek: uELocalIPAddress [0] EXPLICIT IPAddress) bos birakip bozar.
+            // Alternatif atlanmaz; yalnizca SEQUENCE/SET uyeleri atlanir.
+            if (!parentIsChoice && shouldSkipImplicitChoice(field)) {
+                continue;
+            }
             String recordKey = keys.get(index);
             // The PATH stays name-based: it addresses user-supplied and
             // AI-supplied values, which are keyed by the schema's own names.
@@ -157,7 +173,7 @@ public class CdrRecordBuilder {
             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
                 record.put(recordKey, field.isRepeated()
                         ? buildRepeatedGroup(field, context, fieldPath)
-                        : buildFields(field.getChildren(), context, fieldPath));
+                        : buildFields(field.getChildren(), context, fieldPath, field.isChoice()));
             } else if (field.isRepeated()) {
                 record.put(recordKey, buildRepeatedLeaf(field, context, fieldPath));
             } else {
@@ -173,7 +189,9 @@ public class CdrRecordBuilder {
         List<Map<String, Object>> items = new ArrayList<>(repeatCount);
         for (int index = 0; index < repeatCount; index++) {
             String elementPath = fieldPath + INDEX_OPEN + index + INDEX_CLOSE;
-            items.add(buildFields(field.getChildren(), context, elementPath));
+            // A SEQUENCE OF <Choice> element is itself the chosen alternative;
+            // field.isChoice() carries that through so its content is not skipped.
+            items.add(buildFields(field.getChildren(), context, elementPath, field.isChoice()));
         }
         return items;
     }
@@ -210,6 +228,22 @@ public class CdrRecordBuilder {
                 .map(source -> source.resolve(pathAwareContext, field))
                 .flatMap(Optional::stream)
                 .findFirst();
+    }
+
+    /**
+     * Tipi CHOICE, tag'i IMPLICIT ve OPTIONAL olan bir alan mi? Bu ucu bir arada
+     * olan alanlar (MMTel'de diverting-Party-Address, servingSCSCFAddress, impu,
+     * cT-Push-* vb. 9 alan) EMM'in implicit-CHOICE hoisting hatasini tetikliyor.
+     * OPTIONAL sarti onemli: zorunlu bir CHOICE atlanirsa kayit gecersiz olur.
+     * field.isExplicit()==false, IMPLICIT tagli demektir (resolver EXPLICIT
+     * yazilmis skaler CHOICE'lar disinda explicit bayragini birakmaz).
+     */
+    private boolean shouldSkipImplicitChoice(AsnField field) {
+        return cdrConfigProperties != null
+                && cdrConfigProperties.isSkipImplicitChoiceFields()
+                && field.isChoice()
+                && !field.isExplicit()
+                && field.isOptional();
     }
 
     /**
