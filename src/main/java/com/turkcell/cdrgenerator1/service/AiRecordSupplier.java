@@ -10,6 +10,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -48,8 +49,15 @@ public class AiRecordSupplier {
         List<PathedField> leafFields = new ArrayList<>();
         collectLeaves(rootFields, EMPTY_PREFIX, leafFields, ROOT_DEPTH);
 
+        // Yaprak sayisi max-fields-per-request'i asinca (MMTel'de ~2 kati) kalanlar
+        // rastgeleye duser. ONCE derinlige gore kararli siralama yapariz: boylece
+        // sig (ust-duzey) alanlar - requested-Party-Address, list-Of-Called-Asserted-
+        // Identity, mMTelInformation gibi - butceyi, sema basinda bildirilen ve derin
+        // yaprak yigan recordExtensions alt-agacina kaptirmaz. Siralama yalnizca AI'a
+        // KIMIN sorulacagini belirler; deger yolla eslendigi icin sira eslesmeyi bozmaz.
         List<AsnField> fieldsToFill = leafFields.stream()
                 .filter(pathed -> !hasUserValue(userProvidedValues, pathed))
+                .sorted(Comparator.comparingInt(PathedField::depth))
                 .map(PathedField::asPathNamedField)
                 .limit(aiConfigProperties.getMaxFieldsPerRequest())
                 .toList();
@@ -73,7 +81,7 @@ public class AiRecordSupplier {
                 collectLeaves(field.getChildren(), path, target, depth + 1);
                 return;
             }
-            target.add(new PathedField(field, path));
+            target.add(new PathedField(field, path, depth));
         });
     }
 
@@ -117,8 +125,8 @@ public class AiRecordSupplier {
         return allRecords;
     }
 
-    /** Yaprak alan ve agactaki tam yolu. */
-    private record PathedField(AsnField field, String path) {
+    /** Yaprak alan, agactaki tam yolu ve derinligi (butce onceligi icin). */
+    private record PathedField(AsnField field, String path, int depth) {
 
         /**
          * Alani, adi tam yol olacak sekilde kopyalar. AI bu adla deger doner,
