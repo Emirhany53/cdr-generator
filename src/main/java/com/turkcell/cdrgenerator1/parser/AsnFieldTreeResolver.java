@@ -612,12 +612,16 @@ public class AsnFieldTreeResolver {
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                     cache, taggingMode);
 
-            // NOT: burada bilerek resolveEffectiveTag KULLANILMIYOR. Bir SEQUENCE/SET
-            // govdesindeki alan kendi [n] etiketini tasimiyorsa tag'siz kalir - alias
-            // hedefinin kendi tag'i (attachChildren'daki CHOICE alternatifi durumunun
-            // aksine) miras alinmaz. Bu, TAP ailesinde 1487 alani (27 yapida,
-            // TAP0309'da 427) etkileyen ayri, kasitli olarak ertelenmis bir konu;
-            // bkz. AsnFieldTreeResolverTest.listAliasCarryingItsOwnTagIsStillDetectedAsRepeated javadoc'u.
+            // A field with no [n] of its own is tagged by the TYPE it names -
+            // "sender Sender" with "Sender ::= [APPLICATION 196] PlmnId" is
+            // written 5F 81 44, not as a bare OCTET STRING. This is the same
+            // inheritance attachChildren has always applied to a CHOICE
+            // alternative; leaving it out here flattened 1141 field declarations
+            // across 12 modules (TAP0309 317, TAP-0309 316, TAP0311 295) plus the
+            // 94 reachable sites whose type is a tagged SEQUENCE/SET, and left
+            // whole TAP records carrying nothing but universal tags.
+            EffectiveTag fieldTag = inheritedFieldTag(registry, parsed, innerType, taggingMode);
+
             boolean choiceElement = isChoiceType(registry, innerType);
             boolean setElement = isSetType(registry, innerType);
             fields.add(AsnField.builder()
@@ -627,14 +631,36 @@ public class AsnFieldTreeResolver {
                     .repeated(repeated)
                     .choice(choiceElement)
                     .set(setElement)
-                    .tagNumber(parsed.getTagNumber())
-                    .tagClass(parsed.getTagClass())
-                    .explicit(effectiveExplicit(registry, parsed.isExplicit(), repeated, choiceElement))
+                    .tagNumber(fieldTag.tagNumber())
+                    .tagClass(fieldTag.tagClass())
+                    .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build());
         }
         return fields;
+    }
+
+    /**
+     * The tag of an ordinary SEQUENCE/SET member: its own {@code [n]} when it
+     * has one, otherwise the tag its type declares.
+     *
+     * <p>UNIVERSAL-class annotations are deliberately NOT inherited here.
+     * {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String} re-tags the
+     * value's own universal tag, which {@link #resolveUniversalTagOverride}
+     * already carries into {@code AsnField.universalTagOverride} - the mechanism
+     * the MMTel reference capture was verified against. Reading it a second time
+     * here would give one annotation two owners.</p>
+     */
+    private EffectiveTag inheritedFieldTag(Map<String, AsnTypeDefinition> registry, AsnField parsed,
+                                           String innerType, AsnTaggingMode taggingMode) {
+        if (parsed.getTagNumber() != null) {
+            return new EffectiveTag(parsed.getTagNumber(), parsed.getTagClass(), parsed.isExplicit());
+        }
+
+        EffectiveTag inherited = resolveEffectiveTag(registry, parsed, innerType, taggingMode);
+        boolean usable = inherited.tagNumber() != null && inherited.tagClass() != BerTagClass.UNIVERSAL;
+        return usable ? inherited : new EffectiveTag(null, parsed.getTagClass(), parsed.isExplicit());
     }
 
     /**

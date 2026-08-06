@@ -65,9 +65,9 @@ class ShippedFieldRulesRoundTripTest {
      */
     private static final java.util.Set<String> SCHEMA_LEVEL_DUPLICATE_TAG_MODULES = java.util.Set.of(
             "BDCevapsiz", "CDRDatamartTANGOmBalance", "CwinDataStr", "DWHClearedDedicatedISO",
-            "FCMSCCNGTP", "FCMSVM", "FciGgsn", "HTSCevapsiz", "MSCCAP2Test", "NotifyIsoCdr",
-            "OTAGXS", "PSTNSMSMatching", "SDPAdjLikya", "SDPAdjLikyaDAC", "SMSCMatching",
-            "SMSCMatching1", "VoiceSMS", "VoiceSmsInput");
+            "FCMSCCNGTP", "FCMSVM", "FciGgsn", "FDRInput", "HTSCevapsiz", "MSCCAP2Test",
+            "NotifyIsoCdr", "NRTRDEErrorReport", "OTAGXS", "PSTNSMSMatching", "SDPAdjLikya",
+            "SDPAdjLikyaDAC", "SMSCMatching", "SMSCMatching1", "VoiceSMS", "VoiceSmsInput");
 
     private static StructureParserService parser;
     private static CdrRecordBuilder builder;

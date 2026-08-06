@@ -300,13 +300,10 @@ class AsnFieldTreeResolverTest {
      * field is never marked repeated and the whole list collapses to one element.
      * 102 such aliases exist across the data, almost all in the TAP family.
      *
-     * <p><b>Known gap, deliberately not asserted here:</b> the alias's own tag
-     * ([APPLICATION 80]) is still dropped for fields declared inside a
-     * SEQUENCE/SET body. {@code attachChildren} reads it via ALIAS_TAG but
-     * {@code parseFieldLines} does not, so such a field ends up untagged. That
-     * affects 1487 fields across 27 structures (TAP0309 alone has 427) and is
-     * tracked separately - closing it changes the encoding of all of them, so it
-     * should not ride along with this fix.</p>
+     * <p>The alias's own tag travels with it now: a field naming such a type
+     * inherits {@code [APPLICATION 80]} instead of falling back to a universal
+     * tag. That gap is closed in {@code inheritedFieldTag}; see
+     * {@code BerFieldTagInheritanceTest} for the encoding it produces.</p>
      */
     @Test
     void listAliasCarryingItsOwnTagIsStillDetectedAsRepeated() {
@@ -325,6 +322,10 @@ class AsnFieldTreeResolverTest {
 
         assertTrue(fields.get(0).isRepeated(), "a tagged list alias must still count as repeated");
         assertTrue(fields.get(1).isRepeated(), "the untagged form must keep working");
+        assertEquals(80, fields.get(0).getTagNumber(),
+                "the alias's own tag belongs to the field that names it");
+        assertEquals(BerTagClass.APPLICATION, fields.get(0).getTagClass());
+        assertNull(fields.get(1).getTagNumber(), "an untagged alias leaves the field untagged");
     }
 
     @Test

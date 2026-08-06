@@ -76,6 +76,14 @@ class AllModulesRoundTripTest {
      * test's own output for {@code BDCevapsiz}/{@code HTSCevapsiz}, whose
      * {@code cellID [10]} collides with the {@code [10]} their untagged
      * {@code recordType} CHOICE already carries.
+     *
+     * <p>{@code FDRInput} and {@code NRTRDEErrorReport} join the list with the
+     * same defect in APPLICATION class, which only became visible once a field
+     * started inheriting the tag its type declares: {@code FileReceivedTime ::=
+     * [APPLICATION 4]} sits beside {@code UTCCode ::= [APPLICATION 4]} in
+     * {@code NrFile}, and {@code Name ::= [APPLICATION 4]} beside the same
+     * {@code UTCCode} in {@code NerFile}. Two types, one tag, both members of
+     * one body - the encoder has no other tag it could legally write.</p>
      */
     private static final Set<String> SCHEMA_LEVEL_DUPLICATE_TAG_MODULES = Set.of(
             "BDCevapsiz",
@@ -83,11 +91,13 @@ class AllModulesRoundTripTest {
             "CwinDataStr",
             "DWHClearedDedicatedISO",
             "FCMSCCNGTP",
+            "FDRInput",
             "FCMSVM",
             "FciGgsn",
             "HTSCevapsiz",
             "MSCCAP2Test",
             "NotifyIsoCdr",
+            "NRTRDEErrorReport",
             "OTAGXS",
             "PSTNSMSMatching",
             "SDPAdjLikya",
