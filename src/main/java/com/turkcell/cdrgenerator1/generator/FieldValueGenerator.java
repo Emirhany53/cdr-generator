@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.math.BigInteger;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -74,15 +75,24 @@ public class FieldValueGenerator {
     private final AsnSizeExtractor asnSizeExtractor;
     private final BcdTimestampFactory bcdTimestampFactory;
 
+    /** Kayit capasi olmadan uretim: zaman damgalari bagimsiz rastgele (eski davranis). */
     public String generate(AsnField field) {
-        return trimToMaxLength(field, produce(field));
+        return generate(field, null);
     }
 
-    private String produce(AsnField field) {
+    /**
+     * Kayit capasiyla uretim. recordAnchor non-null ise BCD zaman damgasi/tarih
+     * alanlari o andan kronolojik olarak turetilir (ayni kayitta start <= end).
+     */
+    public String generate(AsnField field, LocalDateTime recordAnchor) {
+        return trimToMaxLength(field, produce(field, recordAnchor));
+    }
+
+    private String produce(AsnField field, LocalDateTime recordAnchor) {
         // BCD zaman damgasi/tarih kontrolu yml kuralindan ONCE yapilir: date/timestamp
         // kurallari bu alanlara ad benzerligiyle carpip duz sayi ornegi verebilir,
         // ancak OCTET STRING SIZE(9)/SIZE(3) alanlar BCD hex olmak zorundadir.
-        Optional<String> bcdValue = produceBcdIfApplicable(field);
+        Optional<String> bcdValue = produceBcdIfApplicable(field, recordAnchor);
         if (bcdValue.isPresent()) {
             return bcdValue.get();
         }
@@ -136,16 +146,22 @@ public class FieldValueGenerator {
      * Alan bir 3GPP BCD zaman damgasi (9 bayt, saat dahil) ya da BCD tarih
      * (3 bayt, sadece yil-ay-gun) ise gecerli deger uretir; aksi halde bos doner.
      */
-    private Optional<String> produceBcdIfApplicable(AsnField field) {
+    private Optional<String> produceBcdIfApplicable(AsnField field, LocalDateTime recordAnchor) {
         if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) != BerPrimitiveType.OCTET_STRING) {
             return Optional.empty();
         }
         Integer byteLength = asnSizeExtractor.extractMaxLength(field.getFieldType()).orElse(null);
+        // Kayit capasi varsa zaman damgasi/tarih o andan kronolojik turetilir;
+        // yoksa (context'siz cagrilar, testler) bagimsiz rastgele - eski davranis.
         if (bcdTimestampFactory.isBcdTimestamp(field.getFieldName(), byteLength)) {
-            return Optional.of(bcdTimestampFactory.randomTimestamp());
+            return Optional.of(Objects.nonNull(recordAnchor)
+                    ? bcdTimestampFactory.timestampAt(recordAnchor, field.getFieldName())
+                    : bcdTimestampFactory.randomTimestamp());
         }
         if (bcdTimestampFactory.isBcdDate(field.getFieldName(), byteLength)) {
-            return Optional.of(bcdTimestampFactory.randomDate());
+            return Optional.of(Objects.nonNull(recordAnchor)
+                    ? bcdTimestampFactory.dateAt(recordAnchor)
+                    : bcdTimestampFactory.randomDate());
         }
         return Optional.empty();
     }

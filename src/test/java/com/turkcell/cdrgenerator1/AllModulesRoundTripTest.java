@@ -126,7 +126,7 @@ class AllModulesRoundTripTest {
         // No AiValueSource: userValues is always empty below, so every field
         // falls straight to RandomValueSource regardless of what else is in the
         // chain, and this keeps the test free of network calls entirely.
-        cdrRecordBuilder = new CdrRecordBuilder(structureParserService, List.of(
+        cdrRecordBuilder = new CdrRecordBuilder(structureParserService, bcdTimestampFactory, List.of(
                 new UserProvidedValueSource(),
                 new RandomValueSource(
                         new FieldValueGenerator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory))));

@@ -22,7 +22,8 @@ class CdrRecordBuilderTest {
 
     // buildRecordFromFields does not touch the registry, so the parser
     // dependency can stay null for these unit tests.
-    private final CdrRecordBuilder builder = new CdrRecordBuilder(null, TestValueSources.chain());
+    private final CdrRecordBuilder builder =
+            new CdrRecordBuilder(null, new BcdTimestampFactory(), TestValueSources.chain());
 
     private AsnField leaf(String name, String type) {
         return AsnField.builder().fieldName(name).fieldType(type)

@@ -63,12 +63,15 @@ public class CdrRecordBuilder {
     private static final int SINGLE_RECORD_INDEX = 0;
 
     private final StructureParserService structureParserService;
+    private final BcdTimestampFactory bcdTimestampFactory;
     private final List<ValueSource> valueSources;
     private final Random random = new Random();
 
     public CdrRecordBuilder(StructureParserService structureParserService,
+                            BcdTimestampFactory bcdTimestampFactory,
                             List<ValueSource> valueSources) {
         this.structureParserService = structureParserService;
+        this.bcdTimestampFactory = bcdTimestampFactory;
         this.valueSources = valueSources.stream()
                 .sorted(Comparator.comparingInt(ValueSource::getOrder))
                 .toList();
@@ -123,12 +126,13 @@ public class CdrRecordBuilder {
                                                      Map<String, String> userValues,
                                                      List<Map<String, String>> aiGeneratedRecords) {
         ValueSourceContext context = new ValueSourceContext(
-                null, recordIndex, userValues, aiGeneratedRecords);
+                null, recordIndex, userValues, aiGeneratedRecords, bcdTimestampFactory.newRecordAnchor());
         return buildFields(fields, context, EMPTY_PATH);
     }
 
     private ValueSourceContext emptyAiContext(Map<String, String> userValues) {
-        return new ValueSourceContext(null, SINGLE_RECORD_INDEX, userValues, List.of());
+        return new ValueSourceContext(null, SINGLE_RECORD_INDEX, userValues, List.of(),
+                bcdTimestampFactory.newRecordAnchor());
     }
 
     // ------------------------------------------------------------------

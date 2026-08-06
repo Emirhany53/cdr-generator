@@ -22,6 +22,6 @@ public class RandomValueSource implements ValueSource {
 
     @Override
     public Optional<String> resolve(ValueSourceContext context, AsnField field) {
-        return Optional.of(fieldValueGenerator.generate(field));
+        return Optional.of(fieldValueGenerator.generate(field, context.getRecordAnchor()));
     }
 }

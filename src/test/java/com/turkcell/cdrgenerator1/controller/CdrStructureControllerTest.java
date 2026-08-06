@@ -64,7 +64,7 @@ class CdrStructureControllerTest {
 
         TbcdCodec tbcdCodec = new TbcdCodec();
 
-        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, List.of(
+        CdrRecordBuilder recordBuilder = new CdrRecordBuilder(parserService, bcdTimestampFactory, List.of(
                 new UserProvidedValueSource(),
                 new AiValueSource(
                         new FieldValueValidator(tbcdCodec, aiProperties, sizeExtractor, bcdTimestampFactory),
