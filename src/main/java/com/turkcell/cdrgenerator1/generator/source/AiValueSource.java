@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -31,6 +32,10 @@ public class AiValueSource implements ValueSource {
     private static final int ORDER = 20;
     /** CdrRecordBuilder'in tekrarli alanlar icin path'e ekledigi "[0]", "[1]" gibi indeksler. */
     private static final Pattern INDEX_SEGMENT = Pattern.compile("\\[\\d+\\]");
+    /** Bir tekrarli elemani cesitlendirmek icin degerin en az bu kadar uzun olmasi gerekir. */
+    private static final int MIN_DIVERSIFY_LENGTH = 4;
+    private static final int DIGIT_CLASS = 10;
+    private static final int LETTER_CLASS = 26;
 
     private final FieldValueValidator fieldValueValidator;
     private final EnumValueResolver enumValueResolver;
@@ -51,7 +56,63 @@ public class AiValueSource implements ValueSource {
 
         return findValue(aiRecord, context.getCurrentPath(), field.getFieldName())
                 .flatMap(candidate -> normalize(field, candidate))
-                .filter(candidate -> fieldValueValidator.isValid(field, candidate));
+                .filter(candidate -> fieldValueValidator.isValid(field, candidate))
+                .map(valid -> diversifyForRepeatedElement(field, valid, context.getCurrentPath()));
+    }
+
+    /**
+     * Ayni tekrarli alanin butun elemanlari AI'dan gelen ayni indekssiz degeri
+     * paylasir (bkz. {@link #findValue}). Ilk eleman disindaki elemanlarda,
+     * deger yeterince uzunsa son ALFANUMERIK karakteri eleman indeksine gore
+     * kendi sinifinda kaydiririz (rakam->rakam, harf->harf): bir telefon
+     * numarasi telefon, bir sIP/tel-URI de gecerli bir URI olarak kalir ama
+     * elemanlar farklilasir. Kisa degerler (enum/bayrak) esikle, kalanlar da
+     * yeniden dogrulama ile korunur - kaydirilan deger tipin kisitini bozarsa
+     * (ornek: isimli-sayi kumesi disina cikarsa) orijinali kullanilir.
+     */
+    private String diversifyForRepeatedElement(AsnField field, String value, String currentPath) {
+        int salt = repeatedElementSalt(currentPath);
+        if (salt == 0 || Objects.isNull(value) || value.length() < MIN_DIVERSIFY_LENGTH) {
+            return value;
+        }
+        char[] chars = value.toCharArray();
+        for (int i = chars.length - 1; i >= 0; i--) {
+            char shifted = shiftWithinClass(chars[i], salt);
+            if (shifted != chars[i]) {
+                chars[i] = shifted;
+                String varied = new String(chars);
+                return fieldValueValidator.isValid(field, varied) ? varied : value;
+            }
+        }
+        return value;
+    }
+
+    /** Yoldaki tum {@code [n]} indekslerinin toplami; 0 ise her yerde ilk eleman. */
+    private int repeatedElementSalt(String currentPath) {
+        if (Objects.isNull(currentPath)) {
+            return 0;
+        }
+        Matcher matcher = INDEX_SEGMENT.matcher(currentPath);
+        int sum = 0;
+        while (matcher.find()) {
+            String token = matcher.group();
+            sum += Integer.parseInt(token.substring(1, token.length() - 1));
+        }
+        return sum;
+    }
+
+    /** Karakteri kendi sinifinda (rakam/kucuk/buyuk harf) kaydirir; digerleri degismez. */
+    private char shiftWithinClass(char c, int salt) {
+        if (c >= '0' && c <= '9') {
+            return (char) ('0' + (c - '0' + salt) % DIGIT_CLASS);
+        }
+        if (c >= 'a' && c <= 'z') {
+            return (char) ('a' + (c - 'a' + salt) % LETTER_CLASS);
+        }
+        if (c >= 'A' && c <= 'Z') {
+            return (char) ('A' + (c - 'A' + salt) % LETTER_CLASS);
+        }
+        return c;
     }
 
     /**
@@ -84,10 +145,11 @@ public class AiValueSource implements ValueSource {
      * istenen 80 yolun TAMAMI birebir geri donuyor (diff ile karsilastirildi,
      * fark yok) - sorun hep bu taraftaydi.
      *
-     * <p>AI'ya tek bir indekssiz deger sorulduğu icin, ayni tekrarli alanin
-     * TUM elemanlari (ornek: listOfSSDetails[0] VE [1]) bu ayni degeri
-     * paylasir - farkli rastgele degerlere dusmekten iyidir, ama elemanlar
-     * arasi cesitlilik saglamaz; bu bilinen bir sinirlamadir.</p>
+     * <p>AI'ya tek bir indekssiz deger sorulduğu icin bu arama ayni tekrarli
+     * alanin TUM elemanlarina ayni degeri dondururur (ornek: listOfSSDetails[0]
+     * VE [1]). Elemanlar arasi cesitlilik {@link #diversifyForRepeatedElement}
+     * ile geri kazanilir: ilk eleman disindakiler kendi degerlerinin son
+     * alfanumerik karakteri indeksle kaydirilarak farklilastirilir.</p>
      */
     private Optional<String> findValue(Map<String, String> aiRecord, String currentPath, String fieldName) {
         if (Objects.nonNull(currentPath)) {
