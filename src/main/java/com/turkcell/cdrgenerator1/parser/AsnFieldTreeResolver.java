@@ -71,6 +71,33 @@ public class AsnFieldTreeResolver {
     /** A declaration ending in one of these is obviously unfinished. */
     private static final Pattern UNFINISHED_TYPE_KEYWORD = Pattern.compile(
             "(SEQUENCE|SET|OF)$", Pattern.CASE_INSENSITIVE);
+    /**
+     * An entry that is nothing but an identifier. No ASN.1 member consists of a
+     * name alone, so this is always the front half of a declaration the schema
+     * wrapped after the member name:
+     *
+     * <pre>
+     * timeFromRegisterSeizureToStartOfCharging
+     *                             [13] IMPLICIT Time OPTIONAL,
+     * </pre>
+     *
+     * <p>Left unmerged, {@link #parseFieldLine} read the name alone as a field -
+     * splitting the last character off as its type, giving
+     * {@code timeFromRegisterSeizureToStartOfChargin} of type {@code g} - and
+     * dropped the {@code [13]} line, which starts with no name at all. The
+     * phantom is untagged, so the encoder wrote it with a universal tag among
+     * its context-tagged siblings, and the real field never reached the record.
+     * 1278 declarations across 18 modules are written this way: the whole CME20R
+     * MSC family, Try and SDPOutputCS40.</p>
+     */
+    private static final Pattern BARE_NAME_ENTRY = Pattern.compile("^[A-Za-z][\\w-]*$");
+    /**
+     * What the second half of such a declaration opens with: the member's tag
+     * ({@code [13] IMPLICIT Time}) or, in an ENUMERATED body, its number
+     * ({@code (7)}). Deliberately narrow - an entry that opens with a NAME could
+     * equally be the next member, and merging those would swallow a real field.
+     */
+    private static final Pattern WRAPPED_DECLARATION_TAIL = Pattern.compile("^[\\[(]");
     private static final String ENTRY_JOIN_SEPARATOR = " ";
 
     /**
@@ -562,6 +589,11 @@ public class AsnFieldTreeResolver {
     }
 
     private boolean isContinuationOf(String entry, String previous) {
+        // A name on its own line, then the rest of its declaration on the next.
+        if (BARE_NAME_ENTRY.matcher(previous).matches()
+                && WRAPPED_DECLARATION_TAIL.matcher(entry).find()) {
+            return true;
+        }
         if (NAMED_NUMBER_MEMBER.matcher(entry).matches()) {
             return false;
         }

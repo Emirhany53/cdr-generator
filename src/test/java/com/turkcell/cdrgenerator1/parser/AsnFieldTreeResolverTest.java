@@ -781,4 +781,83 @@ class AsnFieldTreeResolverTest {
         assertTrue(type.contains("default(0)") && type.contains("aFieldChange(1)"),
                 "both declared members must survive, was: " + type);
     }
+
+    /**
+     * A declaration may wrap right after the member name, which the CME20R MSC
+     * schemas do 1278 times:
+     *
+     * <pre>
+     * timeFromRegisterSeizureToStartOfCharging
+     *                             [13] IMPLICIT Time OPTIONAL,
+     * </pre>
+     *
+     * <p>The name alone was read as a field - with its last character split off
+     * as the type, giving {@code timeFromRegisterSeizureToStartOfChargin} of
+     * type {@code g} - while the {@code [13]} line, starting with no name, was
+     * dropped. The phantom is untagged, so it went out with a universal tag
+     * among its context-tagged siblings and the real field never reached the
+     * record at all.</p>
+     */
+    @Test
+    void aDeclarationWrappedAfterItsNameStaysOneField() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS ::=
+                BEGIN
+                Root ::= SET {
+                    interruptionTime            [12] IMPLICIT OCTET STRING OPTIONAL,
+                    timeFromRegisterSeizureToStartOfCharging
+                                                [13] IMPLICIT OCTET STRING OPTIONAL,
+                    chargedParty                [14] IMPLICIT INTEGER OPTIONAL
+                }
+                END
+                """, "Root");
+
+        assertEquals(3, fields.size(), "the wrapped declaration must not add a phantom field");
+        assertEquals("timeFromRegisterSeizureToStartOfCharging", fields.get(1).getFieldName());
+        assertEquals(13, fields.get(1).getTagNumber());
+        assertTrue(fields.get(1).getFieldType().contains("OCTET STRING"));
+    }
+
+    /** The same wrap in an ENUMERATED body, where the tail is the member's number. */
+    @Test
+    void aNamedNumberWrappedAfterItsNameStaysOneMember() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    service [0] IMPLICIT ServiceKind OPTIONAL
+                }
+                ServiceKind ::= ENUMERATED {
+                    plain (6),
+                    originatingExtendedCAMELServiceWithINC
+                        (7)
+                }
+                END
+                """, "Root");
+
+        assertTrue(fields.get(0).getFieldType().contains("originatingExtendedCAMELServiceWithINC(7)"),
+                "a wrapped named number belongs to the name above it: " + fields.get(0).getFieldType());
+    }
+
+    /**
+     * The merge is deliberately narrow. A bare name followed by another
+     * DECLARATION is left alone - swallowing it would lose a real field, and no
+     * evidence says which of the two the schema meant.
+     */
+    @Test
+    void twoDeclarationsAreNeverMergedIntoOne() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS ::=
+                BEGIN
+                Root ::= SEQUENCE {
+                    first  [0] IMPLICIT INTEGER OPTIONAL,
+                    second [1] IMPLICIT INTEGER OPTIONAL
+                }
+                END
+                """, "Root");
+
+        assertEquals(2, fields.size());
+        assertEquals("first", fields.get(0).getFieldName());
+        assertEquals("second", fields.get(1).getFieldName());
+    }
 }
