@@ -276,4 +276,37 @@ class FieldValueGeneratorTest {
                     "kural ornekleri sema disi oldugu icin yok sayilmaliydi: " + value);
         }
     }
+
+    /**
+     * Madde 3. Bir OCTET STRING alanin icerigi, EMM'in kabul ettigi gercek MMTel
+     * verisinde yazdirilabilir ASCII metindir (userLocationInformation
+     * "81821600d0eaef0d", vplmnId "905329373300", serviceContextID
+     * "10.32275@3gpp.org"). Bu yuzden duz bir kural ornegi artik reddedilip
+     * rastgeleye dusmek yerine ASCII baytlarina cevrilir.
+     */
+    @Test
+    void anOctetStringTakesTheRuleExampleAsItsAsciiBytes() {
+        // "15" | "127" | "842" -> ASCII: "3135" | "313237" | "383432"
+        String value = generator.generate(field("callDuration", "OCTET STRING"));
+        assertTrue(List.of("3135", "313237", "383432").contains(value),
+                "duz ornek ASCII baytlarina cevrilmeliydi, uretilen: " + value);
+    }
+
+    /**
+     * ASCII beyan edilen SIZE'a sigmiyorsa alan paketlenmis ikili bir alandir
+     * (GSN ailesindeki {@code locationAreaCode OCTET STRING (SIZE(2))} 16 bitlik
+     * bir LAC tutar). Orada duz ornek zorlanmaz; eski davranis korunur.
+     */
+    @Test
+    void aPackedOctetStringDoesNotGetAsciiThatCannotFit() {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            // "127"/"842" ASCII olarak 3 bayt, SIZE(2)'ye sigmaz; "15" ise
+            // gecerli bir hex dokumu oldugu icin oldugu gibi kullanilabilir.
+            String value = generator.generate(field("callDuration", "OCTET STRING (SIZE(2))"));
+            assertTrue(value.matches("[0-9A-F]{2,4}"),
+                    "SIZE(2) alan hex dokumu kalmali, uretilen: " + value);
+            assertTrue(!"313237".equals(value) && !"383432".equals(value),
+                    "sigmayan ASCII yazilmamaliydi: " + value);
+        }
+    }
 }

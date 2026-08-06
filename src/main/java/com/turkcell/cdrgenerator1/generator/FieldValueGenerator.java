@@ -68,6 +68,9 @@ public class FieldValueGenerator {
     private static final int MAX_GENERATED_LENGTH = 18;
     /** OCTET STRING hex dump uretiminde her bayt 2 hex karakter olmali. */
     private static final int HEX_CHARS_PER_BYTE = 2;
+    private static final String HEX_BYTE_FORMAT = "%02X";
+    private static final int ASCII_MIN = 0x20;
+    private static final int ASCII_MAX = 0x7E;
     private static final int BITS_PER_BYTE = 8;
 
     private final TbcdCodec tbcdCodec;
@@ -106,7 +109,11 @@ public class FieldValueGenerator {
             return tbcdValue.get();
         }
 
-        Optional<String> seeded = generateFromRuleExample(field);
+        // Kural ornegi duz bir degerdir ("41253", "internet"); OCTET STRING icin
+        // ureticinin sozlesmesi ise icerik baytlarinin hex dokumudur. Donusum
+        // burada yapilir - TBCD yolu yukarida kendi ham ornegini zaten aldi.
+        Optional<String> seeded = generateFromRuleExample(field)
+                .flatMap(example -> toOctetStringContent(field, example));
         if (seeded.isPresent()) {
             return seeded.get();
         }
@@ -192,7 +199,18 @@ public class FieldValueGenerator {
             case INTEGER, ENUMERATED -> examples.stream().allMatch(this::isNumericLiteral)
                     && examples.stream().allMatch(example -> isDeclaredNumber(field.getFieldType(), example));
             case BOOLEAN -> examples.stream().allMatch(this::isBooleanLiteral);
-            case OCTET_STRING, BIT_STRING -> examples.stream().allMatch(this::isHexLiteral);
+            // An OCTET STRING's CONTENT in real, EMM-accepted MMTel data is
+            // printable ASCII, not packed binary: across a 36 MB reference
+            // capture every octet-string field except the BCD timestamps and the
+            // TBCD servedIMEISV holds text - subscriptionIDData "905369327265",
+            // vplmnId "905329373300", userLocationInformation "81821600d0eaef0d",
+            // serviceContextID "10.32275@3gpp.org". A rule example is therefore
+            // usable whenever it is printable, and gets written as its ASCII
+            // bytes (see toOctetStringContent). Hex examples stay usable too.
+            case OCTET_STRING -> examples.stream()
+                    .allMatch(example -> isHexLiteral(example) || isPrintableAscii(example));
+            // A BIT STRING really is packed flags, so only a hex dump fits.
+            case BIT_STRING -> examples.stream().allMatch(this::isHexLiteral);
             // A NULL field holds no value, so no example can ever be compatible
             // with it. Returning false keeps a loosely-matched yml rule (matching
             // is by name substring) from seeding content into a field that must
@@ -293,6 +311,49 @@ public class FieldValueGenerator {
 
     private boolean isHexLiteral(String value) {
         return value.matches(HEX_LITERAL_PATTERN);
+    }
+
+    private boolean isPrintableAscii(String value) {
+        return !value.isEmpty() && value.chars().allMatch(c -> c >= ASCII_MIN && c <= ASCII_MAX);
+    }
+
+    /**
+     * Bir kural ornegini OCTET STRING icerigine cevirir. Diger tipler oldugu
+     * gibi gecer.
+     *
+     * <p>Gercek, EMM'in kabul ettigi MMTel verisinde bu alanlarin icerigi
+     * yazdirilabilir ASCII metindir (bkz. isCompatibleWithFieldType), bu yuzden
+     * varsayilan davranis ornegi ASCII baytlarina cevirmektir: "41253" ->
+     * "3431323533".</p>
+     *
+     * <p>ASCII yalnizca beyan edilen SIZE'a SIGIYORSA kullanilir. Sigmiyorsa
+     * alan paketlenmis ikili bir alandir - ornegin GSN ailesindeki
+     * {@code locationAreaCode OCTET STRING (SIZE(2))}, ki 16 bitlik bir LAC
+     * tutar ve 5 karakterlik "41253" oraya ASCII olarak sigmaz. O durumda ornek
+     * gecerli bir hex dokumuyse oylece kullanilir, degilse kural yok sayilip
+     * tipe uygun rastgele uretime dusulur (eski davranis). Boylece duzeltme
+     * yalnizca ASCII'nin gercekten sigdigi yerde devreye girer ve paketli
+     * alanlari bozmaz.</p>
+     */
+    private Optional<String> toOctetStringContent(AsnField field, String example) {
+        if (BerPrimitiveType.fromTypeExpression(field.getFieldType()) != BerPrimitiveType.OCTET_STRING) {
+            return Optional.of(example);
+        }
+        Optional<Integer> declaredBytes = asnSizeExtractor.extractMaxLength(field.getFieldType());
+        boolean asciiFits = isPrintableAscii(example)
+                && (declaredBytes.isEmpty() || example.length() <= declaredBytes.get());
+        if (asciiFits) {
+            return Optional.of(toAsciiHex(example));
+        }
+        return isHexLiteral(example) ? Optional.of(example) : Optional.empty();
+    }
+
+    private String toAsciiHex(String value) {
+        StringBuilder hex = new StringBuilder(value.length() * HEX_CHARS_PER_BYTE);
+        for (char character : value.toCharArray()) {
+            hex.append(String.format(HEX_BYTE_FORMAT, (int) character));
+        }
+        return hex.toString();
     }
 
     private boolean isDottedOid(String value) {
