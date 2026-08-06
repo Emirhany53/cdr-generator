@@ -237,10 +237,19 @@ public class CdrRecordBuilder {
      * OPTIONAL sarti onemli: zorunlu bir CHOICE atlanirsa kayit gecersiz olur.
      * field.isExplicit()==false, IMPLICIT tagli demektir (resolver EXPLICIT
      * yazilmis skaler CHOICE'lar disinda explicit bayragini birakmaz).
+     *
+     * <p>Dorduncu sart {@link AsnField#isDecoderHoistsImplicitChoice()}: kural
+     * yalnizca hatanin GOZLENDIGI ailede - InvolvedParty imzasini tasiyan
+     * MMTel/AIMS/IMS/UAG/ATS modullerinde - calisir. Sadece yapisal oldugu
+     * surece her modulde calisiyordu ve MMTel disinda 9 modulden 49 alan
+     * siliyordu; TAP-0309'da bu, dosyanin cagri kayitlarini tasiyan tek bolumu
+     * olan {@code callEventDetails} demekti - orada hic gozlenmemis bir hata
+     * icin bos bir TAP dosyasi.</p>
      */
     private boolean shouldSkipImplicitChoice(AsnField field) {
         return cdrConfigProperties != null
                 && cdrConfigProperties.isSkipImplicitChoiceFields()
+                && field.isDecoderHoistsImplicitChoice()
                 && field.isChoice()
                 && !field.isExplicit()
                 && field.isOptional();

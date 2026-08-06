@@ -49,6 +49,21 @@ public class AsnField {
      */
     private boolean set;
 
+    /**
+     * True when this field sits in the module family whose decoder mis-reads an
+     * IMPLICIT-tagged OPTIONAL CHOICE - the MMTel/AIMS/IMS/UAG/ATS lineage,
+     * recognised by its shared {@code InvolvedParty} CHOICE and confirmed
+     * against a real EMM-accepted capture.
+     *
+     * <p>{@code app.cdr.skip-implicit-choice-fields} drops such fields from
+     * generation so EMM stops answering "Duplicate Tag". The flag is what keeps
+     * that workaround where its evidence is: without it the rule was purely
+     * structural and fired in every module, and TAP-0309 lost
+     * {@code callEventDetails} - the only part of a TAP file that carries call
+     * records - to a defect nobody had observed there.</p>
+     */
+    private boolean decoderHoistsImplicitChoice;
+
     private Integer tagNumber;
 
     /** BER tag class from the [..] annotation; CONTEXT when only a number is given. */

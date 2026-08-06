@@ -402,9 +402,11 @@ class ArchitectureAuditTest {
         return count;
     }
 
+    /** Fields {@code CdrRecordBuilder.shouldSkipImplicitChoice} would drop, gate included. */
     private void countSkippable(List<AsnField> fields, int[] accumulator) {
         for (AsnField field : fields) {
-            if (field.isChoice() && !field.isExplicit() && field.isOptional()) {
+            if (field.isDecoderHoistsImplicitChoice()
+                    && field.isChoice() && !field.isExplicit() && field.isOptional()) {
                 accumulator[0]++;
                 if (field.isRepeated()) {
                     accumulator[1]++;
