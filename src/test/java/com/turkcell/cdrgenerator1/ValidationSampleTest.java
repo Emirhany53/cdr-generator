@@ -1,0 +1,211 @@
+package com.turkcell.cdrgenerator1;
+
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
+import com.turkcell.cdrgenerator1.config.AiConfigProperties;
+import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
+import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
+import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
+import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
+import com.turkcell.cdrgenerator1.generator.FieldValueGenerator;
+import com.turkcell.cdrgenerator1.generator.TbcdCodec;
+import com.turkcell.cdrgenerator1.generator.source.RandomValueSource;
+import com.turkcell.cdrgenerator1.generator.source.UserProvidedValueSource;
+import com.turkcell.cdrgenerator1.model.AsnStructure;
+import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
+import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
+import com.turkcell.cdrgenerator1.service.BerEncoderService;
+import com.turkcell.cdrgenerator1.service.CdrStructureReaderService;
+import com.turkcell.cdrgenerator1.service.FixedWidthTextFormatter;
+import com.turkcell.cdrgenerator1.service.StructureParserService;
+import com.turkcell.cdrgenerator1.service.TlvWriter;
+import com.turkcell.cdrgenerator1.service.verify.BerFinding;
+import com.turkcell.cdrgenerator1.service.verify.BerVerificationResult;
+import com.turkcell.cdrgenerator1.service.verify.BerVerifier;
+import com.turkcell.cdrgenerator1.service.verify.TlvReader;
+import com.turkcell.cdrgenerator1.service.verify.rule.DuplicateTagRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.IntegerRangeRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.NamedNumberRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.SetOrderingRule;
+import com.turkcell.cdrgenerator1.service.verify.rule.TagShapeRule;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.yaml.snakeyaml.Yaml;
+import tools.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Writes one sample record per ASN.1 family to {@code target/validation/}, for
+ * decoding in ASN1VE and - where the family is supported there - for sending to
+ * EMM.
+ *
+ * <p>These are the app's own bytes: the same parser, generator, encoder and
+ * shipped field rules the API uses, with the AI provider left out so the sample
+ * is reproducible without a network call. The self-check verdict travels with
+ * each file in {@code manifest.tsv}, so a disagreement between this project and
+ * ASN1VE is visible as a disagreement, not as a mystery.</p>
+ *
+ * <p>The families are chosen to cover one of each structural shape the
+ * architecture audit found, not to be a sample of what Turkcell generates most:
+ * a CHOICE root ({@code MMTelChargingDataTypes}, {@code LTE-R10}), a root type
+ * that tags itself ({@code Poc}, {@code NRTRDETadigidImsiLookup},
+ * {@code Audit_Record_Collection_St}), APPLICATION tags inherited through a
+ * type ({@code TAP-0309}, {@code TAP0311}, {@code FDRInput}), a declaration
+ * wrapped after its name ({@code CME20R7TurkCellber}), and a module whose
+ * header omits IMPLICIT TAGS so every tagged field carries an EXPLICIT wrapper
+ * ({@code CDRDatamartPEPSIivr}, {@code BroadSoft2Tesla}) - the one assumption
+ * in the encoder that no capture has confirmed yet.</p>
+ */
+class ValidationSampleTest {
+
+    private static final Path OUTPUT_DIR = Path.of("target", "validation");
+
+    private static final List<String> FAMILIES = List.of(
+            "MMTelChargingDataTypes",
+            "IMSChargingDataTypes",
+            "LTE-R10",
+            "GGSNTurkcellCdrR7",
+            "TAP-0309",
+            "TAP0311",
+            "NRTRDEINFLOWV0201",
+            "NRTRDETadigidImsiLookup",
+            "FDRInput",
+            "Poc",
+            "Audit_Record_Collection_St",
+            "CME20R7TurkCellber",
+            "CDRDatamartPEPSIivr",
+            "BroadSoft2Tesla");
+
+    private static StructureParserService parser;
+    private static CdrRecordBuilder builder;
+    private static BerEncoderService encoder;
+    private static BerVerifier verifier;
+
+    @BeforeAll
+    static void wireTheRealPipelineWithoutTheAiProvider() throws Exception {
+        CdrConfigProperties config = new CdrConfigProperties();
+        config.setDataStructurePath("src/main/resources/datastructure.json");
+        config.setDefaultRecordCount(1);
+        config.setMaxRecordCount(100);
+
+        parser = new StructureParserService(
+                new CdrStructureReaderService(config, new ObjectMapper()),
+                new AsnTypeRegistryBuilder(), new AsnFieldTreeResolver());
+        parser.init();
+
+        AiConfigProperties ai = new AiConfigProperties();
+        ai.setFieldRules(loadShippedRules());
+
+        AsnSizeExtractor sizes = new AsnSizeExtractor();
+        BcdTimestampFactory timestamps = new BcdTimestampFactory();
+        builder = new CdrRecordBuilder(parser, timestamps, config, List.of(
+                new UserProvidedValueSource(),
+                new RandomValueSource(new FieldValueGenerator(
+                        new TbcdCodec(), ai, sizes, timestamps))));
+        encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
+
+        SelfCheckProperties selfCheck = new SelfCheckProperties();
+        selfCheck.setMode(SelfCheckProperties.Mode.WARN);
+        verifier = new BerVerifier(new TlvReader(), selfCheck, List.of(
+                new DuplicateTagRule(), new SetOrderingRule(), new TagShapeRule(),
+                new NamedNumberRule(), new IntegerRangeRule(sizes)));
+    }
+
+    @Test
+    void writeOneSamplePerFamily() throws Exception {
+        Files.createDirectories(OUTPUT_DIR);
+        List<String> manifest = new ArrayList<>();
+        manifest.add(String.join("\t", "module", "root", "rootShape", "taggingMode",
+                "bytes", "sha256", "head", "errors", "warnings", "file"));
+
+        for (String name : FAMILIES) {
+            AsnStructure structure = parser.getStructureByName(name);
+            assertTrue(structure != null && structure.getFields() != null
+                            && !structure.getFields().isEmpty(),
+                    "sample family '" + name + "' must resolve to a record");
+
+            Map<String, Object> record = builder.buildRecordFromFields(structure.getFields(), Map.of());
+            byte[] bytes = encoder.encodeRecord(structure, record);
+            BerVerificationResult result = verifier.verify(structure, bytes);
+
+            Path file = OUTPUT_DIR.resolve(name + ".ber");
+            Files.write(file, bytes);
+
+            String rootShape = structure.getRootTagCarrier() != null
+                    ? "type-tagged (" + structure.getRootTagCarrier().getTagClass() + " "
+                            + structure.getRootTagCarrier().getTagNumber() + ")"
+                    : structure.isChoiceRoot() ? "CHOICE alternative"
+                    : structure.isSetRoot() ? "universal SET" : "universal SEQUENCE";
+
+            manifest.add(String.join("\t", name,
+                    structure.isChoiceRoot() && structure.getChoiceTypeName() != null
+                            ? structure.getChoiceTypeName() : structure.getStructureName(),
+                    rootShape,
+                    taggingMode(name),
+                    String.valueOf(bytes.length),
+                    sha256(bytes),
+                    HexFormat.of().formatHex(bytes, 0, Math.min(8, bytes.length)),
+                    String.valueOf(result.errors().size()),
+                    String.valueOf(result.findings().size() - result.errors().size()),
+                    file.toString()));
+
+            for (BerFinding finding : result.findings()) {
+                Files.writeString(OUTPUT_DIR.resolve(name + ".findings.txt"),
+                        finding + System.lineSeparator(),
+                        StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND);
+            }
+        }
+
+        Files.write(OUTPUT_DIR.resolve("manifest.tsv"), manifest, StandardCharsets.UTF_8);
+        manifest.forEach(System.out::println);
+        System.out.println("SAMPLES written to " + OUTPUT_DIR.toAbsolutePath());
+    }
+
+    /** The module header's tagging mode, which decides what a bare [n] means. */
+    private static String taggingMode(String moduleName) {
+        return new AsnTypeRegistryBuilder()
+                .detectTaggingMode(parser.getRawContents(moduleName)).name();
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)).substring(0, 16);
+    }
+
+    /** Reads the app.cdr.ai.field-rules node of the shipped application.yml. */
+    @SuppressWarnings("unchecked")
+    private static List<AiConfigProperties.FieldRule> loadShippedRules() throws Exception {
+        Map<String, Object> root;
+        try (InputStream in = Files.newInputStream(Path.of("src/main/resources/application.yml"))) {
+            root = new Yaml().load(in);
+        }
+        Map<String, Object> app = (Map<String, Object>) root.get("app");
+        Map<String, Object> cdr = (Map<String, Object>) app.get("cdr");
+        Map<String, Object> ai = (Map<String, Object>) cdr.get("ai");
+        List<Map<String, Object>> raw = (List<Map<String, Object>>) ai.get("field-rules");
+
+        List<AiConfigProperties.FieldRule> rules = new ArrayList<>(raw.size());
+        for (Map<String, Object> entry : raw) {
+            AiConfigProperties.FieldRule rule = new AiConfigProperties.FieldRule();
+            rule.setName((String) entry.get("name"));
+            rule.setMatch((List<String>) entry.get("match"));
+            rule.setDescription((String) entry.get("description"));
+            rule.setPattern((String) entry.get("pattern"));
+            rule.setExamples((List<String>) entry.get("examples"));
+            rule.setOctetStringContent((String) entry.get("octet-string-content"));
+            rules.add(rule);
+        }
+        return rules;
+    }
+}

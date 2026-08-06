@@ -342,6 +342,11 @@ public class StructureParserService {
         return parsedStructures.get(name);
     }
 
+    /** The module's raw ASN.1 text, as read from the data file. Null when unknown. */
+    public String getRawContents(String name) {
+        return rawContentsByName.get(name);
+    }
+
     /**
      * Returns the structure for {@code name}. When a non-empty CHOICE selection
      * is supplied the structure is re-resolved from its stored raw contents so
