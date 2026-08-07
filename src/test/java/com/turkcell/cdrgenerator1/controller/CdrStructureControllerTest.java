@@ -99,7 +99,7 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr")).thenReturn(structure);
+        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
 
         mockMvc.perform(get("/api/cdr/structures/SMSCBerCdr"))
                 .andExpect(status().isOk())
@@ -108,7 +108,7 @@ class CdrStructureControllerTest {
     }
 
     @Test
-    void structureDetailsWithChoiceSelectionQueryParamUsesTwoArgOverload() throws Exception {
+    void structureDetailsWithChoiceSelectionQueryParamPassesTheSelection() throws Exception {
         AsnStructure structure = AsnStructure.builder()
                 .structureName("Sms")
                 .choiceRoot(true)
@@ -116,13 +116,32 @@ class CdrStructureControllerTest {
                 .choiceAlternatives(List.of("callRecord", "cmdRecord"))
                 .fields(List.of(leaf("cmdRecord", "CmdRecord", 0)))
                 .build();
-        when(parserService.getStructureByName("Sms", Map.of("Sms", "cmdRecord")))
+        when(parserService.getStructureByName("Sms", Map.of("Sms", "cmdRecord"), null))
                 .thenReturn(structure);
 
         mockMvc.perform(get("/api/cdr/structures/Sms").param("Sms", "cmdRecord"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fields[0].fieldName").value("cmdRecord"))
                 .andExpect(jsonPath("$.choiceAlternatives[1]").value("cmdRecord"));
+    }
+
+    /**
+     * Spring binds every query parameter into the catch-all choiceSelections
+     * map. rootType is bound on its own too, so the controller has to strip it
+     * out - otherwise the resolver is handed "rootType" as a CHOICE type name.
+     */
+    @Test
+    void rootTypeQueryParamIsPassedSeparatelyAndKeptOutOfChoiceSelections() throws Exception {
+        AsnStructure structure = AsnStructure.builder()
+                .structureName("IMSCDRS")
+                .fields(List.of(leaf("sessionId", "IA5String", 1)))
+                .build();
+        when(parserService.getStructureByName("IMSCDRS", null, "TokensCSCF"))
+                .thenReturn(structure);
+
+        mockMvc.perform(get("/api/cdr/structures/IMSCDRS").param("rootType", "TokensCSCF"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fields[0].fieldName").value("sessionId"));
     }
 
     @Test
@@ -139,7 +158,7 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1), leaf("duration", "INTEGER", 4)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr", null)).thenReturn(structure);
+        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 3 }
@@ -167,7 +186,7 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr", null)).thenReturn(structure);
+        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 5000 }
@@ -185,7 +204,7 @@ class CdrStructureControllerTest {
                 .structureName("DemoVoice")
                 .fields(List.of(leaf("msisdn", "IA5String", 0)))
                 .build();
-        when(parserService.parseFromContents(anyString(), anyString(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
                 .thenReturn(structure);
 
         String body = """
@@ -202,7 +221,7 @@ class CdrStructureControllerTest {
 
     @Test
     void generateAsciiWithUnparsableInlineContentsReturnsBadRequest() throws Exception {
-        when(parserService.parseFromContents(anyString(), anyString(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
                 .thenReturn(null);
 
         String body = """
@@ -237,7 +256,7 @@ class CdrStructureControllerTest {
                 .fields(List.of(leaf("msisdn", "IA5String", 0)))
                 .choiceRoot(false)
                 .build();
-        when(parserService.parseFromContents(anyString(), anyString(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
                 .thenReturn(structure);
 
         String body = """
@@ -262,7 +281,7 @@ class CdrStructureControllerTest {
 
     @Test
     void parseInlineWithUnparsableContentsReturnsBadRequest() throws Exception {
-        when(parserService.parseFromContents(anyString(), anyString(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
                 .thenReturn(null);
 
         String body = """

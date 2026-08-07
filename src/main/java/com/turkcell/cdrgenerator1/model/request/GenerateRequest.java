@@ -16,5 +16,12 @@ public class GenerateRequest {
 
     private Map<String, String> choiceSelections;
 
+    /**
+     * Opsiyonel: kaydin kokü sayilacak tip adi. Modul birden cok ust tip
+     * tanimliyorsa ve tuketen sistem bunlardan birine bagliysa gerekir;
+     * modulde boyle bir tip yoksa yok sayilir.
+     */
+    private String rootType;
+
     private Integer recordCount;
 }

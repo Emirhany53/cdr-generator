@@ -120,8 +120,22 @@ public class StructureParserService {
         return buildStructure(structureName, contents, choiceSelections);
     }
 
+    /**
+     * Parses inline ASN.1 content, honouring the caller's CHOICE selection and
+     * root type (see {@link #resolveRootTypeName}).
+     */
+    public AsnStructure parseFromContents(String structureName, String contents,
+                                          Map<String, String> choiceSelections, String rootType) {
+        return buildStructure(structureName, contents, choiceSelections, rootType);
+    }
+
     private AsnStructure buildStructure(String suppliedName, String contents,
                                         Map<String, String> choiceSelections) {
+        return buildStructure(suppliedName, contents, choiceSelections, null);
+    }
+
+    private AsnStructure buildStructure(String suppliedName, String contents,
+                                        Map<String, String> choiceSelections, String rootType) {
         Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(contents);
         if (registry.isEmpty()) {
             return null;
@@ -130,7 +144,7 @@ public class StructureParserService {
         AsnTaggingMode taggingMode = registryBuilder.detectTaggingMode(contents);
         Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
 
-        String rootTypeName = selectRootTypeName(registry, selections, taggingMode);
+        String rootTypeName = resolveRootTypeName(registry, selections, taggingMode, rootType);
         AsnFieldTreeResolver.ResolvedRoot root =
                 fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
         AsnFieldTreeResolver.ChoiceAlternatives choiceInfo =
@@ -146,6 +160,42 @@ public class StructureParserService {
                 .choiceAlternatives(choiceInfo != null ? choiceInfo.alternativeNames() : null)
                 .rootTagCarrier(root.rootTagCarrier())
                 .build();
+    }
+
+    /**
+     * The root type to resolve: the caller's when they named one, otherwise
+     * {@link #selectRootTypeName}'s pick.
+     *
+     * <p>The heuristic answers "which type is this module's record?", which is
+     * the right question when a module describes one record. It is the wrong
+     * question when the module describes several and the consuming system is
+     * bound to a particular one: {@code IMSCDRS} defines
+     * {@code Cdrs ::= CHOICE {tokenMTAS, tokenCSCF, mergedIMS}}, the heuristic
+     * correctly picks {@code Cdrs} and generates its first alternative, and EMM
+     * rejected the file because its CSCFColl flow decodes {@code TokensCSCF}
+     * directly - "the type IMSCDRS.TokensCSCF was probably not set and is not
+     * optional", reported against the top level with no field path under it,
+     * because our {@code A0} wrapper is not the bare SEQUENCE it was waiting
+     * for. Which type a flow is bound to is EMM configuration; nothing in the
+     * schema text records it, so it has to be something the caller can say.</p>
+     *
+     * <p>An unknown name is ignored rather than rejected, so a stale or
+     * misspelled override degrades to the previous behaviour instead of
+     * failing the request.</p>
+     */
+    private String resolveRootTypeName(Map<String, AsnTypeDefinition> registry,
+                                       Map<String, String> choiceSelections,
+                                       AsnTaggingMode taggingMode,
+                                       String requestedRootType) {
+        if (Objects.nonNull(requestedRootType) && !requestedRootType.isBlank()) {
+            if (registry.containsKey(requestedRootType)) {
+                log.debug("Using caller-supplied root type '{}'", requestedRootType);
+                return requestedRootType;
+            }
+            log.warn("Requested root type '{}' is not defined in this module; falling back to the "
+                    + "auto-selected root. Known types: {}", requestedRootType, registry.keySet());
+        }
+        return selectRootTypeName(registry, choiceSelections, taggingMode);
     }
 
     /**
@@ -354,14 +404,27 @@ public class StructureParserService {
      * returned unchanged.
      */
     public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections) {
-        if (Objects.isNull(choiceSelections) || choiceSelections.isEmpty()) {
+        return getStructureByName(name, choiceSelections, null);
+    }
+
+    /**
+     * Returns the structure for {@code name}, re-resolved from its stored raw
+     * contents when the caller narrows it with a CHOICE selection or a root
+     * type (see {@link #resolveRootTypeName}). With neither, the pre-parsed
+     * structure is returned unchanged.
+     */
+    public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections,
+                                           String rootType) {
+        boolean narrowed = (Objects.nonNull(choiceSelections) && !choiceSelections.isEmpty())
+                || (Objects.nonNull(rootType) && !rootType.isBlank());
+        if (!narrowed) {
             return parsedStructures.get(name);
         }
         String contents = rawContentsByName.get(name);
         if (Objects.isNull(contents)) {
             return parsedStructures.get(name);
         }
-        return buildStructure(name, contents, choiceSelections);
+        return buildStructure(name, contents, choiceSelections, rootType);
     }
 
     public List<String> getAllStructureNames() {

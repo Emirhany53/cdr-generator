@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,6 +45,8 @@ public class CdrStructureController {
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
     private static final String ATTACHMENT_TEMPLATE = "attachment; filename=\"%s%s\"";
+    /** Query parameter bound on its own, so it must not land in choiceSelections. */
+    private static final String ROOT_TYPE_PARAM = "rootType";
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
@@ -64,15 +67,21 @@ public class CdrStructureController {
                     + "ise varsayılan alternatif döner; farklı bir alternatif istemek için "
                     + "'choiceSelections' anahtarını query parametresi olarak gönder "
                     + "(ör. ?TokenCDR=refillRecordV2 — anahtar CHOICE tipinin adı, değer alternatifin adı). "
+                    + "Modül birden çok üst tip tanımlıyorsa 'rootType' ile hangisinin kayıt "
+                    + "sayılacağı seçilebilir (ör. ?rootType=TokensCSCF). "
                     + "Yapı adı bilinmiyorsa 404 döner.")
     @GetMapping("/structures/{structureName}")
     public ResponseEntity<AsnStructure> getStructureDetails(
             @PathVariable String structureName,
+            @RequestParam(required = false) String rootType,
             @RequestParam(required = false) Map<String, String> choiceSelections) {
         log.info("Fetching field definitions for structure: {}", structureName);
-        AsnStructure structure = Objects.nonNull(choiceSelections) && !choiceSelections.isEmpty()
-                ? structureParserService.getStructureByName(structureName, choiceSelections)
-                : structureParserService.getStructureByName(structureName);
+        // Spring binds EVERY query parameter into the untyped choiceSelections
+        // map, rootType included; left in, it would be offered to the resolver
+        // as a CHOICE type name.
+        Map<String, String> selections = withoutReservedKeys(choiceSelections);
+        AsnStructure structure = structureParserService
+                .getStructureByName(structureName, selections, rootType);
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(structureName);
         }
@@ -91,12 +100,28 @@ public class CdrStructureController {
         }
         log.info("Parsing inline ASN.1 content (name hint: {})", request.getStructureName());
         AsnStructure structure = structureParserService.parseFromContents(
-                request.getStructureName(), request.getContents(), request.getChoiceSelections());
+                request.getStructureName(), request.getContents(), request.getChoiceSelections(),
+                request.getRootType());
         if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                 || structure.getFields().isEmpty()) {
             throw new IllegalArgumentException("Content could not be parsed into any ASN.1 structure");
         }
         return ResponseEntity.ok(structure);
+    }
+
+    /**
+     * Drops the query parameters that are bound separately from the catch-all
+     * {@code choiceSelections} map, so they are not mistaken for CHOICE type
+     * names. Returns null when nothing is left, which keeps the "no selection"
+     * fast path in {@code StructureParserService} intact.
+     */
+    private Map<String, String> withoutReservedKeys(Map<String, String> queryParameters) {
+        if (Objects.isNull(queryParameters) || queryParameters.isEmpty()) {
+            return null;
+        }
+        Map<String, String> selections = new LinkedHashMap<>(queryParameters);
+        selections.remove(ROOT_TYPE_PARAM);
+        return selections.isEmpty() ? null : selections;
     }
 
     @Operation(summary = "Tek bir örnek kaydı önizle",
@@ -179,7 +204,8 @@ public class CdrStructureController {
     private AsnStructure resolveStructure(GenerateRequest request, boolean inlineMode) {
         if (inlineMode) {
             AsnStructure structure = structureParserService.parseFromContents(
-                    request.getStructureName(), request.getContents(), request.getChoiceSelections());
+                    request.getStructureName(), request.getContents(), request.getChoiceSelections(),
+                    request.getRootType());
             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                     || structure.getFields().isEmpty()) {
                 throw new IllegalArgumentException(
@@ -191,7 +217,7 @@ public class CdrStructureController {
             throw new IllegalArgumentException("structureName is required when no content is provided");
         }
         AsnStructure structure = structureParserService.getStructureByName(
-                request.getStructureName(), request.getChoiceSelections());
+                request.getStructureName(), request.getChoiceSelections(), request.getRootType());
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }

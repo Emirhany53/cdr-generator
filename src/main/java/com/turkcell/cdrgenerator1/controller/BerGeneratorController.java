@@ -65,7 +65,9 @@ public class BerGeneratorController {
             description = "Bir veya daha fazla kaydı binary BER olarak kodlar ve indirilebilir "
                     + "bir .ber dosyası döner. Kayıtlı bir structureName ile ya da istek gövdesindeki "
                     + "'contents' alanına konan inline ASN.1 metniyle çalışır. CHOICE yapılarda "
-                    + "'choiceSelections' ile hangi alternatifin üretileceği seçilebilir.")
+                    + "'choiceSelections' ile hangi alternatifin üretileceği seçilebilir. "
+                    + "Modül birden çok üst tip tanımlıyorsa 'rootType' ile hangisinin kayıt "
+                    + "sayılacağı seçilebilir (ör. IMSCDRS için \"rootType\": \"TokensCSCF\").")
     @PostMapping("/generate-ber")
     public ResponseEntity<Resource> generateBerFile(@RequestBody GenerateBerRequest request) {
         boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
@@ -206,7 +208,8 @@ public class BerGeneratorController {
         if (inlineMode) {
             AsnStructure structure =
                     structureParserService.parseFromContents(request.getStructureName(),
-                            request.getContents(), request.getChoiceSelections());
+                            request.getContents(), request.getChoiceSelections(),
+                            request.getRootType());
             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                     || structure.getFields().isEmpty()) {
                 throw new IllegalArgumentException(
@@ -218,7 +221,7 @@ public class BerGeneratorController {
             throw new IllegalArgumentException("structureName is required when no content is provided");
         }
         AsnStructure structure = structureParserService.getStructureByName(
-                request.getStructureName(), request.getChoiceSelections());
+                request.getStructureName(), request.getChoiceSelections(), request.getRootType());
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }

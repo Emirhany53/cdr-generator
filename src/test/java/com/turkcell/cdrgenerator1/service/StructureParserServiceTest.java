@@ -227,6 +227,60 @@ class StructureParserServiceTest {
                 "the justification marker decides which side is padded");
     }
 
+    /**
+     * The IMSCDRS shape: one CHOICE over three record types. The heuristic picks
+     * the CHOICE and generates its first alternative, so the file goes out as
+     * {@code tokenMTAS} - and EMM's CSCFColl flow, which decodes
+     * {@code TokensCSCF} directly, rejected it. Which type a consuming flow is
+     * bound to is not written anywhere in the schema, so the caller has to be
+     * able to say it.
+     */
+    private static final String SEVERAL_TOP_TYPES = """
+            IMSCDRS DEFINITIONS ::=
+            BEGIN
+            Cdrs ::= CHOICE {
+                tokenMTAS [0] TokensMTAS,
+                tokenCSCF [1] TokensCSCF
+            }
+            TokensMTAS ::= SEQUENCE { originHost [2] IA5String OPTIONAL }
+            TokensCSCF ::= SEQUENCE {
+                sessionId  [1] IA5String OPTIONAL,
+                originHost [2] IA5String OPTIONAL
+            }
+            END
+            """;
+
+    @Test
+    void withoutAnOverrideTheUnreferencedChoiceStillWins() {
+        AsnStructure structure = parser.parseFromContents("IMSCDRS", SEVERAL_TOP_TYPES);
+
+        assertNotNull(structure);
+        assertTrue(structure.isChoiceRoot(), "the auto-selected root must stay the Cdrs CHOICE");
+        assertEquals("Cdrs", structure.getChoiceTypeName());
+    }
+
+    @Test
+    void aNamedRootTypeReplacesTheAutoSelectedOne() {
+        AsnStructure structure = parser.parseFromContents(
+                "IMSCDRS", SEVERAL_TOP_TYPES, null, "TokensCSCF");
+
+        assertNotNull(structure);
+        assertFalse(structure.isChoiceRoot(),
+                "TokensCSCF is a SEQUENCE; encoding it must not go through the CHOICE wrapper "
+                        + "that made EMM report 'IMSCDRS.TokensCSCF was probably not set'");
+        assertEquals(2, structure.getFields().size());
+        assertEquals("sessionId", structure.getFields().get(0).getFieldName());
+    }
+
+    @Test
+    void anUnknownRootTypeFallsBackInsteadOfFailing() {
+        AsnStructure structure = parser.parseFromContents(
+                "IMSCDRS", SEVERAL_TOP_TYPES, null, "TypoedName");
+
+        assertNotNull(structure, "a stale override must degrade to the auto-selected root");
+        assertTrue(structure.isChoiceRoot());
+    }
+
     @Test
     void emptyContentYieldsNull() {
         assertNull(parser.parseFromContents("X", "   "));

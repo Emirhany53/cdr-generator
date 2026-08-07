@@ -19,6 +19,15 @@ public class GenerateBerRequest {
     private Integer recordCount;             // optional record count
 
     /**
+     * The module type to encode as the record, overriding the auto-selected
+     * root. Needed when a module defines several top types and the consuming
+     * system is bound to one of them - EMM's CSCFColl flow decodes
+     * {@code IMSCDRS.TokensCSCF}, not the {@code Cdrs} CHOICE that wraps it.
+     * Ignored when the module defines no such type.
+     */
+    private String rootType;
+
+    /**
      * Convenience alias so a request body using the JSON key {@code "content"}
      * (singular) still populates {@code contents}. Jackson binds the "content"
      * property to this setter.

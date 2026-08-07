@@ -21,6 +21,13 @@ public class ParseInlineRequest {
     /** Opsiyonel: CHOICE tipleri için hangi alternatifin seçileceği. */
     private Map<String, String> choiceSelections;
 
+    /**
+     * Opsiyonel: kaydın kökü sayılacak tip adı. Modül birden çok üst tip
+     * tanımlıyorsa ve tüketen sistem bunlardan birine bağlıysa gerekir;
+     * modülde böyle bir tip yoksa yok sayılır.
+     */
+    private String rootType;
+
 
     public void setContent(String content) {
         this.contents = content;

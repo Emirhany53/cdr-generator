@@ -70,21 +70,47 @@ class ValidationSampleTest {
 
     private static final Path OUTPUT_DIR = Path.of("target", "validation");
 
-    private static final List<String> FAMILIES = List.of(
-            "MMTelChargingDataTypes",
-            "IMSChargingDataTypes",
-            "LTE-R10",
-            "GGSNTurkcellCdrR7",
-            "TAP-0309",
-            "TAP0311",
-            "NRTRDEINFLOWV0201",
-            "NRTRDETadigidImsiLookup",
-            "FDRInput",
-            "Poc",
-            "Audit_Record_Collection_St",
-            "CME20R7TurkCellber",
-            "CDRDatamartPEPSIivr",
-            "BroadSoft2Tesla");
+    /**
+     * A module to sample, and optionally the type inside it to encode as the
+     * record. A null {@code rootType} leaves the choice to the parser's own
+     * heuristic, which is what every family wants until a consuming flow says
+     * otherwise.
+     *
+     * @param fileName distinguishes two samples of the same module, so an
+     *                 alternative reading can be sent to EMM alongside the
+     *                 default one rather than instead of it.
+     */
+    private record Sample(String module, String rootType, String fileName) {
+        Sample(String module) {
+            this(module, null, module);
+        }
+    }
+
+    private static final List<Sample> FAMILIES = List.of(
+            new Sample("MMTelChargingDataTypes"),
+            new Sample("IMSChargingDataTypes"),
+            new Sample("IMSCDRS"),
+            // EMM rejected the default reading: its CSCFColl flow decodes
+            // IMSCDRS.TokensCSCF, not the Cdrs CHOICE the heuristic picks. The
+            // two extra samples are the two ways to give it one - the CHOICE
+            // with tokenCSCF selected (A1 wrapper) and the bare SEQUENCE.
+            new Sample("IMSCDRS", "TokensCSCF", "IMSCDRS-TokensCSCF"),
+            new Sample("LTE-R10"),
+            new Sample("GGSNTurkcellCdrR7"),
+            new Sample("TAP-0309"),
+            new Sample("TAP0311"),
+            new Sample("NRTRDEINFLOWV0201"),
+            new Sample("NRTRDETadigidImsiLookup"),
+            new Sample("FDRInput"),
+            new Sample("Poc"),
+            new Sample("Audit_Record_Collection_St"),
+            new Sample("CME20R7TurkCellber"),
+            new Sample("CDRDatamartPEPSIivr"),
+            new Sample("BroadSoft2Tesla"));
+
+    /** CHOICE alternative to select per sample, keyed by output file name. */
+    private static final Map<String, Map<String, String>> CHOICE_SELECTIONS = Map.of(
+            "IMSCDRS", Map.of("Cdrs", "tokenCSCF"));
 
     private static StructureParserService parser;
     private static CdrRecordBuilder builder;
@@ -128,8 +154,10 @@ class ValidationSampleTest {
         manifest.add(String.join("\t", "module", "root", "rootShape", "taggingMode",
                 "bytes", "sha256", "head", "errors", "warnings", "file"));
 
-        for (String name : FAMILIES) {
-            AsnStructure structure = parser.getStructureByName(name);
+        for (Sample sample : FAMILIES) {
+            String name = sample.fileName();
+            AsnStructure structure = parser.getStructureByName(sample.module(),
+                    CHOICE_SELECTIONS.get(name), sample.rootType());
             assertTrue(structure != null && structure.getFields() != null
                             && !structure.getFields().isEmpty(),
                     "sample family '" + name + "' must resolve to a record");
@@ -149,9 +177,10 @@ class ValidationSampleTest {
 
             manifest.add(String.join("\t", name,
                     structure.isChoiceRoot() && structure.getChoiceTypeName() != null
-                            ? structure.getChoiceTypeName() : structure.getStructureName(),
+                            ? structure.getChoiceTypeName()
+                            : sample.rootType() != null ? sample.rootType() : structure.getStructureName(),
                     rootShape,
-                    taggingMode(name),
+                    taggingMode(sample.module()),
                     String.valueOf(bytes.length),
                     sha256(bytes),
                     HexFormat.of().formatHex(bytes, 0, Math.min(8, bytes.length)),
