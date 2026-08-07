@@ -157,4 +157,103 @@ class DuplicateTagRuleTest {
 
         assertEquals(2, run(data, field("epf1Service", false), false).get(0).byteOffset());
     }
+
+    // --- X.680 25.6: which repeats a SEQUENCE's own ordering already resolves ---
+
+    private static AsnField member(String name, Integer tag, boolean optional) {
+        return AsnField.builder().fieldName(name).tagNumber(tag).optional(optional).build();
+    }
+
+    private static AsnField sequenceBody(AsnField... members) {
+        return AsnField.builder().fieldName("body").children(List.of(members)).build();
+    }
+
+    /**
+     * The SDPAdjLikya shape: {@code dedicatedAccount1Action [17] OPTIONAL} and
+     * {@code dedicatedAccount6Action [17] OPTIONAL} with nothing but OPTIONALs
+     * between them. Every component here may be absent, so a decoder meeting a
+     * {@code [17]} cannot tell which member it belongs to - the file is not
+     * decodable and the severity must stay ERROR.
+     */
+    @Test
+    void aRepeatBetweenTwoOmissibleMembersStaysAnError() {
+        AsnField body = sequenceBody(
+                member("dedicatedAccount1Action", 17, true),
+                member("dedicatedAccount1Amount", 16, true),
+                member("dedicatedAccount6Action", 17, true));
+        // SEQUENCE { [17], [16], [17] }
+        byte[] data = hex("30 09 91 01 AA 90 01 BB 91 01 CC");
+
+        List<BerFinding> findings = run(data, body, false);
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(FindingSeverity.ERROR, findings.get(0).severity(),
+                "nothing mandatory separates the two [17]s, so position cannot resolve them");
+    }
+
+    /**
+     * The HTSCevapsiz / BDCevapsiz shape: a MANDATORY anonymous
+     * {@code recordType CHOICE { mSOriginating [10] IMPLICIT IA5String, ... }}
+     * first, then {@code cellID [10] OPTIONAL} further down. A decoder must
+     * consume the mandatory member positionally, so the first {@code [10]} can
+     * only be recordType and the second can only be cellID. X.680 25.6 asks
+     * nothing of tags a mandatory component separates, so this is reported but
+     * must not block generation.
+     */
+    @Test
+    void aRepeatAMandatoryMemberSeparatesIsOnlyAWarning() {
+        AsnField recordType = AsnField.builder()
+                .fieldName("recordType").choice(true)
+                .children(List.of(member("mSOriginating", 10, false)))
+                .build();
+        AsnField body = sequenceBody(
+                recordType,
+                member("aNumber", 2, true),
+                member("cellID", 10, true));
+        // SEQUENCE { [10], [2], [10] }
+        byte[] data = hex("30 09 8A 01 AA 82 01 BB 8A 01 CC");
+
+        List<BerFinding> findings = run(data, body, false);
+
+        assertEquals(1, findings.size(), findings.toString());
+        assertEquals(FindingSeverity.WARNING, findings.get(0).severity(),
+                "the mandatory recordType is consumed first, so the repeat is decodable");
+        assertTrue(findings.get(0).message().contains("X.680 25.6"),
+                "the reason belongs in the message: " + findings.get(0).message());
+    }
+
+    /**
+     * The same members, but with the first one omissible. Now nothing forces the
+     * decoder's hand and the body is ambiguous again - this is what keeps the
+     * relaxation narrow rather than a blanket downgrade of every repeat.
+     */
+    @Test
+    void theSameShapeIsAnErrorOnceTheSeparatingMemberBecomesOptional() {
+        AsnField body = sequenceBody(
+                member("recordType", 10, true),
+                member("aNumber", 2, true),
+                member("cellID", 10, true));
+        byte[] data = hex("30 09 8A 01 AA 82 01 BB 8A 01 CC");
+
+        assertEquals(FindingSeverity.ERROR, run(data, body, false).get(0).severity());
+    }
+
+    /**
+     * A SET carries no positional information at all - X.680 27.3 requires every
+     * component tag to be distinct - so the mandatory-member reasoning must not
+     * apply there however the members are marked.
+     */
+    @Test
+    void aSetIsNeverResolvedByPosition() {
+        AsnField body = AsnField.builder()
+                .fieldName("body").set(true)
+                .children(List.of(
+                        member("first", 10, false),
+                        member("second", 2, true),
+                        member("third", 10, true)))
+                .build();
+        byte[] data = hex("31 09 8A 01 AA 82 01 BB 8A 01 CC");
+
+        assertEquals(FindingSeverity.ERROR, run(data, body, false).get(0).severity());
+    }
 }
