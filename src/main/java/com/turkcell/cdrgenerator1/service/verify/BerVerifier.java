@@ -322,35 +322,31 @@ public class BerVerifier {
      * a second child with the same tag borrow the same field and look legitimate.
      */
     private AsnField takeMatching(List<AsnField> remaining, TlvNode child) {
+        // One pass, in DECLARATION order, asking each field the question that
+        // fits it - a tagged field about its own tag, an untagged one about the
+        // universal tag its type produces (exactly what
+        // wrapLeafInUniversalTlv/containerUniversalTag compute on the encoder
+        // side) or, for a scalar CHOICE, about its selected alternative's tag.
+        //
+        // The order is the whole point. This used to sweep every TAGGED field
+        // first and only then the untagged ones, which handed a node to a field
+        // declared far later in the body whenever an earlier untagged CHOICE
+        // could have produced the same tag. HTSCevapsiz and BDCevapsiz open with
+        // an anonymous "recordType CHOICE { mSOriginating [10] IMPLICIT
+        // IA5String, ... }" and declare "cellID [10] CellID" further down; the
+        // record's first TLV, 8A .. written by recordType, was matched to cellID
+        // instead, and the two fields disagree about everything - cellID is
+        // EXPLICIT, so the checks that followed reported a correctly encoded
+        // record as "EXPLICIT tag should be constructed" and "should wrap
+        // exactly one TLV but wraps 0". In strict mode that refused the file.
+        //
+        // Declaration order is the right tiebreak because the encoder writes a
+        // body in declaration order and this method consumes each field as it
+        // matches: the first field that COULD have produced this node is the one
+        // that DID.
         for (Iterator<AsnField> it = remaining.iterator(); it.hasNext(); ) {
             AsnField candidate = it.next();
-            if (Objects.isNull(candidate.getTagNumber())) {
-                continue;
-            }
-            BerTagClass tagClass = Objects.nonNull(candidate.getTagClass())
-                    ? candidate.getTagClass()
-                    : BerTagClass.CONTEXT;
-            if (child.hasTag(tagClass, candidate.getTagNumber())) {
-                it.remove();
-                return candidate;
-            }
-        }
-        // An untagged field carries the universal tag of its OWN type, which IS
-        // predictable - it is exactly what wrapLeafInUniversalTlv/
-        // containerUniversalTag compute on the encoder side. Matching on that
-        // number, not merely "any untagged field, in order", is what this loop
-        // used to do - and it broke the moment a body held two or more untagged
-        // OPTIONAL siblings and one of the earlier ones was omitted: the first
-        // remaining candidate was no longer the one that actually produced this
-        // byte, so a later sibling's bytes got checked against the wrong field's
-        // rules. 288 of the 808 modules' bodies carry two or more untagged
-        // fields, so this was not a corner case.
-        for (Iterator<AsnField> it = remaining.iterator(); it.hasNext(); ) {
-            AsnField candidate = it.next();
-            if (Objects.nonNull(candidate.getTagNumber())) {
-                continue;
-            }
-            if (untaggedFieldWouldProduce(candidate, child)) {
+            if (fieldWouldProduce(candidate, child)) {
                 it.remove();
                 return candidate;
             }

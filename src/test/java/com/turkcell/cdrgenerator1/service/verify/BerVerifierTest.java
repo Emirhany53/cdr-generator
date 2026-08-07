@@ -272,4 +272,38 @@ class BerVerifierTest {
                         .anyMatch(f -> f.message().contains("No field of this body carries tag")),
                 "a tag no member could have produced must still be reported: " + result.findings());
     }
+
+    /**
+     * The HTSCevapsiz / BDCevapsiz shape. Those modules open with an anonymous
+     * {@code recordType CHOICE { mSOriginating [10] IMPLICIT IA5String, ... }}
+     * and declare {@code cellID [10] CellID OPTIONAL} much further down, so two
+     * members of the same body can produce a {@code [10]} node.
+     *
+     * <p>Matching used to sweep every TAGGED field before any untagged one, so
+     * the record's first TLV - written by {@code recordType} - was handed to
+     * {@code cellID}. The two disagree about everything: {@code cellID} carries
+     * the module's default EXPLICIT, so the checks that followed reported a
+     * correctly encoded record as "EXPLICIT tag should be constructed" and
+     * "should wrap exactly one TLV but wraps 0", and strict mode refused to
+     * return the file at all.</p>
+     */
+    @Test
+    void anUntaggedChoiceKeepsItsNodeAgainstALaterFieldWithTheSameTag() {
+        AsnField recordType = AsnField.builder()
+                .fieldName("recordType").choice(true)
+                .children(List.of(leaf("mSOriginating", 10)))
+                .build();
+        AsnField cellID = AsnField.builder()
+                .fieldName("cellID").tagNumber(10).explicit(true).optional(true)
+                .fieldType("IA5String")
+                .build();
+        // SEQUENCE { [10] primitive "AB" } - recordType's alternative, IMPLICIT.
+        byte[] data = hex("30 04 8A 02 41 42");
+
+        BerVerificationResult result = verify(List.of(recordType, cellID), data);
+
+        assertTrue(result.isClean(),
+                "the first field that could have produced this node is the one that did; "
+                        + "handing it to the later EXPLICIT field invents errors: " + result.findings());
+    }
 }
