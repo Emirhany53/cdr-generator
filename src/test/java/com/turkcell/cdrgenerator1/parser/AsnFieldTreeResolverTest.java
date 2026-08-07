@@ -260,8 +260,66 @@ class AsnFieldTreeResolverTest {
         assertFalse(fields.get(2).isExplicit(),
                 "scalar SET (servedPDPPDNAddress-shape) must be neutralized too - 3GPP TS 32.298 has "
                         + "no universal SET layer under [9]");
-        assertFalse(fields.get(3).isExplicit(),
-                "a BOOLEAN field must be neutralized as well; the standard writes [11] IMPLICIT here");
+        assertTrue(fields.get(3).isExplicit(),
+                "a scalar BOOLEAN keeps its written EXPLICIT: see explicitSurvivesOnAScalarPrimitive");
+    }
+
+    /**
+     * The line the evidence actually draws. Sweeping both EMM-accepted MMTel
+     * captures (17 823 records, two nodes) the wrapper is absent in 100% of the
+     * discriminating fields - but every one of those resolves to a SEQUENCE,
+     * SET or CHOICE, i.e. to a type with a constructed universal tag that
+     * IMPLICIT can replace. No capture contains an EXPLICIT field resolving to
+     * a primitive, because {@code MMTelChargingDataTypes} declares none.
+     *
+     * <p>So a scalar primitive keeps what the schema wrote. Neutralizing it was
+     * extrapolation, and it was reaching real output: LTE-R10's
+     * {@code dynamicAddressFlag [11] EXPLICIT DynamicAddressFlag} went out as
+     * {@code 8B 01 FF} instead of {@code AB 03 01 01 FF}, and
+     * {@code qosRequested [1] EXPLICIT QoSInformation} as {@code 81 12 ...}
+     * instead of {@code A1 14 04 12 ...}, with nothing behind either.</p>
+     *
+     * <p>Withdrawing it leaves {@code MMTelChargingDataTypes} byte-identical -
+     * it has no primitive-typed EXPLICIT field to be affected - so the one
+     * module EMM has accepted cannot regress.</p>
+     */
+    @Test
+    void explicitSurvivesOnAScalarPrimitiveEvenInsideAVerifiedFamily() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SET {
+                    dynamicAddressFlag [11] EXPLICIT DynamicAddressFlag OPTIONAL,
+                    qosRequested [1] EXPLICIT QoSInformation OPTIONAL,
+                    subscriberRole [2] EXPLICIT SubscriberRole OPTIONAL,
+                    servedPDPPDNAddress [9] EXPLICIT PDPAddress OPTIONAL,
+                    listOfTrafficVolumes [12] EXPLICIT SEQUENCE OF ChangeOfCharCondition OPTIONAL
+                }
+                DynamicAddressFlag ::= BOOLEAN
+                QoSInformation ::= OCTET STRING (SIZE (4..255))
+                SubscriberRole ::= ENUMERATED { originating(0), terminating(1) }
+                PDPAddress ::= SET { iPAddress [0] EXPLICIT INTEGER OPTIONAL }
+                ChangeOfCharCondition ::= SEQUENCE { changeTime [6] OCTET STRING OPTIONAL }
+                InvolvedParty ::= CHOICE { sIP-URI [0] GraphicString, tEL-URI [1] GraphicString }
+                END
+                """, "Root");
+
+        assertTrue(byName(fields, "dynamicAddressFlag").isExplicit(),
+                "BOOLEAN is a primitive - no capture covers it");
+        assertTrue(byName(fields, "qosRequested").isExplicit(),
+                "OCTET STRING is a primitive - no capture covers it");
+        assertTrue(byName(fields, "subscriberRole").isExplicit(),
+                "ENUMERATED is a primitive - no capture covers it");
+        assertFalse(byName(fields, "servedPDPPDNAddress").isExplicit(),
+                "a scalar SET still loses it: 27 906 observations of that shape, zero with a wrapper");
+        assertFalse(byName(fields, "listOfTrafficVolumes").isExplicit(),
+                "a collection still loses it: 46 282 observations of SEQUENCE OF <SEQUENCE>, zero with a wrapper");
+    }
+
+    /** Looks a field up by name - the resolver is free to reorder SET members. */
+    private AsnField byName(List<AsnField> fields, String name) {
+        return fields.stream().filter(f -> name.equals(f.getFieldName())).findFirst()
+                .orElseThrow(() -> new AssertionError("no field named " + name));
     }
 
     /**

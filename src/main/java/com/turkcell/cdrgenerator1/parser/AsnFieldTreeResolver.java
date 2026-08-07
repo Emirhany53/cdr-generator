@@ -460,7 +460,7 @@ public class AsnFieldTreeResolver {
                 .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
-                .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement))
+                .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement, innerType))
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
@@ -512,12 +512,36 @@ public class AsnFieldTreeResolver {
      * universal SEQUENCE between {@code A6} and the address CHOICE, and EMM,
      * reading {@code A6} as the collection itself, finds a {@code 30} where an
      * address alternative must be. Neutralizing reproduces 3GPP TS 32.298
-     * exactly - the published module writes no EXPLICIT at all - for every
-     * EXPLICIT-marked field in the family, not just the two EMM named:
-     * {@code GSNAddress} and {@code Diagnostics} are CHOICEs and keep their
-     * wrapper, while {@code PDPAddress}, {@code QoSInformation},
-     * {@code ETSIAddress}, {@code DynamicAddressFlag} and the SEQUENCE OFs all
-     * shed one that the standard encoding does not have.</p>
+     * exactly - the published module writes no EXPLICIT at all - for
+     * {@code PDPAddress} and the SEQUENCE OFs, while {@code GSNAddress} and
+     * {@code Diagnostics} are CHOICEs and keep their wrapper.</p>
+     *
+     * <p>Two guards keep this off the shapes no capture covers.</p>
+     *
+     * <p>A scalar CHOICE is exempt because X.680 8.3 already decides it: a
+     * CHOICE carries no universal tag of its own to be implicitly replaced, so
+     * a tag on it is encoded EXPLICIT whatever is written, and the two readings
+     * produce identical bytes.</p>
+     *
+     * <p>A scalar field whose type resolves to a PRIMITIVE is exempt because
+     * nothing has ever been observed there. Sweeping both EMM-accepted MMTel
+     * captures - 17 823 records from two nodes - the wrapper is absent in 100%
+     * of the discriminating fields (SEQUENCE OF CHOICE 26 129 occurrences,
+     * scalar SET 27 906, SEQUENCE OF SEQUENCE 46 282, SEQUENCE OF SET 17 823;
+     * zero counterexamples). Every one of those has a constructed universal tag
+     * that IMPLICIT can replace. {@code MMTelChargingDataTypes} declares no
+     * EXPLICIT field resolving to a primitive at all, so the captures cannot
+     * speak to that shape and neutralizing it was pure extrapolation - it is
+     * what turned {@code dynamicAddressFlag} into {@code 8B 01 FF},
+     * {@code QoSInformation} into {@code 81 12 ...} and {@code ETSIAddress}
+     * into {@code 81 12 ...} with no evidence behind any of the three.</p>
+     *
+     * <p>Withdrawing that extrapolation costs nothing where it has been
+     * verified: it leaves {@code MMTelChargingDataTypes} byte-identical (zero
+     * primitive-typed EXPLICIT fields), and across the whole lineage it touches
+     * only {@code subscriberRole} in AIMS/ATS/IMSChargingDataTypes - three
+     * fields in modules EMM has never answered for, so no known-good output
+     * changes.</p>
      *
      * <p>This is still NOT safe to apply everywhere, so it stays gated on
      * {@link #isVerifiedExplicitNeutralizationFamily}: outside the two lineages
@@ -529,15 +553,50 @@ public class AsnFieldTreeResolver {
      * either reading.</p>
      */
     private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, boolean writtenExplicit,
-                                      boolean repeated, boolean choiceElement) {
-        boolean scalarChoice = choiceElement && !repeated;
-        if (scalarChoice) {
+                                      boolean repeated, boolean choiceElement, String innerType) {
+        if (!repeated && (choiceElement || !isStructuredType(registry, innerType))) {
             return writtenExplicit;
         }
         if (isVerifiedExplicitNeutralizationFamily(registry)) {
             return false;
         }
         return writtenExplicit;
+    }
+
+    /**
+     * True when this type resolves - through any chain of aliases - to a
+     * SEQUENCE, SET or CHOICE, i.e. to something carrying a constructed
+     * universal tag of its own. Everything else (INTEGER, OCTET STRING,
+     * ENUMERATED, an unknown/built-in name) is a primitive for
+     * {@link #effectiveExplicit}'s purposes.
+     *
+     * <p>A repeated field is judged by its collection, not by this: {@code
+     * SEQUENCE OF <anything>} always has a universal SEQUENCE tag of its own,
+     * so {@code effectiveExplicit} never asks about the element type there.</p>
+     */
+    private boolean isStructuredType(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripConstraint(typeName);
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition def = registry.get(current);
+            if (def == null) {
+                return false;
+            }
+            if (def.getKind() == AsnTypeKind.SEQUENCE || def.getKind() == AsnTypeKind.SET
+                    || def.getKind() == AsnTypeKind.CHOICE) {
+                return true;
+            }
+            if (def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+                return false;
+            }
+            String target = stripConstraint(stripAliasTag(def.getAliasTarget()));
+            if (isRepeatedExpression(target)) {
+                // "X ::= SEQUENCE OF Y" is a collection: it has its own tag.
+                return true;
+            }
+            current = target;
+        }
+        return false;
     }
 
     /**
@@ -718,7 +777,7 @@ public class AsnFieldTreeResolver {
                     .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
-                    .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement))
+                    .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement, innerType))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build();
