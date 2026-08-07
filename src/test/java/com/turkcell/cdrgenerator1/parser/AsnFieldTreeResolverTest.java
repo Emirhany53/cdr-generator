@@ -323,6 +323,52 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
+     * {@code GSN50}'s {@code ManagementExtension} declares
+     * {@code identifier [UNIVERSAL 6] OCTET STRING} in a module whose header is
+     * a bare {@code DEFINITIONS ::=}, so X.680 31.2.7 made the tag EXPLICIT and
+     * the encoder wrapped the OCTET STRING in it: {@code 26 0A 04 08 ..} - an
+     * OBJECT IDENTIFIER whose contents are an OCTET STRING TLV. X.690 8.19.1
+     * requires an object identifier value to be primitive, so those bytes are
+     * unreadable; {@code 06 08 ..} is what the declaration can only have meant.
+     *
+     * <p>X.680 31.2.1 reserves the UNIVERSAL class for the types the standard
+     * defines, so {@code [UNIVERSAL n]} is outside the language and the module
+     * default has no say over it. The guard is limited to the tags X.690 pins to
+     * primitive - a character string may legally be constructed, so nothing is
+     * proven there and nothing is changed.</p>
+     */
+    @Test
+    void aUniversalTagOnAnAlwaysPrimitiveTypeCannotBecomeAnExplicitWrapper() {
+        // The module default has to be EXPLICIT for this to mean anything - that
+        // is the only setting under which a [UNIVERSAL n] tag would wrap. The
+        // plain resolve() helper hardcodes IMPLICIT, where every field comes out
+        // implicit and the guard would never be reached.
+        Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry("""
+                GSN50 DEFINITIONS ::=
+                BEGIN
+                ManagementExtension ::= SEQUENCE {
+                    identifier [UNIVERSAL 6] OCTET STRING,
+                    label [UNIVERSAL 25] IA5String,
+                    significance [1] BOOLEAN
+                }
+                END
+                """);
+        List<AsnField> fields = resolver.resolveRootFields(
+                registry, "ManagementExtension", Map.of(), AsnTaggingMode.EXPLICIT);
+
+        assertEquals(List.of("identifier", "label", "significance"),
+                fields.stream().map(AsnField::getFieldName).toList());
+        assertFalse(byName(fields, "identifier").isExplicit(),
+                "[UNIVERSAL 6] must re-tag the value, not wrap it: wrapping emits 26 { 04 .. }, "
+                        + "a constructed OBJECT IDENTIFIER, which X.690 8.19.1 forbids");
+        assertTrue(byName(fields, "label").isExplicit(),
+                "[UNIVERSAL 25] is a character string - X.690 8.21.3 lets it be constructed, so "
+                        + "the module's EXPLICIT default is left alone");
+        assertTrue(byName(fields, "significance").isExplicit(),
+                "an ordinary CONTEXT tag is untouched by this guard");
+    }
+
+    /**
      * berTreeDump against freshly generated files caught violations the
      * CHOICE-only fix above didn't cover - {@code recordExtensions [25]
      * EXPLICIT ManagementExtensions} (scalar SET), {@code mMTelInformation

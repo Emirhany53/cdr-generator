@@ -183,4 +183,64 @@ class TagShapeRuleTest {
 
         assertThat(context.findings()).isEmpty();
     }
+
+    // --- X.690: universal tags that can only ever be primitive ---
+
+    /** Runs the rule with no field at all: this check reads the bytes only. */
+    private VerificationContext checkBytesAlone(byte[] data) {
+        VerificationContext context = new VerificationContext("GSN50", data);
+        rule.check(new NodeContext(reader.read(data, 0), null, false), context);
+        return context;
+    }
+
+    /**
+     * The GSN50 shape at byte level. {@code 26 0A 04 08 ..} is an OBJECT
+     * IDENTIFIER carrying the constructed bit with an OCTET STRING TLV inside,
+     * which is what {@code identifier [UNIVERSAL 6] OCTET STRING} produced while
+     * the module's EXPLICIT default was allowed to wrap it. X.690 8.19.1 says an
+     * object identifier value "shall be primitive", so no conforming decoder can
+     * read those bytes - and the tag alone is enough to know it, which is why
+     * this check needs no schema.
+     */
+    @Test
+    void reportsAConstructedObjectIdentifier() {
+        VerificationContext context = checkBytesAlone(hex("26 0A 04 08 8B 83 A3 DD 9F 1F 55 62"));
+
+        assertThat(context.findings()).singleElement()
+                .satisfies(finding -> {
+                    assertThat(finding.severity()).isEqualTo(FindingSeverity.ERROR);
+                    assertThat(finding.message()).contains("X.690 requires U-[6]");
+                });
+    }
+
+    /** The same value encoded as X.690 8.19.1 requires draws nothing. */
+    @Test
+    void acceptsAPrimitiveObjectIdentifier() {
+        assertThat(checkBytesAlone(hex("06 08 8B 83 A3 DD 9F 1F 55 62")).findings()).isEmpty();
+    }
+
+    /**
+     * The guard must not spread to the types BER lets a sender choose for: X.690
+     * 8.7.1 allows a constructed OCTET STRING and 8.21.3 a constructed character
+     * string. Reporting those would call correct files broken, which is why the
+     * check keys on a fixed list rather than on "universal and constructed".
+     */
+    @Test
+    void leavesConstructedOctetStringAndCharacterStringAlone() {
+        assertThat(checkBytesAlone(hex("24 06 04 02 AA BB 04 00")).findings())
+                .as("a segmented OCTET STRING is legal BER").isEmpty();
+        assertThat(checkBytesAlone(hex("3A 04 1A 02 CC DD")).findings())
+                .as("a segmented VisibleString is legal BER").isEmpty();
+    }
+
+    /** BOOLEAN, INTEGER, NULL, REAL, ENUMERATED and RELATIVE-OID share the rule. */
+    @Test
+    void coversEveryTypeX690PinsToPrimitive() {
+        assertThat(checkBytesAlone(hex("21 03 01 01 FF")).findings())
+                .as("constructed BOOLEAN").hasSize(1);
+        assertThat(checkBytesAlone(hex("22 03 02 01 05")).findings())
+                .as("constructed INTEGER").hasSize(1);
+        assertThat(checkBytesAlone(hex("2A 03 0A 01 01")).findings())
+                .as("constructed ENUMERATED").hasSize(1);
+    }
 }

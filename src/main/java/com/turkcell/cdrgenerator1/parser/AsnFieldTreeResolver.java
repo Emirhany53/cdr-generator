@@ -460,7 +460,7 @@ public class AsnFieldTreeResolver {
                 .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
-                .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement, innerType))
+                .explicit(effectiveExplicit(registry, effectiveTag, repeated, choiceElement, innerType))
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
@@ -552,8 +552,12 @@ public class AsnFieldTreeResolver {
      * 31.2.7 default rather than a written keyword and no capture has confirmed
      * either reading.</p>
      */
-    private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, boolean writtenExplicit,
+    private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, EffectiveTag tag,
                                       boolean repeated, boolean choiceElement, String innerType) {
+        if (universalTagCannotWrap(tag)) {
+            return false;
+        }
+        boolean writtenExplicit = tag.explicit();
         if (!repeated && (choiceElement || !isStructuredType(registry, innerType))) {
             return writtenExplicit;
         }
@@ -561,6 +565,57 @@ public class AsnFieldTreeResolver {
             return false;
         }
         return writtenExplicit;
+    }
+
+    /**
+     * Universal tag numbers X.690 requires to be encoded primitive: BOOLEAN
+     * (8.2.1), INTEGER (8.3.1), NULL (8.8.1), OBJECT IDENTIFIER (8.19.1), REAL
+     * (8.5.1), ENUMERATED (8.4) and RELATIVE-OID (8.20.1).
+     *
+     * <p>Kept here rather than shared with
+     * {@code service.verify.rule.TagShapeRule}, which enforces the same list on
+     * the bytes: this package depends only on {@code model}, and reaching into
+     * {@code service} for seven numbers would buy less than the layering costs.
+     * The two must stay in step - the rule is what catches it if they drift.</p>
+     */
+    private static final Set<Integer> UNIVERSAL_TAGS_THAT_MUST_STAY_PRIMITIVE =
+            Set.of(1, 2, 5, 6, 9, 10, 13);
+
+    /**
+     * True when a tag is UNIVERSAL-class and names a type that can only be
+     * encoded primitive, so it cannot be an EXPLICIT wrapper.
+     *
+     * <p>X.680 does not let a user assign a UNIVERSAL-class tag at all - clause
+     * 31.2.1 reserves that class for the types the standard itself defines - so
+     * a schema writing {@code [UNIVERSAL n]} is outside the language, and the
+     * module's tagging default has no answer for it. What such a tag can only
+     * sensibly mean is "encode the value under this universal tag", which is
+     * implicit tagging.</p>
+     *
+     * <p>Reading it as EXPLICIT produces bytes that are invalid on their face.
+     * {@code GSN50}'s {@code ManagementExtension} declares</p>
+     *
+     * <pre>identifier [UNIVERSAL 6] OCTET STRING,</pre>
+     *
+     * <p>and the module header is a bare {@code GSN50 DEFINITIONS ::=}, so
+     * X.680 31.2.7 makes that tag EXPLICIT and the encoder faithfully wrapped
+     * the OCTET STRING: {@code 26 0A 04 08 ..}, an OBJECT IDENTIFIER whose
+     * contents are an OCTET STRING TLV. X.690 8.19.1 says an object identifier
+     * value "shall be primitive", so no conforming decoder can read it. The
+     * implicit reading gives {@code 06 08 ..}, which is valid.</p>
+     *
+     * <p>Deliberately limited to the tags X.690 pins down. BIT STRING, OCTET
+     * STRING and the character strings MAY be constructed (8.6.1, 8.7.1,
+     * 8.21.3), so for those the EXPLICIT reading produces legal bytes and there
+     * is nothing to prove - and the 35 {@code [UNIVERSAL 12|16|25]} declarations
+     * in this data set are all in IMPLICIT-tagged modules anyway, so the narrow
+     * rule and a blanket one would emit identical bytes today. The narrow one is
+     * the one that needs no judgement call.</p>
+     */
+    private boolean universalTagCannotWrap(EffectiveTag tag) {
+        return tag.tagClass() == BerTagClass.UNIVERSAL
+                && Objects.nonNull(tag.tagNumber())
+                && UNIVERSAL_TAGS_THAT_MUST_STAY_PRIMITIVE.contains(tag.tagNumber());
     }
 
     /**
@@ -777,7 +832,7 @@ public class AsnFieldTreeResolver {
                     .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
-                    .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement, innerType))
+                    .explicit(effectiveExplicit(registry, fieldTag, repeated, choiceElement, innerType))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build();
