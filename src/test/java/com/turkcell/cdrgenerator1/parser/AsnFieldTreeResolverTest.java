@@ -168,12 +168,13 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
-     * Without the InvolvedParty fingerprint (no module in this fixture defines
-     * it), {@code AsnFieldTreeResolver.effectiveExplicit} must leave every
-     * written EXPLICIT untouched - scalar CHOICE, plain SEQUENCE, plain
-     * repeated element alike. This is the GGSN/LTE-family baseline: those
-     * modules are outside the verified lineage, so nothing here should ever
-     * change without EMM evidence for that family specifically (see
+     * Carrying neither verified fingerprint (this fixture defines no
+     * {@code InvolvedParty} and no {@code GSNAddress}/{@code IPAddress} pair),
+     * {@code AsnFieldTreeResolver.effectiveExplicit} must leave every written
+     * EXPLICIT untouched - scalar CHOICE, plain SEQUENCE, plain repeated
+     * element alike. {@code NodeAddress} here is deliberately CCN-shaped rather
+     * than 3GPP-shaped: nothing should change for a lineage until a real
+     * decoder has answered for it (see
      * {@link #explicitIsPreservedOutsideTheVerifiedInvolvedPartyFamily} for
      * the SET/plain-SEQUENCE-focused sibling of this test).
      */
@@ -201,6 +202,66 @@ class AsnFieldTreeResolverTest {
                 "outside any verified family, a plain SEQUENCE field must keep its written EXPLICIT");
         assertTrue(fields.get(2).isExplicit(),
                 "outside any verified family, a SEQUENCE OF <non-CHOICE> must keep its written EXPLICIT too");
+    }
+
+    /**
+     * The shape EMM rejected in both {@code LTE-R10} and
+     * {@code GGSNTurkcellCdrR7}: "the type ...{@code servingNodeAddress.[0]} was
+     * probably not set and is not optional" for
+     * {@code [6] EXPLICIT SEQUENCE OF GSNAddress}. Honoring that EXPLICIT puts a
+     * universal SEQUENCE between {@code A6} and the address CHOICE; EMM reads
+     * {@code A6} as the collection itself and finds a {@code 30} where an
+     * address alternative must be, so element {@code [0]} never gets set.
+     *
+     * <p>The fingerprint is the 3GPP TS 32.298 address triple - a named
+     * {@code GSNAddress} over an {@code IPAddress} CHOICE over an
+     * {@code IPBinaryAddress} CHOICE. Neutralizing across the family reproduces
+     * the published standard encoding, which writes no EXPLICIT anywhere:
+     * {@code sGWAddress} (scalar CHOICE) keeps its wrapper because X.680 8.3
+     * requires one, while {@code servedPDPPDNAddress} (scalar SET),
+     * {@code dynamicAddressFlag} (BOOLEAN) and the SEQUENCE OFs all shed the
+     * layer the standard does not have.</p>
+     */
+    @Test
+    void explicitIsNeutralizedInTheEmmRejectedPacketDomainCdrFamily() {
+        List<AsnField> fields = resolve("""
+                M DEFINITIONS IMPLICIT TAGS ::=
+                BEGIN
+                Root ::= SET {
+                    sGWAddress [4] EXPLICIT GSNAddress,
+                    servingNodeAddress [6] EXPLICIT SEQUENCE OF GSNAddress OPTIONAL,
+                    servedPDPPDNAddress [9] EXPLICIT PDPAddress OPTIONAL,
+                    dynamicAddressFlag [11] EXPLICIT DynamicAddressFlag OPTIONAL
+                }
+                GSNAddress ::= IPAddress
+                IPAddress ::= CHOICE {
+                    iPBinaryAddress IPBinaryAddress,
+                    iPTextRepresentedAddress IPTextRepresentedAddress
+                }
+                IPBinaryAddress ::= CHOICE {
+                    iPBinV4Address [0] OCTET STRING,
+                    iPBinV6Address [1] OCTET STRING
+                }
+                IPTextRepresentedAddress ::= CHOICE {
+                    iPTextV4Address [2] IA5String,
+                    iPTextV6Address [3] IA5String
+                }
+                PDPAddress ::= SET { iPAddress [0] EXPLICIT IPAddress OPTIONAL }
+                DynamicAddressFlag ::= BOOLEAN
+                END
+                """, "Root");
+
+        assertTrue(fields.get(0).isExplicit(),
+                "a scalar CHOICE keeps EXPLICIT even here - a CHOICE has no universal tag to replace "
+                        + "(X.680 8.3), which is why EMM accepted sGWAddress [4] and rejected [6]");
+        assertFalse(fields.get(1).isExplicit(),
+                "SEQUENCE OF GSNAddress must lose its written EXPLICIT: this is the exact field EMM "
+                        + "reported as servingNodeAddress.[0] not set, in LTE-R10 and GGSNTurkcellCdrR7 alike");
+        assertFalse(fields.get(2).isExplicit(),
+                "scalar SET (servedPDPPDNAddress-shape) must be neutralized too - 3GPP TS 32.298 has "
+                        + "no universal SET layer under [9]");
+        assertFalse(fields.get(3).isExplicit(),
+                "a BOOLEAN field must be neutralized as well; the standard writes [11] IMPLICIT here");
     }
 
     /**

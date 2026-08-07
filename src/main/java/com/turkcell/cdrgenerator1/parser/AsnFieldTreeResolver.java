@@ -457,7 +457,7 @@ public class AsnFieldTreeResolver {
                 .repeated(repeated)
                 .choice(choiceElement)
                 .set(setElement)
-                .decoderHoistsImplicitChoice(isVerifiedExplicitNeutralizationFamily(registry))
+                .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
                 .explicit(effectiveExplicit(registry, effectiveTag.explicit(), repeated, choiceElement))
@@ -502,15 +502,31 @@ public class AsnFieldTreeResolver {
      * is simply: EXPLICIT survives only for a scalar CHOICE, everything else
      * is neutralized.</p>
      *
-     * <p>This is NOT safe to apply everywhere: GGSN/LTE-family CDRs
-     * legitimately write EXPLICIT on SEQUENCE/SET/INTEGER/OCTET STRING fields
-     * too (e.g. LTE-R10's {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress}),
-     * and there is zero EMM verification either way for that family - applying
-     * this rule there would be exactly the unverified "strip every EXPLICIT"
-     * shortcut this method avoids. So it is gated on
-     * {@link #isVerifiedExplicitNeutralizationFamily}: it only fires inside the
-     * MMTel/AIMS/IMS/UAG/ATS lineage the reference capture actually covers.
-     * Outside that lineage, every written EXPLICIT is returned untouched.</p>
+     * <p>The 3GPP packet-domain CDR lineage (GGSN/GSN/LTE/CDRF) turned out to
+     * behave identically, and there the evidence is an EMM rejection rather
+     * than an acceptance: EMM refused both {@code LTE-R10} and
+     * {@code GGSNTurkcellCdrR7} samples with "the type
+     * ...{@code servingNodeAddress}/{@code sgsnAddress}{@code .[0]} was
+     * probably not set and is not optional" - the element of
+     * {@code [6] EXPLICIT SEQUENCE OF GSNAddress}. Honoring that EXPLICIT puts a
+     * universal SEQUENCE between {@code A6} and the address CHOICE, and EMM,
+     * reading {@code A6} as the collection itself, finds a {@code 30} where an
+     * address alternative must be. Neutralizing reproduces 3GPP TS 32.298
+     * exactly - the published module writes no EXPLICIT at all - for every
+     * EXPLICIT-marked field in the family, not just the two EMM named:
+     * {@code GSNAddress} and {@code Diagnostics} are CHOICEs and keep their
+     * wrapper, while {@code PDPAddress}, {@code QoSInformation},
+     * {@code ETSIAddress}, {@code DynamicAddressFlag} and the SEQUENCE OFs all
+     * shed one that the standard encoding does not have.</p>
+     *
+     * <p>This is still NOT safe to apply everywhere, so it stays gated on
+     * {@link #isVerifiedExplicitNeutralizationFamily}: outside the two lineages
+     * a real decoder has answered for, every written EXPLICIT is returned
+     * untouched. The open case is the modules whose header omits
+     * {@code IMPLICIT TAGS} ({@code BroadSoft2Tesla},
+     * {@code CDRDatamartPEPSIivr}), where the wrapper comes from the X.680
+     * 31.2.7 default rather than a written keyword and no capture has confirmed
+     * either reading.</p>
      */
     private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, boolean writtenExplicit,
                                       boolean repeated, boolean choiceElement) {
@@ -525,20 +541,50 @@ public class AsnFieldTreeResolver {
     }
 
     /**
-     * True when this module's registry carries the shared {@code InvolvedParty}
-     * CHOICE lineage - the structural fingerprint of the MMTel/AIMS/IMS/UAG/ATS
-     * family whose EXPLICIT-almost-everywhere anomaly was verified against a
-     * real EMM-accepted MMTel reference capture (see {@link #effectiveExplicit}).
-     *
-     * <p>Confirmed absent from every GGSN/LTE/CCN-family module in the current
-     * data set (they carry no SIP/IMS party addressing at all), so this check
-     * naturally excludes LTE-R10's unrelated, unverified
-     * {@code servedPDPPDNAddress}/{@code PDPAddress} case without needing a
-     * hardcoded module-name list.</p>
+     * True for the two module lineages whose EXPLICIT-almost-everywhere anomaly
+     * a real EMM decoder has answered for (see {@link #effectiveExplicit}):
+     * MMTel/AIMS/IMS/UAG/ATS, and the 3GPP packet-domain CDR family.
      */
     private boolean isVerifiedExplicitNeutralizationFamily(Map<String, AsnTypeDefinition> registry) {
+        return isMmtelPartyAddressingFamily(registry) || isPacketDomainCdrFamily(registry);
+    }
+
+    /**
+     * True when this module's registry carries the shared {@code InvolvedParty}
+     * CHOICE lineage - the structural fingerprint of the MMTel/AIMS/IMS/UAG/ATS
+     * family, verified against a real EMM-accepted MMTel reference capture.
+     *
+     * <p>Confirmed absent from every GGSN/LTE/CCN-family module in the current
+     * data set (they carry no SIP/IMS party addressing at all), which is what
+     * lets it gate the "Duplicate Tag" workaround
+     * ({@link AsnField#isDecoderHoistsImplicitChoice()}) on its own: that defect
+     * was only ever observed here, and EMM's LTE/GGSN answers said nothing
+     * about it.</p>
+     */
+    private boolean isMmtelPartyAddressingFamily(Map<String, AsnTypeDefinition> registry) {
         AsnTypeDefinition involvedParty = registry.get("InvolvedParty");
         return involvedParty != null && involvedParty.getKind() == AsnTypeKind.CHOICE;
+    }
+
+    /**
+     * True when this module's registry carries the 3GPP TS 32.298 packet-domain
+     * address types - a named {@code GSNAddress} resolving through an
+     * {@code IPAddress} CHOICE over an {@code IPBinaryAddress} CHOICE. That
+     * triple is the fingerprint of the GGSN/GSN/LTE/CDRF lineage EMM rejected
+     * (21 modules in the current data set, {@code LTE-R10} and
+     * {@code GGSNTurkcellCdrR7} among them).
+     *
+     * <p>Deliberately narrower than "declares GSNAddress": the CCN/OCC/CHAD
+     * modules alias {@code GSNAddress ::= IPBinaryAddress} directly and define
+     * no {@code IPAddress} CHOICE at all. They are a different lineage with
+     * their own EXPLICIT usage and no EMM answer, so they stay outside.</p>
+     */
+    private boolean isPacketDomainCdrFamily(Map<String, AsnTypeDefinition> registry) {
+        AsnTypeDefinition ipAddress = registry.get("IPAddress");
+        AsnTypeDefinition ipBinaryAddress = registry.get("IPBinaryAddress");
+        return registry.containsKey("GSNAddress")
+                && ipAddress != null && ipAddress.getKind() == AsnTypeKind.CHOICE
+                && ipBinaryAddress != null && ipBinaryAddress.getKind() == AsnTypeKind.CHOICE;
     }
 
     /**
@@ -669,7 +715,7 @@ public class AsnFieldTreeResolver {
                     .repeated(repeated)
                     .choice(choiceElement)
                     .set(setElement)
-                    .decoderHoistsImplicitChoice(isVerifiedExplicitNeutralizationFamily(registry))
+                    .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
                     .explicit(effectiveExplicit(registry, fieldTag.explicit(), repeated, choiceElement))
