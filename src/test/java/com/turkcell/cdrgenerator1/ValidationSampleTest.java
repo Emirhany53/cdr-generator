@@ -188,12 +188,17 @@ class ValidationSampleTest {
                     String.valueOf(result.findings().size() - result.errors().size()),
                     file.toString()));
 
-            for (BerFinding finding : result.findings()) {
-                Files.writeString(OUTPUT_DIR.resolve(name + ".findings.txt"),
-                        finding + System.lineSeparator(),
-                        StandardCharsets.UTF_8,
-                        java.nio.file.StandardOpenOption.CREATE,
-                        java.nio.file.StandardOpenOption.APPEND);
+            // Written in one go, replacing whatever the last run left. Appending
+            // made every re-run stack another copy of the same findings on top
+            // of the old ones, so the file said "4 errors" where the run had
+            // found one and nobody could tell a new finding from an echo.
+            Path findingsFile = OUTPUT_DIR.resolve(name + ".findings.txt");
+            if (result.findings().isEmpty()) {
+                Files.deleteIfExists(findingsFile);
+            } else {
+                Files.write(findingsFile,
+                        result.findings().stream().map(BerFinding::toString).toList(),
+                        StandardCharsets.UTF_8);
             }
         }
 
