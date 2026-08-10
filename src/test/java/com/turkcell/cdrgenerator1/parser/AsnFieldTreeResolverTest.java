@@ -260,31 +260,29 @@ class AsnFieldTreeResolverTest {
         assertFalse(fields.get(2).isExplicit(),
                 "scalar SET (servedPDPPDNAddress-shape) must be neutralized too - 3GPP TS 32.298 has "
                         + "no universal SET layer under [9]");
-        assertTrue(fields.get(3).isExplicit(),
-                "a scalar BOOLEAN keeps its written EXPLICIT: see explicitSurvivesOnAScalarPrimitive");
+        assertFalse(fields.get(3).isExplicit(),
+                "a scalar BOOLEAN is neutralized too - EMM refused AB 03 01 01 FF for "
+                        + "dynamicAddressFlag with \"Boolean can only have a maximum length of 1 bytes\"");
     }
 
     /**
-     * The line the evidence actually draws. Sweeping both EMM-accepted MMTel
-     * captures (17 823 records, two nodes) the wrapper is absent in 100% of the
-     * discriminating fields - but every one of those resolves to a SEQUENCE,
-     * SET or CHOICE, i.e. to a type with a constructed universal tag that
-     * IMPLICIT can replace. No capture contains an EXPLICIT field resolving to
-     * a primitive, because {@code MMTelChargingDataTypes} declares none.
+     * A primitive-typed field is neutralized like every other shape, and it took
+     * a rejection to settle that. The MMTel captures are silent here -
+     * {@code MMTelChargingDataTypes} declares no EXPLICIT field resolving to a
+     * primitive - so the shape was once carved out as unproven. EMM answered it
+     * on {@code LTE-R10}: "Invalid length 3 of field ...dynamicAddressFlag /
+     * Boolean can only have a maximum length of 1 bytes", against the
+     * {@code AB 03 01 01 FF} the carve-out produced. EMM reads {@code [11]} as
+     * an IMPLICIT BOOLEAN and wants {@code 8B 01 FF}.
      *
-     * <p>So a scalar primitive keeps what the schema wrote. Neutralizing it was
-     * extrapolation, and it was reaching real output: LTE-R10's
-     * {@code dynamicAddressFlag [11] EXPLICIT DynamicAddressFlag} went out as
-     * {@code 8B 01 FF} instead of {@code AB 03 01 01 FF}, and
-     * {@code qosRequested [1] EXPLICIT QoSInformation} as {@code 81 12 ...}
-     * instead of {@code A1 14 04 12 ...}, with nothing behind either.</p>
-     *
-     * <p>Withdrawing it leaves {@code MMTelChargingDataTypes} byte-identical -
-     * it has no primitive-typed EXPLICIT field to be affected - so the one
-     * module EMM has accepted cannot regress.</p>
+     * <p>The same round accepted GGSN with {@code qosRequested} still wrapped,
+     * but that settles nothing: a decoder ignoring the wrapper reads
+     * {@code A1 13 04 11 ..} as a 19-octet value whose first two octets are our
+     * own TLV header, and {@code SIZE(4..255)} still holds. BOOLEAN is just the
+     * primitive whose length bound makes the disagreement visible.</p>
      */
     @Test
-    void explicitSurvivesOnAScalarPrimitiveEvenInsideAVerifiedFamily() {
+    void aScalarPrimitiveIsNeutralizedLikeEveryOtherShape() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
@@ -304,12 +302,13 @@ class AsnFieldTreeResolverTest {
                 END
                 """, "Root");
 
-        assertTrue(byName(fields, "dynamicAddressFlag").isExplicit(),
-                "BOOLEAN is a primitive - no capture covers it");
-        assertTrue(byName(fields, "qosRequested").isExplicit(),
-                "OCTET STRING is a primitive - no capture covers it");
-        assertTrue(byName(fields, "subscriberRole").isExplicit(),
-                "ENUMERATED is a primitive - no capture covers it");
+        assertFalse(byName(fields, "dynamicAddressFlag").isExplicit(),
+                "EMM refused AB 03 01 01 FF here: \"Boolean can only have a maximum length of 1 bytes\"");
+        assertFalse(byName(fields, "qosRequested").isExplicit(),
+                "an OCTET STRING follows BOOLEAN: a decoder ignoring the wrapper would read our own "
+                        + "TLV header as the first two octets of the value");
+        assertFalse(byName(fields, "subscriberRole").isExplicit(),
+                "ENUMERATED is a primitive like the others");
         assertFalse(byName(fields, "servedPDPPDNAddress").isExplicit(),
                 "a scalar SET still loses it: 27 906 observations of that shape, zero with a wrapper");
         assertFalse(byName(fields, "listOfTrafficVolumes").isExplicit(),
