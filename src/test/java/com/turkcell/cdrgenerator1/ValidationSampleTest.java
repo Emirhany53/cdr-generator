@@ -14,6 +14,7 @@ import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
 import com.turkcell.cdrgenerator1.parser.AsnTypeRegistryBuilder;
 import com.turkcell.cdrgenerator1.service.BerEncoderService;
+import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
 import com.turkcell.cdrgenerator1.service.CdrStructureReaderService;
 import com.turkcell.cdrgenerator1.service.FixedWidthTextFormatter;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
@@ -36,6 +37,7 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HexFormat;
@@ -116,6 +118,7 @@ class ValidationSampleTest {
     private static CdrRecordBuilder builder;
     private static BerEncoderService encoder;
     private static BerVerifier verifier;
+    private static CdrFileWriterService writer;
 
     @BeforeAll
     static void wireTheRealPipelineWithoutTheAiProvider() throws Exception {
@@ -139,6 +142,7 @@ class ValidationSampleTest {
                 new RandomValueSource(new FieldValueGenerator(
                         new TbcdCodec(), ai, sizes, timestamps))));
         encoder = new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
+        writer = new CdrFileWriterService();
 
         SelfCheckProperties selfCheck = new SelfCheckProperties();
         selfCheck.setMode(SelfCheckProperties.Mode.WARN);
@@ -152,7 +156,7 @@ class ValidationSampleTest {
         Files.createDirectories(OUTPUT_DIR);
         List<String> manifest = new ArrayList<>();
         manifest.add(String.join("\t", "module", "root", "rootShape", "taggingMode",
-                "bytes", "sha256", "head", "errors", "warnings", "file"));
+                "bytes", "sha256", "head", "errors", "warnings", "datColumns", "file"));
 
         for (Sample sample : FAMILIES) {
             String name = sample.fileName();
@@ -168,6 +172,18 @@ class ValidationSampleTest {
 
             Path file = OUTPUT_DIR.resolve(name + ".ber");
             Files.write(file, bytes);
+
+            // The same record as ASCII, from the same writer /generate uses.
+            // Half of what this application produces is .dat, and until now no
+            // sample of it was written anywhere - so a break in that half was
+            // only visible to somebody who went looking.
+            Path datFile = OUTPUT_DIR.resolve(name + ".dat");
+            Files.copy(writer.writeCdrFile(name, List.of(record)), datFile,
+                    StandardCopyOption.REPLACE_EXISTING);
+            int datColumns = Files.readAllLines(datFile, StandardCharsets.US_ASCII).stream()
+                    .findFirst()
+                    .map(line -> line.split("\\|", -1).length)
+                    .orElse(0);
 
             String rootShape = structure.getRootTagCarrier() != null
                     ? "type-tagged (" + structure.getRootTagCarrier().getTagClass() + " "
@@ -186,6 +202,7 @@ class ValidationSampleTest {
                     HexFormat.of().formatHex(bytes, 0, Math.min(8, bytes.length)),
                     String.valueOf(result.errors().size()),
                     String.valueOf(result.findings().size() - result.errors().size()),
+                    String.valueOf(datColumns),
                     file.toString()));
 
             // Written in one go, replacing whatever the last run left. Appending
