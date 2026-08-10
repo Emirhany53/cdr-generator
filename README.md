@@ -1,225 +1,297 @@
-# 🚀 EMM CDR Generator
+# EMM CDR Generator
 
-EMM CDR Generator, telekomünikasyon sistemlerinde kullanılan ASN.1 tabanlı CDR (Call Detail Record) yapılarına göre test verisi üretmek amacıyla geliştirilmiş bir **Java Spring Boot** uygulamasıdır.
+Turkcell'in Ericsson Mediation Manager (EMM) akışlarını beslemek için, kayıtlı
+ASN.1 şemalarına uygun test CDR'ı üreten bir **Java 21 / Spring Boot**
+uygulaması. Aynı şemadan hem **BER (`.ber`)** hem **Token-Separated ASCII
+(`.dat`)** çıktı üretir.
 
-Proje, Ericsson Mediation Manager (EMM) akışlarının test edilmesini kolaylaştırmak amacıyla geliştirilmiştir. Kullanıcı tarafından seçilen ASN.1 yapısına göre hem **Token-Separated (.dat)** hem de **BER (Binary Encoding Rules) (.ber)** formatında çıktı üretebilmektedir.
-
----
-
-# ✨ Features
-
-- Dynamic ASN.1 parsing from `datastructure.json`
-- Support for complex ASN.1 structures (SEQUENCE, CHOICE, primitive types)
-- Pipe-separated ASCII (`.dat`) file generation
-- BER / TLV encoded binary (`.ber`) file generation
-- Automatic mock data generation
-- Custom value override support via JSON request body
-- Configurable application settings using `application.yml`
-- Layered architecture following SOLID principles
-- RESTful API with Swagger/OpenAPI documentation
+`datastructure.json` içinde **808 ASN.1 modülü** var; uygulama açılışta hepsini
+ayrıştırır ve 802'si için alan ağacı çıkarır.
 
 ---
 
-# 🛠 Technologies
+## Bu projede asıl mesele ne?
 
-- Java 21
-- Spring Boot
-- Spring Web MVC
-- Maven
-- Jackson
-- Swagger / OpenAPI
-- Lombok
-- SLF4J Logging
+Geçerli BER yazmak kolay kısmı. Zor kısmı, **EMM'in kabul ettiği** BER'i yazmak:
+şemadaki bir satırın tel üzerinde tam olarak hangi baytlara karşılık geldiği her
+zaman şemadan okunamıyor. Bu yüzden proje iki şeyi ayrı tutar:
 
----
+- **Doğruluk** — X.690'a uygun, kendi alan ağacıyla tutarlı baytlar. Kendi
+  içinde kanıtlanabilir; `self-check` bunu her üretimde ölçer.
+- **Uygunluk** — gerçek şebekenin yazdığı ve EMM'in okuduğu baytlar. Yalnızca
+  dış kanıtla bilinebilir: EMM'in yanıtı ya da EMM'in kabul ettiği bir yakalama.
 
-# 🏗 Architecture
+İkisini karıştırmamak önemli: self-check'in temiz olması EMM'in kabul edeceği
+anlamına **gelmez** — üretilen baytları, onları üreten alan ağacına karşı
+denetler, yani karşılaştırmanın iki tarafı da aynı şema yorumundan gelir.
+`ReferenceCaptureConformanceTest` bu boşluğu kapatan tek testtir; beklentiyi
+EMM'in kabul ettiği gerçek bir yakalamadan alır.
 
-```
-                Client
-                  │
-                  ▼
-             REST Controller
-                  │
-                  ▼
-                Service
-                  │
-     ┌────────────┼─────────────┐
-     ▼            ▼             ▼
- ASN.1 Parser  Data Generator  BER Encoder
-     │            │             │
-     └────────────┼─────────────┘
-                  ▼
-             File Writer
-                  │
-        ┌─────────┴─────────┐
-        ▼                   ▼
-      .dat                .ber
-```
+Ailelerin doğrulanma durumu için `docs/coverage-validation-plan.md`.
 
 ---
 
-# 📁 Project Structure
+## Hızlı başlangıç
 
-```
-src
-├── config
-├── controller
-├── service
-├── parser
-├── generator
-├── encoder
-├── writer
-├── model
-├── util
-└── exception
-```
-
----
-
-# 🚀 Getting Started
-
-## Clone the repository
+### Backend
 
 ```bash
-git clone https://github.com/Emirhany53/cdr-generator.git
-cd cdr-generator
+./mvnw spring-boot:run
 ```
 
-## Build the project
+Uygulama `http://localhost:8080/cdr-generator` altında açılır
+(`server.servlet.context-path`). Swagger arayüzü:
+
+```
+http://localhost:8080/cdr-generator/swagger-ui.html
+```
+
+### Frontend (opsiyonel)
 
 ```bash
-mvn clean install
+cd frontend
+npm install
+npm run dev
 ```
 
-## Run the application
+Backend farklı bir adresteyse `frontend/.env.example` dosyasını `.env.local`
+olarak kopyalayıp `VITE_API_BASE_URL` değerini düzeltin.
+
+### Testler
 
 ```bash
-mvn spring-boot:run
-```
-
-The application will start on:
-
-```
-http://localhost:8080
+./mvnw test
 ```
 
 ---
 
-# ⚙ Configuration
+## REST API
 
-Application configuration is managed via:
+Tüm uçlar `/cdr-generator/api/cdr` altında.
 
-```
-src/main/resources/application.yml
-```
-
-Configuration includes:
-
-- Datastructure file path
-- Default record count
-- Maximum record count
-- Server configuration
-
----
-
-# 📡 REST API
-
-## List Available Structures
-
-Returns all parsed ASN.1 structures.
+### Yapıları listele
 
 ```
-GET /api/cdr/structures
+GET /structures
 ```
 
----
-
-## Generate Token-Separated File (.dat)
-
-Generates a pipe-separated ASCII CDR file.
+### Bir yapının alan ağacı
 
 ```
-POST /api/cdr/generate?structureName=TokenCodedCDR&recordCount=5
+GET /structures/{structureName}
+GET /structures/{structureName}?rootType=TokensCSCF
+GET /structures/{structureName}?TokenCDR=refillRecordV2
 ```
 
----
+Ad dışındaki her query parametresi bir **CHOICE seçimi** sayılır: anahtar CHOICE
+tipinin adı, değer alternatifin adı. `rootType` ayrı tutulur — modül birden çok
+üst tip tanımlıyorsa hangisinin kayıt sayılacağını seçer.
 
-## Generate BER File (.ber)
-
-Generates a BER encoded binary file.
+### BER dosyası üret
 
 ```
-POST /api/cdr/generate-ber
+POST /generate-ber
+Content-Type: application/json
 ```
-
-Example request body:
 
 ```json
 {
-  "callingNumber": "905321112233",
-  "calledNumber": "905554445566"
+  "structureName": "MMTelChargingDataTypes",
+  "recordCount": 3,
+  "fieldValues": {
+    "servedMSISDN": "905321112233"
+  },
+  "choiceSelections": { "MMTelServiceRecord": "mMTelRecord" },
+  "rootType": null
 }
 ```
 
+| alan | zorunlu | açıklama |
+|---|---|---|
+| `structureName` | ✔ (veya `contents`) | `datastructure.json`'daki modül adı |
+| `contents` | — | Kayıtlı olmayan ham ASN.1 metni (inline mod) |
+| `fieldValues` | — | Elle değer. Anahtar düz bir alan adı (`servedMSISDN`) ya da noktalı bir yol (`ust.alt`) olabilir |
+| `choiceSelections` | — | CHOICE tipi adı → alternatif adı |
+| `rootType` | — | Kayıt olarak kodlanacak tip; modülde yoksa yok sayılır |
+| `recordCount` | — | Varsayılan 1, üst sınır `max-record-count` |
+
+Yanıt `.ber` dosyası indirir. Self-check sonucu **`X-Cdr-Self-Check`** yanıt
+başlığında döner.
+
+Ham ASN.1 metnini JSON'a kaçırmadan göndermek için:
+
+```
+POST /generate-ber/raw?structureName=Demo&recordCount=1
+Content-Type: text/plain
+```
+
+### ASCII (.dat) dosyası üret
+
+```
+POST /generate
+```
+
+Gövde `generate-ber` ile aynı şekildedir. Her satır bir kayıt, alanlar `|` ile
+ayrılır.
+
+### Tek kayıt önizle (dosya üretmeden)
+
+```
+GET /generate-test/{structureName}
+```
+
+### Kayıtlı olmayan bir şemayı ayrıştır
+
+```
+POST /structures/parse-inline
+```
+
+```json
+{ "structureName": "Demo", "contents": "Demo DEFINITIONS ::= BEGIN ... END", "rootType": null }
+```
+
+### Dışarıdan gelen bir .ber dosyasını doğrula
+
+```
+POST /verify-ber/{structureName}
+Content-Type: multipart/form-data   (alan adı: file)
+```
+
+Bu servisin üretmediği bir dosyayı — bir referans yakalama ya da EMM'in geri
+gönderdiği bir dosyayı — verilen yapının alan ağacına göre denetler. Üretim
+akışından bağımsızdır, `self-check.mode` ayarından etkilenmez, her zaman tüm
+bulguları döner.
+
 ---
 
-# 📖 Swagger Documentation
+## Yapılandırma
 
-After starting the application, Swagger UI is available at:
+`src/main/resources/application.yml`:
 
+```yaml
+app:
+  cdr:
+    data-structure-path: "src/main/resources/datastructure.json"
+    default-record-count: 1
+    max-record-count: 100
+    skip-implicit-choice-fields: true
+
+    self-check:
+      mode: strict        # strict | warn | off
+      rules:
+        duplicate-tag: true
+        set-ordering: true
+        tag-shape: true
+        named-number: true
+        integer-range: true
+
+    ai:
+      enabled: true
+      provider: gemini
+      max-fields-per-request: 80
+      gemini:
+        api-key: ${GEMINI_API_KEY:}
+      field-rules:
+        - name: callingNumber
+          match: [ "msisdn", "callingnumber", ... ]
+          description: "Turkiye GSM abone numarasi..."
+          pattern: "^(\\+?90|0)?5(0|3|4|5|6)[0-9]{8}$"
+          examples: [ "05301234567" ]
 ```
-http://localhost:8080/swagger-ui.html
-```
+
+**`self-check.mode`** — `strict`: ERROR bulgusu varsa dosya döndürülmez;
+`warn`: loglanır, dosya döner; `off`: kapalı. Şu an 808 modülün **17'si**
+`strict` modda dosya üretemiyor; çoğunda sebep şemanın kendisinin çözülemez
+olması (aynı gövdede iki OPTIONAL alan aynı tag'i taşıyor).
+
+**`skip-implicit-choice-fields`** — IMPLICIT etiketli OPTIONAL CHOICE alanlarını
+üretime katmaz. EMM'in bir çözücü kusuru için konmuş bir geçici çözümdür ve
+MMTel soyuyla sınırlıdır. Kapatılması EMM'den yeni bir yanıt gerektirir.
+
+**`ai.field-rules`** — Alan adına göre eşleşen değer kuralları (desen, açıklama,
+örnekler, OCTET STRING içeriğinin ASCII mi hex mi olduğu). Hem yapay zekaya
+verilen isteme hem de rastgele üretime kaynaklık eder. İlk eşleşen kural kazanır.
+
+**Yapay zeka** — `GEMINI_API_KEY` tanımlı değilse üretim sessizce rastgeleye
+düşer; ağ çağrısı yapılmaz. Üretilen her değer `FieldValueValidator`'dan geçer,
+SIZE/desen kurallarına uymayan değer atılıp rastgele üretilir — yani yapay zeka
+çıktının geçerliliğini bozamaz.
 
 ---
 
-# 📂 Example Output
-
-### Token-Separated (.dat)
+## Mimari
 
 ```
-905321112233|905554445566|20260717|SMS|SUCCESS
+Controller ── StructureParserService ──┬── AsnTypeRegistryBuilder   (metin → tip kaydı)
+                                       └── AsnFieldTreeResolver     (tip kaydı → alan ağacı)
+           ── CdrRecordBuilder ────────┬── UserProvidedValueSource
+                                       ├── AiValueSource + FieldValueValidator
+                                       └── RandomValueSource + FieldValueGenerator
+           ── BerEncoderService ───────── TlvWriter                 (alan ağacı + değer → bayt)
+           ── CdrFileWriterService ────── FixedWidthTextFormatter   (.dat)
+           ── BerVerifier ─────────────── TlvReader + 5 kural       (bayt → bulgu)
 ```
 
-### BER
-
 ```
-output.ber
+src/main/java/com/turkcell/cdrgenerator1
+├── config          Spring yapılandırması, ayar sınıfları
+├── controller      REST uçları
+├── parser          ASN.1 metin → tip kaydı → alan ağacı
+├── generator       Kayıt kurma, değer kaynakları, doğrulama
+├── service         Kodlayıcı, dosya yazıcı, yapı servisi
+│   └── verify      TLV okuyucu, walker ve doğrulama kuralları
+├── ai              Sağlayıcıdan bağımsız yapay zeka arayüzü ve istem kurucu
+├── infrastructure  Sağlayıcıya özgü uygulama (Gemini)
+├── model           Alan/yapı modeli, istek-yanıt DTO'ları
+└── exception       Hata tipleri ve global işleyici
 ```
 
-The generated BER file follows the ASN.1 BER (Basic Encoding Rules) specification using TLV (Tag-Length-Value) encoding.
+Katman kuralı: `parser` yalnızca `model`'e bağımlıdır. Yapay zeka tarafında
+`ai` paketi sağlayıcıdan bağımsız arayüzü (`AiFieldValueProvider`, istem
+kurucu) tutar; HTTP çağrısı, istek/yanıt şeması ve sağlayıcıya özgü her şey
+`infrastructure/ai/gemini` altındadır.
 
 ---
 
-# 📌 Design Principles
+## Doğrulama ve testler
 
-This project follows several software engineering principles:
+359 test. Öne çıkanlar:
 
-- Layered Architecture
-- SOLID Principles
-- Separation of Concerns
-- Single Responsibility Principle (SRP)
-- Configurable Application Design
-- Clean Code Practices
+| test | ne yapar |
+|---|---|
+| `AllModulesRoundTripTest` | 808 modülün tamamı için üret → geri oku → alan ağacına karşı doğrula |
+| `ReferenceCaptureConformanceTest` | Ürettiğimiz MMTel kaydını **EMM'in kabul ettiği gerçek yakalamayla** katman katman karşılaştırır |
+| `ValidationSampleTest` | Her aile için `target/validation/` altına bir örnek `.ber` + `manifest.tsv` yazar |
+| `ArchitectureAuditTest` | 808 modülü tarar, `target/audit/audit.tsv` ve `findings.tsv` üretir |
+
+`ReferenceCaptureConformanceTest` referans dosyayı sırasıyla
+`-Dcdr.referenceCapture=...`, `$CDR_REFERENCE_CAPTURE` ve kullanıcının
+`Downloads` klasöründeki `*CDR_MMTEL*.ber` üzerinden arar; bulamazsa kendini
+atlar. **Atlanan koşu geçen koşu değildir** — bu kontrol yalnızca dosyanın
+bulunduğu makineyi korur. Yakalama gerçek abone verisi taşıdığı için repoya
+konulamaz; test yalnızca tag ve uzunluk baytlarını okur.
+
+`tools/` altında, üretilen dosyaları elle incelemek için Python betikleri var
+(TLV dökümü, yapısal karşılaştırma, alan silme/sarma).
 
 ---
 
-# 🔮 Future Improvements
+## Bilinen açık konular
 
-- Docker support
-- PostgreSQL integration
-- Kafka integration
-- Additional ASN.1 type support
-- Performance optimizations
-- Unit & Integration Tests
+- **Varsayılan-EXPLICIT modüller.** 808 modülün 712'sinin başlığında
+  `IMPLICIT TAGS` yok, yani `[n]` etiketleri X.680 31.2.7 varsayılanı gereği
+  sarmalayıcı olarak kodlanıyor — 687 modüldeki 20.491 alan. Bu okumayı
+  doğrulayan bir dış kanıt henüz yok; EMM'den gelen üç yanıtın üçü de IMPLICIT
+  başlıklı modüllerdendi.
+- **6 modül sıfır alan üretir.** Üçü yalnızca tip takma adı tanımlar
+  (`SMSCLookupStructures`, `LteReturnTypes`, `Array`), üçü hiç tip beyan etmez.
+- **17 modül `strict` modda dosya üretemez.** Çoğunda sebep şemanın X.680
+  25.6'ya göre çözülemez olması.
+- **`.dat` yolu `.ber`'e göre daha az doğrulanmış**; dışarıdan incelenecek örnek
+  çıktı üretilmiyor.
 
 ---
 
-# 👨‍💻 Author
+## Yazar
 
-**Emirhan Yıldız**
-
-Software Engineering Student
-
-GitHub: https://github.com/Emirhany53
+**Emirhan Yıldız** — https://github.com/Emirhany53
