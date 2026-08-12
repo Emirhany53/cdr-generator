@@ -43,6 +43,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 5 | IMSCDRS-TokensCSCF-minimal, CSCF-MergedCSCF | İkisi de `Invalid length 114` / `411`. CSCF dosyası da `IMSCDRS.TokensCSCF` olarak çözüldü → akış sabit |
 | 6 | IMSCDRS-TokensCSCF-implicit | **PASS** + 34 alanlık ASCII decode döndü |
 | 7 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes | **YANIT BEKLENİYOR** |
+| 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **YANIT BEKLENİYOR** (7 ile paralel gönderildi) |
 
 ### 7. turda gönderilen dosyalar
 
@@ -63,6 +64,41 @@ FDRInput.ber                    61 37 / 30 35 …   [APPLICATION 1] + universal 
 Audit_Record_Collection_St.ber  75 43 / 30 41 …   [APPLICATION 21] + universal SEQUENCE
 IMSChargingDataTypes.ber        mMTelInformation [110] → subscriberRole [1] → 81 01 00
 ```
+
+### 8. turda gönderilen dosyalar
+
+7. tur cevaplanmadan gönderildi. **Bağımsızlık gerekçesi:** dördü de
+`IMPLICIT TAGS` başlıklı ve **hiçbirinde tip-seviyesi tag yok** (`tipTag=0`),
+yani ne `[APPLICATION n]` sorusu ne de `5906e76`'nın UNSPECIFIED kuralı bu
+baytları değiştirebilir. 7. turun cevabı ne çıkarsa çıksın yeniden üretilmeleri
+gerekmez.
+
+| dosya | bayt | kök | soru | SHA-256 |
+|---|---|---|---|---|
+| `CGSN40ber.ber` | 419 | `CallEventRecord` | aile genellemesi çalışıyor mu | `91e6ddf4c627c1fdc28643204a7bf28c7eb1e550f21c356f865d663774c5804a` |
+| `TurkcellCDRCCNCS5.ber` | 419 | `CallDetailOutputRecord` | C ailesi hakkında ilk kanıt | `a2e4579dc867c8de96180bd5b4d2d036dd272e7f824bf05e12978e6b7be50c91` |
+| `CHAD.ber` | 481 | `ChargingDataOutputRecord` | C ailesi, ikinci örnek | `9f51f5b9024bb164beb5713c7bca9ec77ee6d4895204f12272e90f89afe3c8f2` |
+| `SMSCBerCdr.ber` | 1045 | `SmsCdr` | D ailesi, ikinci örnek | `ddb5387e07ce8b2713445d967b03bafd3fb71b60309a51553cfedb2e896bdcab` |
+
+Dördü de self-check'ten **0 hata / 0 uyarı** ile geçti, TLV bütünlüğü doğrulandı
+(62/67/70/150 TLV, taşma yok). `ValidationSampleTest`'e eklendiler (`f3f0067`),
+yani `target/validation/` altında da üretiliyorlar.
+
+**Kritik not:** dördü de `asn1tools` ile **derlenmiyor** — 607'lik derlenemeyen
+gruba giriyorlar (§8). `SMSCBerCdr`'de ayrıca gerçek bir şema kusuru var:
+`Duplicated ENUMERATED number 36 at line 308`. Yani bu dört yapı için
+**tek hakem EMM'dir**; bağımsız çapraz kontrol imkânı yok.
+
+### Ne öğreneceğiz
+
+- `CGSN40ber` **geçerse:** bir ailede alınan verdict'in o ailenin diğer
+  modüllerine genellenebildiği ilk kez gösterilmiş olur. LTE/GGSN kanıtı
+  paket-alanı ailesinin tamamını kapsıyor tezi güçlenir.
+- `TurkcellCDRCCNCS5` / `CHAD` **geçerse:** hiç dokunulmamış 17 modüllük CCN/OCC
+  soyu hakkında ilk kanıt. Reddedilirse hangi kuralın oraya uymadığı yeni bir
+  açık soru olur.
+- Toplamda amaç, "682 modül tek kanıta dayanıyor" cümlesini **dört farklı
+  aileden kanıt var** haline getirmek.
 
 ### IMSCDRS'in çözülmesi — altı turluk eleme
 
