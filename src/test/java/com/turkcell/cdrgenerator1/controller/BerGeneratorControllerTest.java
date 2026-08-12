@@ -72,12 +72,23 @@ class BerGeneratorControllerTest {
         CdrStructureReaderService fakeReader = new CdrStructureReaderService(null, null) {
             @Override
             public List<CdrStructureDto> readAllStructures() {
-                return List.of(CdrStructureDto.builder()
-                        .name("SimpleRecord")
-                        .contents("M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE "
-                                + "{ msisdn [1] IMPLICIT OCTET STRING OPTIONAL, "
-                                + "duration [4] IMPLICIT INTEGER OPTIONAL } END")
-                        .build());
+                return List.of(
+                        CdrStructureDto.builder()
+                                .name("SimpleRecord")
+                                .contents("M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE "
+                                        + "{ msisdn [1] IMPLICIT OCTET STRING OPTIONAL, "
+                                        + "duration [4] IMPLICIT INTEGER OPTIONAL } END")
+                                .build(),
+                        // The IMSCDRS shape: one CHOICE over two records, so the
+                        // root heuristic picks the CHOICE and rootType is the only
+                        // way to ask for the other one.
+                        CdrStructureDto.builder()
+                                .name("MultiRoot")
+                                .contents("M DEFINITIONS IMPLICIT TAGS ::= BEGIN "
+                                        + "Cdrs ::= CHOICE { tokenAlpha [0] Alpha, tokenBeta [1] Beta } "
+                                        + "Alpha ::= SEQUENCE { a [1] IMPLICIT OCTET STRING OPTIONAL } "
+                                        + "Beta ::= SEQUENCE { b [2] IMPLICIT OCTET STRING OPTIONAL } END")
+                                .build());
             }
         };
         StructureParserService parserService =
@@ -219,6 +230,57 @@ class BerGeneratorControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(containsString("\"clean\":false")))
                 .andExpect(content().string(containsString("duplicate-tag")));
+    }
+
+    /**
+     * {@code rootType} has to reach the resolver, not merely the signature.
+     *
+     * <p>The uploaded bytes are a bare {@code SEQUENCE { [2] .. }} - a
+     * {@code Beta} record. Left to itself the root heuristic picks the
+     * {@code Cdrs} CHOICE and its first alternative, {@code tokenAlpha}, whose
+     * body declares {@code [1]} instead. So the same file must verify clean with
+     * {@code rootType=Beta} and report findings without it: if the parameter
+     * were accepted and dropped, both calls would return the same thing.</p>
+     *
+     * <p>This is the gap that made an uploaded {@code IMSCDRS} file
+     * unverifiable - the endpoint could only ever check it against the
+     * auto-selected {@code Cdrs} root.</p>
+     */
+    @Test
+    void verifyBerHonoursRootTypeRatherThanTheAutoSelectedRoot() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "beta.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                hex("30 03 82 01 41"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/MultiRoot")
+                        .file(file)
+                        .param("rootType", "Beta"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"clean\":true")));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/MultiRoot")
+                        .file(file))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"clean\":false")));
+    }
+
+    /**
+     * Spring folds every query parameter into the untyped choiceSelections map,
+     * so rootType has to be stripped before the rest is offered to the resolver
+     * as CHOICE selections - otherwise "rootType" is looked up as a CHOICE type
+     * name. Passing it alone must still leave the selections empty.
+     */
+    @Test
+    void rootTypeIsNotMistakenForAChoiceSelection() throws Exception {
+        MockMultipartFile file = new MockMultipartFile("file", "beta.ber",
+                MediaType.APPLICATION_OCTET_STREAM_VALUE,
+                hex("30 03 82 01 41"));
+
+        mockMvc.perform(multipart("/api/cdr/verify-ber/MultiRoot")
+                        .file(file)
+                        .param("rootType", "Beta"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("\"structureName\":\"MultiRoot\"")));
     }
 
     @Test

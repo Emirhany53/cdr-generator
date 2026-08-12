@@ -33,6 +33,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -52,6 +53,8 @@ public class BerGeneratorController {
     private static final int MIN_RECORD_COUNT = 1;
     /** Response header carrying the self-check verdict for a returned file. */
     private static final String SELF_CHECK_HEADER = "X-Cdr-Self-Check";
+    /** Query parameter bound on its own, so it must not land in choiceSelections. */
+    private static final String ROOT_TYPE_PARAM = "rootType";
 
     private final StructureParserService structureParserService;
     private final CdrRecordBuilder cdrRecordBuilder;
@@ -144,16 +147,24 @@ public class BerGeneratorController {
                     + "doğrular. tools/ altındaki Python scriptlerini elle çalıştırmanın yerini alır: "
                     + "aynı beş kural (duplicate-tag, set-ordering, tag-shape, named-number, "
                     + "integer-range) burada da çalışır. Üretim akışından bağımsızdır; self-check.mode "
-                    + "ayarından etkilenmez, her zaman tüm bulguları döner.")
+                    + "ayarından etkilenmez, her zaman tüm bulguları döner. Modül birden çok üst tip "
+                    + "tanımlıyorsa 'rootType' ile dosyanın hangi tipe göre doğrulanacağı seçilir "
+                    + "(ör. ?rootType=TokensCSCF); verilmezse kök otomatik seçilir.")
     @PostMapping(value = "/verify-ber/{structureName}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<BerVerificationResponse> verifyBerFile(
             @PathVariable String structureName,
             @RequestPart("file") MultipartFile file,
+            @RequestParam(required = false) String rootType,
             @RequestParam(required = false) Map<String, String> choiceSelections) {
-        log.info("Incoming BER verification request for structure '{}', file '{}' ({} bytes)",
-                structureName, file.getOriginalFilename(), file.getSize());
+        log.info("Incoming BER verification request for structure '{}' (rootType={}), file '{}' ({} bytes)",
+                structureName, rootType, file.getOriginalFilename(), file.getSize());
 
-        AsnStructure structure = structureParserService.getStructureByName(structureName, choiceSelections);
+        // Spring binds EVERY query parameter into the untyped choiceSelections
+        // map, rootType included; left in, it would be offered to the resolver
+        // as a CHOICE type name.
+        Map<String, String> selections = withoutReservedKeys(choiceSelections);
+        AsnStructure structure =
+                structureParserService.getStructureByName(structureName, selections, rootType);
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(structureName);
         }
@@ -237,4 +248,20 @@ public class BerGeneratorController {
         }
         return structure;
     }
+
+    /**
+     * Drops the query parameters that are bound separately from the catch-all
+     * {@code choiceSelections} map, so they are not mistaken for CHOICE type
+     * names. Returns null when nothing is left, which keeps the "no selection"
+     * fast path in {@code StructureParserService} intact.
+     */
+    private Map<String, String> withoutReservedKeys(Map<String, String> queryParameters) {
+        if (Objects.isNull(queryParameters) || queryParameters.isEmpty()) {
+            return null;
+        }
+        Map<String, String> selections = new LinkedHashMap<>(queryParameters);
+        selections.remove(ROOT_TYPE_PARAM);
+        return selections.isEmpty() ? null : selections;
+    }
+
 }
