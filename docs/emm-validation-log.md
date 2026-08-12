@@ -229,3 +229,126 @@ tarif ediyor ve okuyanı yanıltır:
 
 Bu iki belge güncellenene kadar, tagging davranışı konusunda **bu günlük
 esas alınmalıdır.**
+
+## 8. Bağımsız çözücü turu — `asn1tools` (12.08.2026, EMM'den bağımsız)
+
+7. turun yanıtı beklenirken yapıldı. Amaç `coverage-validation-plan.md`'nin
+0-2. adımları: şema bilen, bizim alan ağacımızı paylaşmayan bir oracle.
+
+`asn1tools 0.167.0`, **izole bir venv'de** denendi; `pom.xml`'e hiçbir bağımlılık
+eklenmedi.
+
+### Negatif kontrol — oracle ayırt ediyor mu (önce bu)
+
+| bilerek bozuk girdi | `openssl asn1parse` | `asn1tools` |
+|---|---|---|
+| kesik dosya | RED | RED |
+| bozuk uzunluk baytı | RED | RED |
+| **BOOLEAN uzunluk 3** (`01 03 01 01 FF`) | **KABUL** ❌ | **RED** ✅ |
+| yanlış tag (`[0]` yerine `[7]`) | — | RED ✅ |
+
+Üçüncü satır: o bayt dizisi **EMM'in LTE-R10'u 2. turda reddettiği hatanın ta
+kendisi.** openssl geçiriyor, asn1tools yakalıyor. Bu ölçüm `primitive-length`
+kuralını doğurdu (commit `e93e7bf`).
+
+### ⚠️ Oracle'ın kör noktası — "decode başarılı" kriter DEĞİLDİR
+
+Tüm üyeleri OPTIONAL olan bir SEQUENCE'te `asn1tools` **hiçbir şeyi
+tüketmeden başarı döndürüyor**:
+
+| girdi | sonuç |
+|---|---|
+| geçerli kayıt | `{'a':'ABC','b':7}` |
+| **saf çöp** (`30 06 DEADBEEFCAFE`) | **`{}` — KABUL**, üstelik "8/8 bayt tüketildi" |
+| yanlış tag | `{}` — KABUL |
+
+`decode_with_length` de yardımcı olmuyor; dış SEQUENCE'in beyan ettiği uzunluğu
+tüketilmiş sayıyor. Bu bir teori değil, bizim dosyamızda gerçekleşti:
+`IMSCDRS-TokensCSCF` (527 B, 34 alan) "başarıyla çözüldü" ama **0 alan** döndü ve
+re-encode 2 bayta indi.
+
+Bu korpusta çoğu CDR gövdesi all-OPTIONAL (medyan 19 yaprağın 19'u OPTIONAL), yani
+kör nokta istisna değil kural. **Geçerli kriter:** decode → re-encode → bayt bayt
+karşılaştır, ya da okunan alan sayısını yazdığımızla karşılaştır.
+
+### Soru 1-2: ne derlendi, ne derlenemedi
+
+| | modül | oran |
+|---|---|---|
+| derlendi | **201** | %24,9 |
+| derlenemedi | **607** | %75,1 |
+| — `ParseError` | 492 | |
+| — `CompileError` | 115 | |
+
+Derlenememe sebepleri **bizim kodumuzla ilgili değil**, vendored ASN.1'in X.680'e
+uymaması:
+
+- **identifier'da alt çizgi** — `acmeFlowId_FS1_F`, `eVENT_RECORD`,
+  `beforeRefill_accountFlags`. X.680 identifier'da `_` kabul etmez.
+- **modül adında alt çizgi** — `Audit_Record_Collection_St` daha 1. satırda düşüyor.
+- **duplicate type** (`CompileError`) — `Type 'Epf3Service' already defined`,
+  `Type 'UsedServiceUnit' already defined`. Planın Katman C negatif kontrolünün
+  beklediği sınıf.
+
+Derlenenler arasında kritik olanlar var: `MMTelChargingDataTypes`, `IMSCDRS`,
+`TAP0309`, `TAP-0309`, `FDRInput`, `NRTRDEINFLOWV0201`.
+
+### Soru 3: decode sonuçları (doğru kriterle)
+
+| modül | sonuç | ayrıntı |
+|---|---|---|
+| `FDRInput` | **TAM** | 4 alan okundu, **re-encode bayt bayt aynı** |
+| `TAP-0309` | **TAM** | bayt bayt aynı |
+| `NRTRDEINFLOWV0201` | **TAM** | bayt bayt aynı |
+| `IMSCDRS-TokensCSCF` | SESSİZ | 0 alan okudu (yukarıdaki kör nokta) |
+| `MMTelChargingDataTypes` | RED | `interOperatorIdentifiers`: `30` bekledi, `80` buldu |
+| `IMSCDRS` (`Cdrs` kökü) | RED | tag uyuşmazlığı — 5906e76'nın IMPLICIT kuralı |
+| `NRTRDETadigidImsiLookup` | RED | kök tip adlandırma farkı, gerçek hata değil |
+
+**`FDRInput`'un bayt bayt aynı çıkması 7. turu doğrudan ilgilendiriyor:** bağımsız,
+standarda uygun bir çözücü bizim `61 37 30 35 …` kodlamamızı aynen okuyor ve aynı
+baytları geri üretiyor. Yani tip-seviyesi `[APPLICATION n]` okumamız X.680'e
+uygun. EMM bunu reddederse **sapan taraf EMM'dir, biz değiliz** — ki bu, alan
+seviyesinde IMSCDRS'te zaten bir kez yaşandı.
+
+### En önemli sonuç: sapma bizde değil, şema ile gerçeklik arasında
+
+`MMTelChargingDataTypes` reddedildi çünkü şema
+`interOperatorIdentifiers [14] EXPLICIT …` diyor ve biz sarmalayıcıyı kaldırıyoruz
+(`isVerifiedExplicitNeutralizationFamily`). Buraya kadar "bizim workaround'umuz
+standart dışı" denebilirdi.
+
+**Ama aynı çözücüye EMM'in kabul ettiği gerçek şebeke yakalamasından bir kayıt
+verildi ve o da reddedildi** (`list-Of-Calling-Party-Address`, aynı sınıf konum).
+
+Yani gerçek Ericsson ekipmanının ürettiği, EMM'in üretimde işlediği baytlar da
+yazılı ASN.1'e uymuyor. Sonuç:
+
+> Bu aile için **yazılı şemaya uygunluk yanlış hedeftir.** Nötrleştirme
+> workaround'u standarttan sapma değil, gerçekliğe uyumdur.
+
+Bu, `asn1tools`'un bu projedeki temel sınırını da tanımlıyor: **EMM'in yerine
+geçemez**, çünkü en az bir ailede standart ile gerçeklik ayrışıyor ve önemli olan
+gerçekliktir.
+
+### Soru 4: 805 yapı için gerçekçi bir oracle mı?
+
+**Genel doğrulayıcı olarak hayır, hedefli regresyon aracı olarak evet.**
+
+Üç bağımsız kısıt üst üste biniyor: %25 derleme oranı, all-OPTIONAL körlüğü, ve
+en az bir ailede şema-gerçeklik ayrışması. Bu haliyle 805 yapıya "geçti/kaldı"
+notu veremez.
+
+Değer ürettiği yer dar ama gerçek:
+
+1. **Hata sınıfı avı** — `primitive-length` bu turda böyle çıktı. Bulunan her
+   sınıf kalıcı bir self-check kuralına dönüşür ve bir daha EMM turu yakmaz.
+2. **Bayt bayt round-trip** — `FDRInput`, `TAP-0309`, `NRTRDEINFLOWV0201` gibi
+   temiz derlenen yapılarda gerçek doğrulama; hedef seçimi için kullanılabilir.
+3. **Şema kusuru envanteri** — 607 derlenemeyen modülün sebebi çoğunlukla
+   vendored ASN.1'in bozukluğu. Bu, "hangi modüller zaten şema olarak kusurlu"
+   sorusunun ilk ölçülmüş cevabı.
+
+Ölçüm betikleri kalıcı değil (scratchpad'de). Tekrar gerekirse: şemaları
+`datastructure.json`'dan dışa aktar, izole venv'de `asn1tools` ile derle,
+`manifest.tsv`'deki kök tiple decode et, **re-encode karşılaştırmasıyla** notla.
