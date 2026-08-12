@@ -28,6 +28,7 @@ app:
         tag-shape: true
         named-number: true
         integer-range: true
+        primitive-length: true
 
     ai:
       enabled: true
