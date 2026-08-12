@@ -108,7 +108,20 @@ class ValidationSampleTest {
             new Sample("Audit_Record_Collection_St"),
             new Sample("CME20R7TurkCellber"),
             new Sample("CDRDatamartPEPSIivr"),
-            new Sample("BroadSoft2Tesla"));
+            new Sample("BroadSoft2Tesla"),
+            // Round 8. Not a new structural shape - all four are IMPLICIT-header
+            // modules carrying no type-level tag at all, which is exactly why
+            // they can go out while round 7 is still unanswered: whatever EMM
+            // says about [APPLICATION n], these bytes do not change. What they
+            // buy is lineage coverage. CGSN40ber is packet-domain but not the
+            // module LTE-R10/GGSN proved, so it is the first test of whether a
+            // family verdict generalises. TurkcellCDRCCNCS5 and CHAD are the
+            // CCN/OCC lineage, 17 modules no evidence has ever touched.
+            // SMSCBerCdr is a second sample of the remaining group.
+            new Sample("CGSN40ber"),
+            new Sample("TurkcellCDRCCNCS5"),
+            new Sample("CHAD"),
+            new Sample("SMSCBerCdr"));
 
     /** CHOICE alternative to select per sample, keyed by output file name. */
     private static final Map<String, Map<String, String>> CHOICE_SELECTIONS = Map.of(
