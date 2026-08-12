@@ -121,7 +121,17 @@ class ValidationSampleTest {
             new Sample("CGSN40ber"),
             new Sample("TurkcellCDRCCNCS5"),
             new Sample("CHAD"),
-            new Sample("SMSCBerCdr"));
+            new Sample("SMSCBerCdr"),
+            // The widest single gap in what a real decoder has answered for.
+            // Every EMM verdict on a rich structure - CHOICE, SEQUENCE OF, SET,
+            // nesting - came from a module that writes IMPLICIT TAGS. The 712
+            // modules whose header names no mode are represented by IMSCDRS
+            // alone, which is 42 flat leaves with no CHOICE, no SEQUENCE OF and
+            // no SET. This module is the same header with all of it: 269
+            // leaves, 9 CHOICE, 17 SEQUENCE OF, 7 SET, and four fields carrying
+            // a written EXPLICIT keyword, which is the one site 5906e76 leaves
+            // alone and nothing has confirmed.
+            new Sample("CHFChargingDataTypes16"));
 
     /** CHOICE alternative to select per sample, keyed by output file name. */
     private static final Map<String, Map<String, String>> CHOICE_SELECTIONS = Map.of(
