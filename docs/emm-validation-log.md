@@ -266,6 +266,60 @@ tarif ediyor ve okuyanı yanıltır:
 Bu iki belge güncellenene kadar, tagging davranışı konusunda **bu günlük
 esas alınmalıdır.**
 
+## 9. Kanıt korpusu — tek turda azami kanıt (12.08.2026)
+
+Yaklaşım değişti: rastgele tek tek dosya yerine, **her dosya en az bir açık
+teknik soruyu test eden** asgari bir set.
+
+### Korpus analizinden çıkan iki düzeltme
+
+**1. `TurkcellCDRCCNCS5` elendi.** `CHAD` ile şema benzerliği %83; 218 tip ortak,
+`CCNCS5`'in yalnızca 2 özel tipi var. `CHAD` üst küme, ikisini birden göndermek
+bilgi eklemiyor. (8. turda gönderildi, sonucu yine de kaydedilecek.)
+
+**2. `QoSInformation` kısıtı yanlış biliniyordu.** §4 "SIZE(4..255)" diyordu;
+şemadaki aktif tanım:
+
+```
+QoSInformation ::= OCTET STRING (SIZE (4..17))   -- Huawei
+-- QoSInformation ::= OCTET STRING (SIZE (4..255))  -- Cisco   <- YORUMDA
+```
+
+Bu, ayırt edilemezlik gerekçesini değiştiriyor. 17 oktetlik bir değer
+`A1 13 04 11 …` diye sarmalandığında, sarmalayıcının içeriği **19 oktettir** ve
+19 > 17. Yani sarmalayıcıyı açmayan bir çözücü için değer kısıt dışına çıkar.
+Bu, iki okumanın ilk kez ayrılabildiği nokta.
+
+### `qosRequested` ayırt edici ikilisi
+
+`tools/qosProbe.py` ile üretildi. **İki dosya da aynı 17 baytlık ASCII değeri
+taşıyor** (`QOSPROBE123456789`), tek fark sarmalayıcı:
+
+| dosya | qosRequested baytları | doğru okuma | sarmalayıcıyı yok sayan okuma |
+|---|---|---|---|
+| `GGSN-qos-implicit.ber` | `81 11 <17B>` | 17 oktet ✓ | — |
+| `GGSN-qos-explicit.ber` | `A1 13 04 11 <17B>` | 17 oktet ✓ | **19 oktet ✗ (SIZE dışı)** |
+
+Değerler aynı olduğu için **EMM'in döndürdüğü ASCII decode doğrudan
+karşılaştırılabilir**: ikisi de `QOSPROBE123456789` dönerse sarmalayıcı doğru
+açılıyor; explicit varyantta değerin başında `04 11` görünürse EMM içeriği
+deger sayıyor demektir. Çıkarım gerekmez, ölçüm yeterli.
+
+**Not:** `GGSN-qos-explicit.ber` bizim encoder'ımızın bugün ürettiği biçim
+değildir (paket-alanı ailesinde EXPLICIT nötrleniyor). Bilerek üretilmiş bir
+sapmadır; kendi self-check'imiz onu işaretler, bu beklenen davranıştır.
+
+### `CHFChargingDataTypes16` — en geniş tekil boşluk
+
+EMM'in zengin yapı üzerine verdiği her verdict `IMPLICIT TAGS` başlıklı bir
+modülden geldi. Başlığı mod söylemeyen 712 modülü temsil eden tek kabul edilmiş
+dosya `IMSCDRS` ve o 42 düz yaprak — içinde CHOICE, SEQUENCE OF, SET yok.
+
+`CHFChargingDataTypes16` aynı başlık, hepsi içinde: 269 yaprak, 9 CHOICE,
+17 SEQUENCE OF, 7 SET, 10 çok-baytlı tag, 19 long-form uzunluk ve **4 adet
+yazılı `EXPLICIT` keyword'ü** — `5906e76`'nın bilerek dokunmadığı ve hiçbir
+yanıtın kapsamadığı site.
+
 ## 8. Bağımsız çözücü turu — `asn1tools` (12.08.2026, EMM'den bağımsız)
 
 7. turun yanıtı beklenirken yapıldı. Amaç `coverage-validation-plan.md`'nin
