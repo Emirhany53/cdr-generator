@@ -82,20 +82,70 @@ public class AsnTypeRegistryBuilder {
     }
 
     /**
-     * Reads the module-level tagging mode from the header. Returns
-     * {@link AsnTaggingMode#EXPLICIT} when the header omits the keyword, which
-     * is the ASN.1 standard default (X.680) - previously the code always assumed
-     * IMPLICIT, mis-encoding the majority of modules that rely on the default.
+     * Reads the module-level tagging mode from the header. A written
+     * {@code IMPLICIT}/{@code EXPLICIT}/{@code AUTOMATIC} keyword always wins.
+     * When the header omits it, this reports {@link AsnTaggingMode#UNSPECIFIED}
+     * rather than picking a mode here, because the two sites that consume it
+     * must not pick the same one.
+     *
+     * <h2>Standard behaviour vs the behaviour of the consumer</h2>
+     *
+     * <p>X.680 31.2.7 is unambiguous: a module header that names no tagging mode
+     * defaults to EXPLICIT, so {@code sessionId [1] IA5String} encodes as
+     * {@code A1 32 16 30 ..} - a constructed context tag wrapping the type's own
+     * universal TLV. That is the standard, and nothing here disputes it.
+     *
+     * <p>What {@code AsnFieldTreeResolver.resolveExplicit} applies to a FIELD tag
+     * in this case is a COMPATIBILITY rule, not a reading of the standard. In
+     * some Ericsson/EMM consumer flows, context-specific fields of a module that
+     * declares no tagging mode have been observed to be processed as IMPLICIT.
+     * Files that follow the standard are refused by those flows.
+     *
+     * <h2>The evidence</h2>
+     *
+     * <p>{@code IMSCDRS} declares {@code IMSCDRS DEFINITIONS ::=} - no keyword.
+     * Its {@code TokensCSCF} record was offered to the CSCFColl flow five times
+     * in the standard-conforming EXPLICIT form, in four different framings, and
+     * refused every time ("Invalid length N of field IMSCDRS.TokensCSCF", where
+     * N was always the exact file size - 590, 114 and 411 bytes, so neither a
+     * size limit nor the length form). The same record re-encoded with the
+     * fields IMPLICIT ({@code 81 30 ..} instead of {@code A1 32 16 30 ..}) was
+     * accepted on the first attempt, and EMM returned its decode: all 34 fields,
+     * every value matching the generated file exactly.
+     *
+     * <p>The schema EMM holds for IMSCDRS was supplied alongside that result and
+     * is field-for-field identical to the vendored copy - same 34 names, same
+     * tags, same keyword-less header - so the disagreement is in how the header
+     * is interpreted, not in what the module declares.
+     *
+     * <h2>Scope</h2>
+     *
+     * <p>Only the module DEFAULT is affected, and only for a FIELD tag. Three
+     * boundaries keep it there:</p>
+     *
+     * <ul>
+     * <li>A site carrying a written {@code EXPLICIT} keyword keeps it - the
+     *     keyword is read before this value is ever consulted.</li>
+     * <li>A tag written on a TYPE ({@code NrFile ::= [APPLICATION 1] SEQUENCE})
+     *     is a different construct that the evidence never touched: IMSCDRS
+     *     carries no APPLICATION tag at all. {@code readLeadingTag} keeps X.680's
+     *     EXPLICIT for those, which is why {@code FDRInput} and
+     *     {@code Audit_Record_Collection_St} encode exactly as before.</li>
+     * <li>The three families a real decoder has already accepted never reach the
+     *     default - {@code MMTelChargingDataTypes}, {@code GGSNTurkcellCdrR7} and
+     *     {@code LTE-R10} all write {@code DEFINITIONS IMPLICIT TAGS}, so the
+     *     matcher below returns first.</li>
+     * </ul>
      */
     public AsnTaggingMode detectTaggingMode(String contents) {
         if (contents == null || contents.isBlank()) {
-            return AsnTaggingMode.EXPLICIT;
+            return AsnTaggingMode.UNSPECIFIED;
         }
         Matcher matcher = TAGGING_MODE_PATTERN.matcher(stripLineComments(contents));
         if (matcher.find()) {
             return AsnTaggingMode.valueOf(matcher.group(1));
         }
-        return AsnTaggingMode.EXPLICIT;
+        return AsnTaggingMode.UNSPECIFIED;
     }
 
     private AsnTypeDefinition parseStatement(String typeName, String statement,

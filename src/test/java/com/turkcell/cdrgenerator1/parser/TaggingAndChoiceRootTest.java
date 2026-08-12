@@ -20,14 +20,60 @@ class TaggingAndChoiceRootTest {
 
     // ---- B2: module-level tagging mode ----
 
+    /**
+     * A written keyword is reported as written; a header that names no mode is
+     * reported as {@code UNSPECIFIED} rather than resolved here.
+     *
+     * <p>This method used to answer EXPLICIT for the keyword-less case, X.680
+     * 31.2.7's default. It no longer decides at all, because the two sites that
+     * consume the answer must not decide alike: a FIELD tag is encoded IMPLICIT
+     * there (a compatibility rule measured against EMM on
+     * {@code IMSCDRS.TokensCSCF}), while a tag written on a TYPE keeps X.680's
+     * EXPLICIT, which nothing has measured. Resolving the silence here would
+     * force one of those two to be wrong.</p>
+     */
     @Test
-    void detectsTaggingModeFromHeaderAndDefaultsToExplicit() {
-        assertEquals(AsnTaggingMode.EXPLICIT,
+    void reportsTheHeadersKeywordAndLeavesSilenceUnresolved() {
+        assertEquals(AsnTaggingMode.UNSPECIFIED,
                 builder.detectTaggingMode("M DEFINITIONS ::= BEGIN END"));
         assertEquals(AsnTaggingMode.IMPLICIT,
                 builder.detectTaggingMode("M DEFINITIONS IMPLICIT TAGS ::= BEGIN END"));
         assertEquals(AsnTaggingMode.AUTOMATIC,
                 builder.detectTaggingMode("M DEFINITIONS AUTOMATIC TAGS ::= BEGIN END"));
+        assertEquals(AsnTaggingMode.EXPLICIT,
+                builder.detectTaggingMode("M DEFINITIONS EXPLICIT TAGS ::= BEGIN END"));
+    }
+
+    /**
+     * The two defaults an UNSPECIFIED header resolves to, side by side - the
+     * whole reason {@code UNSPECIFIED} exists rather than being collapsed at
+     * parse time.
+     *
+     * <p>A FIELD tag goes IMPLICIT: measured on {@code IMSCDRS.TokensCSCF},
+     * which EMM refused five times in the standard EXPLICIT form and accepted
+     * once re-encoded, returning all 34 values intact.</p>
+     *
+     * <p>A tag written on a TYPE stays EXPLICIT, X.680 31.2.7's default. No
+     * measurement covers that construct - IMSCDRS declares no APPLICATION tag at
+     * all - so it is left alone. This is what keeps {@code FDRInput}
+     * ({@code NrFile ::= [APPLICATION 1] SEQUENCE}) and
+     * {@code Audit_Record_Collection_St} encoding as they always have.</p>
+     */
+    @Test
+    void anUnspecifiedHeaderTreatsAFieldTagAndATypeTagDifferently() {
+        var fieldTagged = builder.buildRegistry(
+                "M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END");
+        AsnFieldTreeResolver.ResolvedRoot field = resolver.resolveRoot(
+                fieldTagged, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
+        assertFalse(field.fields().get(0).isExplicit(),
+                "a FIELD tag under a keyword-less header is IMPLICIT - the rule EMM verified");
+
+        var typeTagged = builder.buildRegistry(
+                "M DEFINITIONS ::= BEGIN Root ::= [APPLICATION 1] SEQUENCE { a [1] IMPLICIT INTEGER } END");
+        AsnFieldTreeResolver.ResolvedRoot type = resolver.resolveRoot(
+                typeTagged, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
+        assertTrue(type.rootTagCarrier().isExplicit(),
+                "a tag written on a TYPE keeps X.680's EXPLICIT - nothing has measured that case");
     }
 
     @Test

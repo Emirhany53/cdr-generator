@@ -887,9 +887,16 @@ public class AsnFieldTreeResolver {
         BerTagClass tagClass = tag.group(1) != null
                 ? BerTagClass.valueOf(tag.group(1))
                 : BerTagClass.CONTEXT;
+        // A tag written on a TYPE, not on a field: "NrFile ::= [APPLICATION 1]
+        // SEQUENCE {...}". When the header named no mode this keeps X.680
+        // 31.2.7's EXPLICIT, deliberately parting company with the field-level
+        // rule in resolveExplicit. The measurement that justifies that rule is
+        // about context-specific FIELD tags - IMSCDRS declares no APPLICATION tag
+        // anywhere - so extending it here would be assuming, not knowing, and it
+        // would silently re-encode FDRInput and Audit_Record_Collection_St.
         boolean explicit = tag.group(3) != null
                 ? tag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
-                : taggingMode == AsnTaggingMode.EXPLICIT;
+                : taggingMode != AsnTaggingMode.IMPLICIT && taggingMode != AsnTaggingMode.AUTOMATIC;
         return new EffectiveTag(Integer.valueOf(tag.group(2)), tagClass, explicit);
     }
 
@@ -1269,7 +1276,16 @@ public class AsnFieldTreeResolver {
         if (IMPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
             return false;
         }
-        // No per-field keyword: fall back to the module default (X.680: EXPLICIT).
+        // No per-field keyword, and the header named no mode either. X.680 31.2.7
+        // says EXPLICIT; EMM was measured doing the opposite for a FIELD tag, and
+        // this is the one place that acts on that measurement. IMSCDRS.TokensCSCF
+        // went out five times in the standard form and was refused every time;
+        // the same record with its 34 fields IMPLICIT was accepted, and EMM's
+        // decode returned all 34 values matching the file exactly. See
+        // AsnTypeRegistryBuilder.detectTaggingMode.
+        if (taggingMode == AsnTaggingMode.UNSPECIFIED) {
+            return false;
+        }
         return taggingMode == AsnTaggingMode.EXPLICIT;
     }
 
