@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """qosRequested [1] icin ayirt edici ikili uretir.
 
-U (implicit) : 81 11 <17 ASCII>          -> dogru okuma 17 oktet
-W (explicit) : A1 13 04 11 <17 ASCII>    -> sarmalayici icerigi 19 oktet
+Kullanim: qosProbe.py girdi.ber cikti.ber OFFSET plain|wrap DEGER
 
-QoSInformation ::= OCTET STRING (SIZE(4..17)). 19 > 17 oldugu icin, EMM
-sarmalayiciyi acmadan icerigi deger sayarsa W'de SIZE ihlali olusur ya da
-donen ASCII degerin basinda 04 11 baytlari gorunur. Iki dosya ayni degeri
-tasidigi icin donen degerler karsilastirilabilir.
+U (plain) : 81 <n> <DEGER>            -> dogru okuma n oktet
+W (wrap)  : A1 <n+2> 04 <n> <DEGER>   -> sarmalayici icerigi n+2 oktet
+
+DEGER uzunlugu o yapinin QoSInformation SIZE ust sinirina esit secilir
+(GGSNTurkcellCdrR7 icin 17, CGSN40ber icin 12). Boylece sarmalayiciyi
+acmayan bir cozucu icin uzunluk kisitin disina cikar. Iki dosya ayni
+degeri tasidigi icin EMM'in dondurdugu ASCII decode dogrudan
+karsilastirilabilir - cikarim gerekmez.
 """
 import sys
-PROBE = b'QOSPROBE123456789'  # 17 bayt
-assert len(PROBE) == 17
+# Deger komut satirindan gelir; uzunlugu o yapinin SIZE ust sinirina esit
+# secilmelidir - ayirt ediciligi saglayan sey budur. Sarmalayici acilmazsa
+# icerik uzunlugu +2 olur ve kisitin disina cikar.
+PROBE = None
 
 def parse(buf, i):
     first = buf[i]; tc = first >> 6; con = bool(first & 0x20); tn = first & 0x1F; i += 1
@@ -61,6 +66,7 @@ def rebuild(buf, start, end, target_off, wrap, hits):
     return bytes(out)
 
 src, dst, off, mode = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+PROBE = sys.argv[5].encode('ascii')
 buf = open(src, 'rb').read(); hits = []
 out = rebuild(buf, 0, len(buf), off, mode == 'wrap', hits)
 open(dst, 'wb').write(out)

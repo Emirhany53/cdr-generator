@@ -131,7 +131,13 @@ class ValidationSampleTest {
             // leaves, 9 CHOICE, 17 SEQUENCE OF, 7 SET, and four fields carrying
             // a written EXPLICIT keyword, which is the one site 5906e76 leaves
             // alone and nothing has confirmed.
-            new Sample("CHFChargingDataTypes16"));
+            // rootType named explicitly: the heuristic picks CHFRecord, the
+            // CHOICE at the top, but EMM's flow decodes
+            // CHFChargingDataTypes16.ChargingRecord and refused the file with
+            // "ChargingRecord was probably not set". Same class of correction as
+            // LTE-R10's pGWRecord - which type is the record is the consuming
+            // flow's call, not the parser's.
+            new Sample("CHFChargingDataTypes16", "ChargingRecord", "CHFChargingDataTypes16"));
 
     /** CHOICE alternative to select per sample, keyed by output file name. */
     private static final Map<String, Map<String, String>> CHOICE_SELECTIONS = Map.of(
