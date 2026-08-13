@@ -65,6 +65,36 @@ public class AsnField {
     private boolean decoderHoistsImplicitChoice;
 
     /**
+     * True when this field's type is a CHOICE carrying a tag that has no written
+     * keyword, in a module whose header names no tagging mode - the one case a
+     * real decoder has answered against X.680 8.3.
+     *
+     * <p>8.3 makes any tag on a CHOICE EXPLICIT, because the tag is what
+     * identifies the selected alternative, and both {@code BerEncoderService} and
+     * {@code BerVerifier} applied that whatever the module default. EMM does not,
+     * when the header names no mode. {@code CHFChargingDataTypes16} declares</p>
+     *
+     * <pre>
+     * networkFunctionFQDN [5] EXPLICIT NodeAddress OPTIONAL
+     * NodeAddress ::= CHOICE { iPAddress [0] IPAddress, domainName [1] IA5String }
+     * </pre>
+     *
+     * <p>The outer {@code [5]} carries a written EXPLICIT and keeps its wrapper.
+     * The inner {@code iPAddress [0]} carries none, and 8.3 made us wrap it too.
+     * Round 13 sent the same record three ways: {@code [4]} alone passed,
+     * {@code [5]} as {@code A5 08 A0 06 80 04 ..} was refused, and {@code [5]}
+     * with that {@code A0} gone - {@code A5 06 80 04 ..} - passed.</p>
+     *
+     * <p>Deliberately NOT set for a module that writes {@code IMPLICIT TAGS}.
+     * The same pattern sits at 163 sites across 31 such modules, two of them
+     * EMM-accepted ({@code MMTelChargingDataTypes}, {@code CHAD}), and MMTel is
+     * additionally matched layer for layer against a real capture. Nothing has
+     * measured that class, so it keeps 8.3. This flag holds the new reading to
+     * the 21 sites in 5 keyword-less modules the evidence covers.</p>
+     */
+    private boolean choiceTagImplicit;
+
+    /**
      * For a repeated field whose ELEMENT type declares a tag of its own, the
      * element as a field: same children and type, not repeated, carrying that
      * tag. Null otherwise, which leaves the element on its universal tag.

@@ -458,6 +458,7 @@ public class AsnFieldTreeResolver {
                 .choice(choiceElement)
                 .set(setElement)
                 .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
+                .choiceTagImplicit(choiceTagImplicit(effectiveTag, repeated, choiceElement, taggingMode))
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
                 .explicit(effectiveExplicit(registry, effectiveTag, repeated, choiceElement))
@@ -557,6 +558,29 @@ public class AsnFieldTreeResolver {
      * 31.2.7 default rather than a written keyword and no capture has confirmed
      * either reading.</p>
      */
+    /**
+     * True where X.680 8.3's "a tag on a CHOICE is always EXPLICIT" gives way to
+     * the module default - the one case round 13 measured.
+     *
+     * <p>Four conditions, all required. The type must BE a CHOICE and the field
+     * must not be repeated, since for a collection the outer tag wraps the
+     * collection rather than an alternative. The tag must carry no written
+     * keyword, because EMM honours one ({@code CHFChargingDataTypes16}'s
+     * {@code [2] EXPLICIT IPAddress} passed in round 12). And the header must
+     * name no mode: an {@code IMPLICIT TAGS} module keeps 8.3, because MMTel's
+     * accepted files and its reference capture both depend on it.</p>
+     *
+     * @see AsnField#isChoiceTagImplicit()
+     */
+    private boolean choiceTagImplicit(EffectiveTag tag, boolean repeated, boolean choiceElement,
+                                      AsnTaggingMode taggingMode) {
+        return choiceElement
+                && !repeated
+                && !tag.explicit()
+                && Objects.nonNull(tag.tagNumber())
+                && taggingMode == AsnTaggingMode.UNSPECIFIED;
+    }
+
     private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, EffectiveTag tag,
                                       boolean repeated, boolean choiceElement) {
         if (universalTagCannotWrap(tag)) {
@@ -800,6 +824,7 @@ public class AsnFieldTreeResolver {
                     .choice(choiceElement)
                     .set(setElement)
                     .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
+                    .choiceTagImplicit(choiceTagImplicit(fieldTag, repeated, choiceElement, taggingMode))
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
                     .explicit(effectiveExplicit(registry, fieldTag, repeated, choiceElement))

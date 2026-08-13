@@ -88,7 +88,12 @@ public class TagShapeRule implements VerificationRule {
                 }
             } else {
                 boolean hasChildren = field.getChildren() != null && !field.getChildren().isEmpty();
-                if (hasChildren || field.isSet() || field.isChoice()) {
+                // An IMPLICIT tag on a CHOICE takes the shape of the alternative
+                // it re-tags, and that alternative may well be primitive - here
+                // the node is not the field's own container, so "container with a
+                // primitive tag" is not a defect. See AsnField.isChoiceTagImplicit.
+                boolean shapeComesFromAlternative = field.isChoiceTagImplicit();
+                if ((hasChildren || field.isSet() || field.isChoice()) && !shapeComesFromAlternative) {
                     if (!node.constructed()) {
                         context.report(
                                 FindingSeverity.WARNING,

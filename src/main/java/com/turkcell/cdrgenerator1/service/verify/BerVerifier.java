@@ -211,6 +211,14 @@ public class BerVerifier {
             walkAlternative(field, node, context);
             return;
         }
+        // The encoder's counterpart: where the tag is IMPLICIT the node IS the
+        // alternative, re-tagged, so there is no wrapper to unwrap. Demanding one
+        // reported the bytes EMM accepted in round 13 as broken.
+        if (field.isChoiceTagImplicit()) {
+            offer(node, field, false, context);
+            walkAlternative(field, node, context);
+            return;
+        }
         offer(node, field, false, context);
         TlvNode inner = onlyChild(node, field, context);
         if (Objects.nonNull(inner)) {

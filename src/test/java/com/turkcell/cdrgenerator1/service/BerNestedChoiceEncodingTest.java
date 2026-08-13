@@ -107,6 +107,54 @@ class BerNestedChoiceEncodingTest {
         assertEquals(UNIVERSAL_SEQUENCE_TAG, out[0] & 0xFF, "only the root carries a universal SEQUENCE");
     }
 
+    /**
+     * The same chain in a module whose header names no tagging mode: the inner
+     * {@code iPAddress [0]} carries no written keyword, so its tag is IMPLICIT
+     * and re-tags the alternative instead of wrapping it.
+     *
+     * <p>{@code CHFChargingDataTypes16} is the measured case. Round 13 sent the
+     * record three ways and EMM refused {@code A5 08 A0 06 80 04 ..} while
+     * accepting {@code A5 06 80 04 ..}. The outer tag here keeps its wrapper
+     * because it carries a written EXPLICIT, exactly as in the file that passed.</p>
+     */
+    @Test
+    void anUnkeywordedChoiceTagRetagsTheAlternativeInsteadOfWrappingIt() {
+        AsnField leaf = AsnField.builder()
+                .fieldName("iPBinV4Address").fieldType("OCTET STRING")
+                .tagNumber(0).tagClass(BerTagClass.CONTEXT)
+                .build();
+        AsnField binaryAddress = AsnField.builder()
+                .fieldName("iPBinaryAddress").fieldType("IPBinaryAddress")
+                .choice(true)
+                .children(List.of(leaf))
+                .build();
+        // No written keyword, keyword-less header: the resolver sets the flag.
+        AsnField ipAddress = AsnField.builder()
+                .fieldName("iPAddress").fieldType("IPAddress")
+                .choice(true).choiceTagImplicit(true)
+                .tagNumber(0).tagClass(BerTagClass.CONTEXT)
+                .children(List.of(binaryAddress))
+                .build();
+        AsnField fqdn = AsnField.builder()
+                .fieldName("networkFunctionFQDN").fieldType("NodeAddress")
+                .choice(true)
+                .tagNumber(5).tagClass(BerTagClass.CONTEXT).explicit(true)
+                .children(List.of(ipAddress))
+                .build();
+
+        byte[] out = encoder.encodeRecord(List.of(fqdn), Map.of("networkFunctionFQDN",
+                Map.of("iPAddress", Map.of("iPBinaryAddress", Map.of("iPBinV4Address", "0ADB16C5")))));
+
+        // 30 08          root
+        //    A5 06       [5] EXPLICIT keeps its wrapper - written keyword
+        //       80 04 .. iPBinV4Address, re-tagged onto iPAddress's [0]
+        assertArrayEquals(new byte[]{
+                0x30, 0x08,
+                (byte) 0xA5, 0x06,
+                (byte) 0x80, 0x04, 0x0A, (byte) 0xDB, 0x16, (byte) 0xC5
+        }, out, "an unkeyworded tag on a CHOICE must re-tag, not wrap");
+    }
+
     /** A CHOICE without any tag of its own contributes no wrapper at all. */
     @Test
     void untaggedChoiceEmitsAlternativeDirectly() {

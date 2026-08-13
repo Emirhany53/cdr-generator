@@ -59,6 +59,13 @@ public class BerEncoderService {
     private static final String BOOLEAN_TRUE_DIGIT = "1";
     private static final String BOOLEAN_FALSE_DIGIT = "0";
 
+    /** Identifier and length bits {@link #retagOutermost} has to read (X.690 8.1). */
+    private static final int CONSTRUCTED_BIT = 0x20;
+    private static final int HIGH_TAG_MARKER = 0x1F;
+    private static final int CONTINUATION_BIT = 0x80;
+    private static final int BYTE_MASK = 0xFF;
+    private static final int LONG_FORM_LENGTH_MARKER = 0x80;
+
     private final TlvWriter tlvWriter;
     private final FixedWidthTextFormatter fixedWidthTextFormatter;
 
@@ -362,9 +369,17 @@ public class BerEncoderService {
                 ? field.getTagClass()
                 : BerTagClass.CONTEXT;
 
+        // An IMPLICIT tag on a CHOICE replaces the tag of the alternative the
+        // content already carries instead of wrapping it. Only reachable where
+        // the resolver set the flag; see AsnField.isChoiceTagImplicit.
+        if (choice && field.isChoiceTagImplicit()) {
+            return retagOutermost(content, tagClass, field.getTagNumber());
+        }
+
         // X.680 8.3: a CHOICE can never carry an IMPLICIT tag, because the tag
         // is what identifies the selected alternative. Any tag on a CHOICE is
-        // therefore encoded as EXPLICIT, whatever the module's default tagging.
+        // therefore encoded as EXPLICIT, whatever the module's default tagging -
+        // except in the case just above, which a real decoder answered against.
         if (field.isExplicit() || choice) {
             byte[] inner;
             if (choice) {
@@ -378,6 +393,42 @@ public class BerEncoderService {
             return tlvWriter.buildTlv(tagClass, field.getTagNumber(), true, inner);
         }
         return tlvWriter.buildTlv(tagClass, field.getTagNumber(), constructed, content);
+    }
+
+    /**
+     * Rewrites the identifier octets of a TLV, keeping its constructed bit and
+     * its contents. This is what an IMPLICIT tag does to the value it tags.
+     *
+     * <p>What the measurement pinned down, and what it did not: round 13's
+     * accepted file carries {@code A5 06 80 04 ..} where the refused one carried
+     * {@code A5 08 A0 06 80 04 ..}. At that site the alternative's tag and the
+     * inner one are both {@code [0]}, so replacing the tag and dropping it
+     * outright produce identical bytes and the evidence cannot separate them.
+     * Replacing is what implicit tagging means, so that is what this does - but
+     * the two readings diverge wherever the numbers differ, and no site like
+     * that has been measured.</p>
+     */
+    private byte[] retagOutermost(byte[] content, BerTagClass tagClass, int tagNumber) {
+        if (content.length == 0) {
+            return content;
+        }
+        boolean constructed = (content[0] & CONSTRUCTED_BIT) != 0;
+        int cursor = 1;
+        if ((content[0] & HIGH_TAG_MARKER) == HIGH_TAG_MARKER) {
+            while (cursor < content.length && (content[cursor] & CONTINUATION_BIT) != 0) {
+                cursor++;
+            }
+            cursor++;
+        }
+        int firstLengthOctet = content[cursor++] & BYTE_MASK;
+        if (firstLengthOctet >= LONG_FORM_LENGTH_MARKER) {
+            cursor += firstLengthOctet - LONG_FORM_LENGTH_MARKER;
+        }
+        byte[] value = new byte[content.length - cursor];
+        System.arraycopy(content, cursor, value, 0, value.length);
+        log.debug("Re-tagged a CHOICE alternative onto {} [{}], {} content byte(s)",
+                tagClass, tagNumber, value.length);
+        return tlvWriter.buildTlv(tagClass, tagNumber, constructed, value);
     }
 
     /**
