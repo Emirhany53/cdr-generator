@@ -53,12 +53,17 @@ def innermost(buf, cs, ce):
     tc, tn, con, s, e = parse(buf, cs)
     return innermost(buf, s, e) if con else buf[s:e]
 
-def collapse(buf, start, end, hits):
-    """A3'un icerigini yeniden yazar: EXPLICIT sarmalayicilar duser."""
+def collapse(buf, start, end, hits, mode):
+    """A3'un icerigini yeniden yazar."""
     out = bytearray(); i = start
     while i < end:
         tc, tn, con, cs, ce = parse(buf, i)
-        if con and tn in (2, 4, 5):
+        if mode == 'minimal':
+            if tn == 0:
+                out += buf[i:ce]
+            else:
+                hits.append(tn)
+        elif con and tn in (2, 4, 5):
             val = innermost(buf, cs, ce)
             out += bytes([0x80 | tn]) + enclen(len(val)) + val
             hits.append(tn)
@@ -67,24 +72,25 @@ def collapse(buf, start, end, hits):
         i = ce
     return bytes(out)
 
-def rebuild(buf, start, end, hits):
+def rebuild(buf, start, end, hits, mode):
     out = bytearray(); i = start
     while i < end:
         tc, tn, con, cs, ce = parse(buf, i)
         tb = tagbytes(buf, i)
         if tc == 2 and tn == 3 and con and not hits:
-            inner = collapse(buf, cs, ce, hits)
+            inner = collapse(buf, cs, ce, hits, mode)
             out += tb + enclen(len(inner)) + inner
         elif con:
-            inner = rebuild(buf, cs, ce, hits)
+            inner = rebuild(buf, cs, ce, hits, mode)
             out += tb + enclen(len(inner)) + inner
         else:
             out += buf[i:ce]
         i = ce
     return bytes(out)
 
-src, dst = sys.argv[1], sys.argv[2]
+src, dst, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 buf = open(src, 'rb').read(); hits = []
-out = rebuild(buf, 0, len(buf), hits)
+out = rebuild(buf, 0, len(buf), hits, mode)
 open(dst, 'wb').write(out)
-print(f"  {dst}: {len(buf)} -> {len(out)} bayt, duzlestirilen alan: {hits}")
+verb = 'cikarilan' if mode == 'minimal' else 'duzlestirilen'
+print(f"  {dst}: {len(buf)} -> {len(out)} bayt, {verb} alan: {hits}")

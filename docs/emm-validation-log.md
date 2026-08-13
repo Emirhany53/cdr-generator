@@ -175,7 +175,25 @@ Beş redden **üçü yanlış akışa yönlendirmeden** kaynaklandı; kodlama s�
 harcanır. Bu, `LTE-R10`'un `pGWRecord` düzeltmesiyle aynı sınıf — üçüncü kez
 tekrarlandı.
 
-### 🟡 Primitive ENUMERATED — 7. turda gönderildi
+### 🟠 Primitive ENUMERATED — ölçülemedi, ama çıkarımla büyük ölçüde kapandı
+
+Doğrudan ölçüm **mümkün değil**: EMM'de yönlendirilebildiğini bildiğimiz 11
+modülün hiçbirinde `[n] EXPLICIT <ENUMERATED>` yok (alias zinciri derinlemesine
+çözülerek tarandı), ve `IMSChargingDataTypes` için CSCFColl dışında akış yok.
+
+Yerine iki ölçülmüş olgu birleşiyor:
+
+1. **Kural 3 (LTE-R10):** `[n] EXPLICIT <primitive BOOLEAN>` → EMM IMPLICIT istedi
+2. **10. tur (CGSN40ber decode):** implicit ENUMERATED alanları — `changeCondition`,
+   `causeForRecClosing`, `apnSelectionMode`, `chChSelectionMode` — EMM tarafından
+   **sembolik adlarıyla doğru çözüldü**
+
+EMM telde `81 01 00` görür; o baytın "modül varsayılanı implicit"ten mi yoksa
+"yazılı EXPLICIT nötrlendi"den mi geldiğini ayırt edemez. İki olgu birlikte
+mevcut davranışı destekliyor. **Ölçüm değil, çıkarım** — kanıt hiyerarşisinde
+bir basamak aşağıda tutulmalı.
+
+### 🟡 (eski kayıt) Primitive ENUMERATED — 7. turda gönderildi
 
 - `IMSChargingDataTypes` → `subscriberRole [1] EXPLICIT SubscriberRole` = `81 01 00`
 - MMTel ailesinden (aynı parmak izi, aynı başlık) olduğu için düşük riskli
@@ -370,6 +388,16 @@ networkFunctionFQDN        [5] EXPLICIT NodeAddress
 |---|---|---|---|
 | `CHF-explicit-kept.ber` | `A2 06 {80 04 …}` — sarmalayıcı korunur | 2449 | `ef9f5ad3e38eacbb0a8ce2973dd2f17cca4e83d908eaf0f9338b905dcc1b3d82` |
 | `CHF-explicit-collapsed.ber` | `82 04 …` — sarmalayıcı düşer | 2441 | `0fec613322520647e680f12e70ffc8ef9ef09fd215f98780cae240c8284f94a0` |
+| `CHF-nfci-minimal.ber` | `A3 03 80 01 09` — sadece zorunlu `[0]` | 2398 | `f85e84f6adfdeb4e7235b3cec7af2f20aa224debd4af655bb48ba3d3b1e020c9` |
+
+`NetworkFunctionInformation`'ın **altı alanından yalnızca `[0]` zorunlu**, kalan
+beşi OPTIONAL. `minimal` varyantı bu yüzden geçerli bir kayıttır ve hatayı
+ikiye böler:
+
+| minimal | anlamı |
+|---|---|
+| **PASS** | `[3]`'ün kendisi ve kökten oraya kadar olan her şey doğru → kusur beş opsiyonel alandan birinde, sonraki tur bisect edilir |
+| **FAIL** | Sorun `[3]`'ün yapısında ya da ondan öncesinde → EXPLICIT hipotezi de düşer, daha yukarı bakılır |
 
 `collapsed` **geçerse:** anahtar kelimesiz modülde EMM yazılı `EXPLICIT`'i de yok
 sayıyor → kural "başlık mod söylemiyorsa her şey IMPLICIT" haline gelir ve
