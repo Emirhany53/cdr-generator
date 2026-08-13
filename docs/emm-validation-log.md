@@ -25,6 +25,9 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `CHAD` | BER | CCN/OCC soyunda ilk kanıt; yazılı `EXPLICIT` keyword'leri nötrleştirilmeden geçti |
 | `TurkcellCDRCCNCS5` | BER | CCN/OCC soyu, ikinci örnek |
 | `SMSCBerCdr` | BER | Düz yapı + 71 çok-baytlı tag |
+| `FDRInput` | BER | Tip-seviyesi `[APPLICATION 1]` **IMPLICIT** — `61 2D 42 12 …` kabul edildi |
+| `Audit_Record_Collection_St` | BER | Tip-seviyesi `[APPLICATION 21]` **IMPLICIT** — `75 40 16 08 …` kabul edildi |
+| `CGSN40ber` (qos ikilisi) | BER | **OCTET STRING semantiği çözüldü** — aşağıya bak |
 
 ## 2. EMM ile kanıtlanan tagging kuralları
 
@@ -50,6 +53,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 7 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes | 9. tur ile birlikte yanıtlandı |
 | 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **4/4 PASS** |
 | 9 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes, GGSN-qos ikilisi, CHFChargingDataTypes16 | 4 red + 1 çift red — 2'si gerçek kodlama bulgusu, 3'ü yönlendirme |
+| 10 | FDRInput, Audit (düzeltilmiş), CGSN40ber-qos ikilisi, CHF (rootType'lı) | **4 PASS** + qos ASCII decode döndü; CHF `Invalid length 102` |
 
 ### 7. turda gönderilen dosyalar
 
@@ -176,13 +180,31 @@ tekrarlandı.
 - MMTel ailesinden (aynı parmak izi, aynı başlık) olduğu için düşük riskli
 - BOOLEAN'da kanıtlandı, ENUMERATED'da hiç sınanmadı
 
-### 🟡 Primitive OCTET STRING — AYIRT EDİLEMEDİ
+### ✅ ÇÖZÜLDÜ — Primitive OCTET STRING: EMM sarmalayıcıyı doğru açıyor (10. tur)
 
-- GGSN'de **her iki kodlama da kabul edildi**: `A1 13 04 11 …` ve `81 11 …`
-- Sarmalayıcılı hâlde EMM değeri `04 11 …` diye okuyorsa ilk iki bayt bizim TLV
-  başlığımızdır ve `SIZE(4..255)` içinde kaldığı için şikâyet gelmez
-- **Yasin'den istenecek:** kabul edilen GGSN dosyasının ASCII decode çıktısında
-  `qosRequested` hangi değere çözülüyor?
+Ayırt edici ikili `CGSN40ber` üzerine kuruldu (`QoSInformation ::= OCTET STRING
+(SIZE(4..12))`). İki dosya da **aynı 12 baytlık ASCII değeri** taşıdı:
+
+| dosya | qosRequested baytları | sonuç |
+|---|---|---|
+| `CGSN40ber-qos-implicit` | `81 0C QOSPROBE1234` | PASS |
+| `CGSN40ber-qos-explicit` | `A1 0E 04 0C QOSPROBE1234` | PASS |
+
+**Belirleyici olan, EMM'in döndürdüğü ASCII decode:**
+
+```
+qosRequested : '514F5350524F424531323334'H     -> "QOSPROBE1234", 12 bayt
+```
+
+Sarmalayıcılı dosyadan geldi ve **`04 0C` öneki yok**. İçerik veri sayılsaydı
+`040C514F…` (14 bayt) görülecekti. Yani EMM EXPLICIT sarmalayıcıyı doğru
+açıyor; iki kodlama semantik olarak eşdeğer ve OCTET STRING'lerimiz çöp bayt
+taşımıyor.
+
+Aynı çıktı iki kuralı daha yeni bir ailede teyit etti: `servedPDPAddress` ve
+`diagnostics` (ikisi de `[n] EXPLICIT <CHOICE>`) sarmalayıcılarıyla doğru
+çözüldü, ve `dynamicAddressFlag : '0'D` — 2. turda dosyayı batıran BOOLEAN —
+temiz geldi.
 
 ### 🔵 Multicloud kayıtlı değil
 
