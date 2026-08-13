@@ -31,6 +31,7 @@ app:
         primitive-length: true
         type-tag-implicit: true
         field-tag-implicit: true
+        collection-wrapper: true
 
     ai:
       enabled: true
