@@ -36,3 +36,4 @@ logs/
 .DS_Store
 **/.DS_Store*.ber
 __pycache__/
+.claude/
