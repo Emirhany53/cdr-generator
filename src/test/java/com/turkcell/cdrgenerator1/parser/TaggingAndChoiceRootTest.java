@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.parser;
 
+import com.turkcell.cdrgenerator1.model.AsnDeclaredTagging;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.junit.jupiter.api.Test;
@@ -80,6 +81,56 @@ class TaggingAndChoiceRootTest {
                 typeTagged, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
         assertFalse(type.rootTagCarrier().isExplicit(),
                 "a tag written on a TYPE is IMPLICIT too - EMM refused the wrapper twice");
+    }
+
+    /**
+     * The declaration has to survive parsing, because every compatibility rule
+     * turns on what the schema wrote rather than on what the encoder chose. A
+     * test that only checked {@code isExplicit()} would pass with the
+     * declaration silently unset.
+     */
+    @Test
+    void theSchemasOwnKeywordSurvivesOnEveryTaggedField() {
+        var keywordless = builder.buildRegistry(
+                "M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { "
+                        + "a [1] INTEGER, b [2] EXPLICIT INTEGER, c [3] IMPLICIT INTEGER } END");
+        AsnFieldTreeResolver.ResolvedRoot root = resolver.resolveRoot(
+                keywordless, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
+
+        assertEquals(AsnDeclaredTagging.NONE, root.fields().get(0).getDeclaredTagging());
+        assertEquals(AsnDeclaredTagging.EXPLICIT, root.fields().get(1).getDeclaredTagging());
+        assertEquals(AsnDeclaredTagging.IMPLICIT, root.fields().get(2).getDeclaredTagging());
+
+        // A written IMPLICIT and no keyword at all both encode implicitly, so
+        // isExplicit() cannot tell them apart - which is the point.
+        assertFalse(root.fields().get(0).isExplicit());
+        assertFalse(root.fields().get(2).isExplicit());
+
+        for (AsnField field : root.fields()) {
+            assertTrue(field.isModuleNamesNoTaggingMode(), field.getFieldName() + " came from a keyword-less module");
+            assertFalse(field.isTagDeclaredOnType(), field.getFieldName() + " carries its tag on the field");
+        }
+    }
+
+    /** A tag written on the TYPE is marked as such, and an IMPLICIT header is not keyword-less. */
+    @Test
+    void aTypeLevelTagIsMarkedAndAnImplicitHeaderIsNotKeywordless() {
+        var typeTagged = builder.buildRegistry(
+                "M DEFINITIONS ::= BEGIN NrFile ::= [APPLICATION 1] SEQUENCE { a [1] INTEGER } END");
+        AsnFieldTreeResolver.ResolvedRoot root = resolver.resolveRoot(
+                typeTagged, "NrFile", Map.of(), AsnTaggingMode.UNSPECIFIED);
+        AsnField carrier = root.rootTagCarrier();
+
+        assertTrue(carrier.isTagDeclaredOnType(), "[APPLICATION 1] is written on the type");
+        assertEquals(AsnDeclaredTagging.NONE, carrier.getDeclaredTagging());
+        assertTrue(carrier.isModuleNamesNoTaggingMode());
+
+        var implicitHeader = builder.buildRegistry(
+                "M DEFINITIONS IMPLICIT TAGS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END");
+        AsnFieldTreeResolver.ResolvedRoot other = resolver.resolveRoot(
+                implicitHeader, "Root", Map.of(), AsnTaggingMode.IMPLICIT);
+        assertFalse(other.fields().get(0).isModuleNamesNoTaggingMode(),
+                "IMPLICIT TAGS names a mode, so the keyword-less rules must not reach it");
     }
 
     @Test

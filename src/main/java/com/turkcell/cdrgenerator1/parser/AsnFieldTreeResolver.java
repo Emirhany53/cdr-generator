@@ -1,6 +1,7 @@
 package com.turkcell.cdrgenerator1.parser;
 
 import com.turkcell.cdrgenerator1.model.AsnField;
+import com.turkcell.cdrgenerator1.model.AsnDeclaredTagging;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -201,6 +202,9 @@ public class AsnFieldTreeResolver {
                 .tagNumber(tag.tagNumber())
                 .tagClass(tag.tagClass())
                 .explicit(tag.explicit())
+                .declaredTagging(tag.declared())
+                .tagDeclaredOnType(tag.fromType())
+                .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .choice(choice)
                 .set(definition.getKind() == AsnTypeKind.SET)
                 .children(fields)
@@ -459,6 +463,9 @@ public class AsnFieldTreeResolver {
                 .set(setElement)
                 .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                 .choiceTagImplicit(choiceTagImplicit(effectiveTag, repeated, choiceElement, taggingMode))
+                .declaredTagging(effectiveTag.declared())
+                .tagDeclaredOnType(effectiveTag.fromType())
+                .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
                 .explicit(effectiveExplicit(registry, effectiveTag, repeated, choiceElement))
@@ -825,6 +832,9 @@ public class AsnFieldTreeResolver {
                     .set(setElement)
                     .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                     .choiceTagImplicit(choiceTagImplicit(fieldTag, repeated, choiceElement, taggingMode))
+                    .declaredTagging(fieldTag.declared())
+                    .tagDeclaredOnType(fieldTag.fromType())
+                    .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
                     .explicit(effectiveExplicit(registry, fieldTag, repeated, choiceElement))
@@ -854,12 +864,12 @@ public class AsnFieldTreeResolver {
     private EffectiveTag inheritedFieldTag(Map<String, AsnTypeDefinition> registry, AsnField parsed,
                                            String innerType, AsnTaggingMode taggingMode) {
         if (parsed.getTagNumber() != null) {
-            return new EffectiveTag(parsed.getTagNumber(), parsed.getTagClass(), parsed.isExplicit());
+            return EffectiveTag.ofField(parsed.getTagNumber(), parsed.getTagClass(), parsed);
         }
 
         EffectiveTag inherited = resolveEffectiveTag(registry, parsed, innerType, taggingMode);
         boolean usable = inherited.tagNumber() != null && inherited.tagClass() != BerTagClass.UNIVERSAL;
-        return usable ? inherited : new EffectiveTag(null, parsed.getTagClass(), parsed.isExplicit());
+        return usable ? inherited : EffectiveTag.ofField(null, parsed.getTagClass(), parsed);
     }
 
     /**
@@ -874,12 +884,12 @@ public class AsnFieldTreeResolver {
     private EffectiveTag resolveEffectiveTag(Map<String, AsnTypeDefinition> registry, AsnField field,
                                              String innerType, AsnTaggingMode taggingMode) {
         if (field.getTagNumber() != null) {
-            return new EffectiveTag(field.getTagNumber(), field.getTagClass(), field.isExplicit());
+            return EffectiveTag.ofField(field.getTagNumber(), field.getTagClass(), field);
         }
 
         AsnTypeDefinition definition = registry.get(innerType);
         if (definition == null) {
-            return new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+            return EffectiveTag.ofField(null, field.getTagClass(), field);
         }
 
         // The annotation lives in aliasTarget for an ALIAS and in tagPrefix for a
@@ -892,7 +902,7 @@ public class AsnFieldTreeResolver {
         EffectiveTag inherited = readLeadingTag(annotation, taggingMode);
         return inherited != null
                 ? inherited
-                : new EffectiveTag(null, field.getTagClass(), field.isExplicit());
+                : EffectiveTag.ofField(null, field.getTagClass(), field);
     }
 
     /**
@@ -940,10 +950,34 @@ public class AsnFieldTreeResolver {
         boolean explicit = tag.group(3) != null
                 ? tag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
                 : taggingMode == AsnTaggingMode.EXPLICIT;
-        return new EffectiveTag(Integer.valueOf(tag.group(2)), tagClass, explicit);
+        AsnDeclaredTagging declared = tag.group(3) == null
+                ? AsnDeclaredTagging.NONE
+                : (tag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
+                        ? AsnDeclaredTagging.EXPLICIT
+                        : AsnDeclaredTagging.IMPLICIT);
+        return new EffectiveTag(Integer.valueOf(tag.group(2)), tagClass, explicit, declared, true);
     }
 
-    private record EffectiveTag(Integer tagNumber, BerTagClass tagClass, boolean explicit) {
+    /**
+     * A resolved tag plus what the schema actually wrote for it. {@code declared}
+     * and {@code fromType} exist so the decision ({@code explicit}) and the
+     * declaration stay separable all the way to {@link AsnField}; see
+     * {@link AsnField#getDeclaredTagging()}.
+     */
+    private record EffectiveTag(Integer tagNumber, BerTagClass tagClass, boolean explicit,
+                                AsnDeclaredTagging declared, boolean fromType) {
+
+        /** A tag taken from a field that already carries its own declaration. */
+        static EffectiveTag ofField(Integer tagNumber, BerTagClass tagClass, AsnField source) {
+            return new EffectiveTag(tagNumber, tagClass, source.isExplicit(),
+                    declarationOf(source), false);
+        }
+
+        private static AsnDeclaredTagging declarationOf(AsnField source) {
+            return source.getDeclaredTagging() == null
+                    ? AsnDeclaredTagging.NONE
+                    : source.getDeclaredTagging();
+        }
     }
 
     private String resolveLeafBaseType(Map<String, AsnTypeDefinition> registry, String typeName) {
@@ -1224,6 +1258,9 @@ public class AsnFieldTreeResolver {
                 .tagNumber(tag.tagNumber())
                 .tagClass(tag.tagClass())
                 .explicit(tag.explicit())
+                .declaredTagging(tag.declared())
+                .tagDeclaredOnType(tag.fromType())
+                .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .universalTagOverride(field.getUniversalTagOverride())
                 .children(field.getChildren())
                 .build();
@@ -1284,6 +1321,9 @@ public class AsnFieldTreeResolver {
 
         String taggingKeyword = matcher.group(4) != null ? matcher.group(4).trim() : null;
         boolean explicit = resolveExplicit(taggingKeyword, taggingMode);
+        // Recorded from the text, not derived from `explicit` - the two differ
+        // wherever a compatibility rule applies. See AsnField.getDeclaredTagging.
+        AsnDeclaredTagging declaredTagging = declaredTaggingOf(taggingKeyword);
 
         // SIZE kisiti (ya da bir INTEGER (min..max) araligi) stripConstraint
         // tarafindan silinmeden once okunur; alan ifadesinde varsa alias
@@ -1309,7 +1349,20 @@ public class AsnFieldTreeResolver {
                 .tagNumber(tagNumber)
                 .tagClass(tagClass)
                 .explicit(explicit)
+                .declaredTagging(declaredTagging)
+                .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .build();
+    }
+
+    /** Maps the written keyword straight to its declaration, with none meaning NONE. */
+    private AsnDeclaredTagging declaredTaggingOf(String taggingKeyword) {
+        if (EXPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
+            return AsnDeclaredTagging.EXPLICIT;
+        }
+        if (IMPLICIT_KEYWORD.equalsIgnoreCase(taggingKeyword)) {
+            return AsnDeclaredTagging.IMPLICIT;
+        }
+        return AsnDeclaredTagging.NONE;
     }
 
     private boolean resolveExplicit(String taggingKeyword, AsnTaggingMode taggingMode) {

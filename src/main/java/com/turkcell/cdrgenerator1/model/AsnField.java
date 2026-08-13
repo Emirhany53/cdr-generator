@@ -115,6 +115,47 @@ public class AsnField {
     private boolean explicit;
 
     /**
+     * The tagging keyword the SCHEMA wrote at this site, recorded while parsing
+     * rather than derived from {@link #explicit} afterwards.
+     *
+     * <p>{@link #explicit} is the decision; this is the declaration. They part
+     * company wherever a compatibility rule applies - a site that declares
+     * EXPLICIT and goes out IMPLICIT reads {@code EXPLICIT} here and
+     * {@code false} there - and a verifier that only has the decision can never
+     * ask whether the decision was the right one, because the same tree produced
+     * the bytes it is checking.</p>
+     *
+     * <p>{@link AsnDeclaredTagging#NONE} carries real information: three EMM
+     * measurements turn on "the schema wrote no keyword here". Null only for
+     * fields built without going through the parser (synthetic root bodies).</p>
+     */
+    private AsnDeclaredTagging declaredTagging;
+
+    /**
+     * True when the tag on this field was written on its TYPE
+     * ({@code NrFile ::= [APPLICATION 1] SEQUENCE}) rather than on the field
+     * itself ({@code name [2] IA5String}).
+     *
+     * <p>The two were measured separately and could have gone different ways -
+     * IMSCDRS answered for field tags in round 6, FDRInput and Audit for type
+     * tags in rounds 9 and 10 - so an invariant covering one must be able to
+     * exclude the other. They happen to agree, but nothing guaranteed that in
+     * advance and nothing guarantees it for the next module either.</p>
+     */
+    private boolean tagDeclaredOnType;
+
+    /**
+     * True when the module this field came from names no tagging mode in its
+     * header ({@code Mod DEFINITIONS ::=}).
+     *
+     * <p>Carried on the field rather than on {@link AsnStructure} for the same
+     * reason {@link #choiceTagImplicit} is: {@code BerVerifier} is entered with
+     * a bare field list as often as with a structure, and a rule that cannot see
+     * the module cannot fire. Constant across every field of one module.</p>
+     */
+    private boolean moduleNamesNoTaggingMode;
+
+    /**
      * The universal-class tag number this field's type must be encoded with,
      * when its ASN.1 definition re-tags a primitive into the UNIVERSAL class -
      * e.g. {@code GraphicStringImp ::= [UNIVERSAL 25] IMPLICIT IA5String}.
