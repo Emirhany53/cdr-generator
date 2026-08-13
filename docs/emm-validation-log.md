@@ -57,7 +57,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 10 | FDRInput, Audit (düzeltilmiş), CGSN40ber-qos ikilisi, CHF (rootType'lı) | **4 PASS** + qos ASCII decode döndü; CHF `Invalid length 102` |
 | 11 | CHF: explicit-kept, explicit-collapsed, nfci-minimal | 3 red — ama üçü de bilgi verdi (aşağıda) |
 | 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
-| 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **HAZIR — gönderilmedi** |
+| 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
 
 ### 7. turda gönderilen dosyalar
 
@@ -487,11 +487,56 @@ keyword kazanır.** `[0]`'da yazılı keyword yok.
 | `CHF-E-only5.ber` | `A3 0D 80 01 09 A5 08 A0 06 80 04 …` | `[5]` mevcut kodlamayla | 2201 |
 | `CHF-F-only5-flat.ber` | `A3 0B 80 01 09 A5 06 80 04 …` | `[5]` iç `A0` kaldırılmış | 2189 |
 
-| sonuç | çıkarım |
-|---|---|
-| D ✓, E ✗, F ✓ | **Kesin teşhis:** keyword'süz CHOICE alternatifi IMPLICIT olmalı → `AsnFieldTreeResolver`'da yeni ve dar bir kural |
-| D ✓, E ✗, F ✗ | Sorun `[5]`'te ama `A0` değil; `NodeAddress` alternatif seçimimiz (FQDN alanına adres) şüpheli |
-| D ✗ | `[4]` bozuk: IPv6 alanına IPv4 alternatifi koymamız — **değer** düzeyi sorun, kodlama değil |
+### ✅ 13. tur sonucu — teşhis kesin
+
+| dosya | `[3]` içeriği | EMM |
+|---|---|---|
+| `CHF-D-only4` | `A4 06 80 04 …` | **PASS** |
+| `CHF-E-only5` | `A5 08 **A0 06** 80 04 …` | **FAIL** (`Invalid length 61`) |
+| `CHF-F-only5-flat` | `A5 06 80 04 …` | **PASS** |
+
+**Kural:** anahtar kelimesiz bir modülde, **yazılı keyword taşımayan** bir tag
+CHOICE tipli bir alanın üzerindeyse **IMPLICIT'tir** — X.680 8.3'ün "CHOICE
+üzerindeki tag her zaman EXPLICIT" kuralı bu sınıfta geçerli değil.
+
+```
+NodeAddress ::= CHOICE { iPAddress [0] IPAddress, domainName [1] IA5String }
+```
+
+`[5]`'in kendi yazılı `EXPLICIT`'i onurlandırılıyor (dış `A5` kalıyor); içteki
+`iPAddress [0]` üzerinde yazılı keyword yok ve bizim eklediğimiz `A0` katmanı
+fazla.
+
+### ⚠️ Düzeltme denendi ve GERİ ALINDI — koordineli değişiklik gerekiyor
+
+Encoder tarafı çalıştı: `AsnField.choiceTagImplicit` bayrağı + `BerEncoderService`
+içinde tag değiştirme ile `[3]` doğru şekli üretti (`A5 06 80 04 …`), ve
+EMM-kanıtlı 10 modülün **hiçbirinin baytı değişmedi**.
+
+Ama `BerVerifier`'ın walker'ı **aynı X.680 8.3 varsayımını taşıyor**. Yeni
+baytlarda 7 hata üretti:
+
+```
+ERROR [walker] …networkFunctionFQDN.iPAddress:
+    EXPLICIT tag [0] on 'iPAddress' should wrap exactly one TLV but wraps 0
+```
+
+Sonuç: `AllModulesRoundTripTest` ve `ShippedFieldRulesRoundTripTest` düştü,
+`vErrors` 45 → 67. Değişiklik geri alındı; repo `371 test / 0 failure`,
+`vErrors 45` durumunda.
+
+**Yapılması gereken (encoder + verifier birlikte):**
+
+1. `AsnField.choiceTagImplicit` — dar bayrak: `choice && !repeated && !yazılıEXPLICIT && tagNumber!=null && mode==UNSPECIFIED`
+2. `AsnFieldTreeResolver` — bayrağı iki builder çağrısında da set et
+3. `BerEncoderService.wrapInTlv` — bayrak varsa sarmalama, **içeriğin dış tag'ini değiştir**
+4. **`BerVerifier`** — `walkPlain`/`walkRepeated`/`walkAlternative` yollarında aynı bayrağı onurlandır; `onlyChild` bu alanlar için çağrılmamalı
+5. Regresyon: `MMTelChargingDataTypes` ve `CHAD` baytları **değişmemeli** (ikisi de `IMPLICIT TAGS`, 8.3 orada korunuyor)
+
+**Etki alanı ölçüldü:** 21 alan / 5 modül (`UNSPECIFIED`). Aynı kalıp
+`IMPLICIT TAGS` modüllerinde 163 alan / 31 modülde var ve **bilerek
+dokunulmuyor** — MMTel hem EMM hem referans yakalamayla kanıtlı, o sınıf için
+kanıt yok.
 
 SHA-256: D `ab0b0f225090fb2e25fcae0884a5296d22cd3a785168f81380d6790ace495b3a`,
 E `07dc5e888a70884cd89ed9d0edd82ce5c99e5cc210f492bbd47dc245ca4657e6`,
