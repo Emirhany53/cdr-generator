@@ -21,6 +21,10 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `LTE-R10` (pGWRecord) | BER | `[11]` primitive BOOLEAN = `8B 01 00`; `pGWRecord [79]` doğru CHOICE alternatifi |
 | `Multicloud` | ASCII `.dat` | `\|` alan + `\n` kayıt ayracı; inline şema (JSON'da kayıtlı olmayan) çalışıyor |
 | `IMSCDRS` (TokensCSCF) | BER | Anahtar kelimesiz modülde **alan** tag'i IMPLICIT — 34/34 alan EMM çıktısıyla birebir |
+| `CGSN40ber` | BER | Paket-alanı ailesinde **aile genellemesi çalışıyor** — LTE/GGSN verdict'i başka bir modülde tutuyor |
+| `CHAD` | BER | CCN/OCC soyunda ilk kanıt; yazılı `EXPLICIT` keyword'leri nötrleştirilmeden geçti |
+| `TurkcellCDRCCNCS5` | BER | CCN/OCC soyu, ikinci örnek |
+| `SMSCBerCdr` | BER | Düz yapı + 71 çok-baytlı tag |
 
 ## 2. EMM ile kanıtlanan tagging kuralları
 
@@ -28,6 +32,7 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 2. `[n] EXPLICIT <SET>` (skaler) → sarmalayıcı **yok**
 3. `[n] EXPLICIT <BOOLEAN>` → **IMPLICIT** (`AB 03 01 01 FF` reddedildi, `8B 01 FF` istendi)
 4. Başlığı `IMPLICIT TAGS` demeyen modülde **alan** tag'i → **IMPLICIT**
+5. Başlığı `IMPLICIT TAGS` demeyen modülde **tip** tag'i de → **IMPLICIT** (9. tur, commit `f5ce531`)
 
 Hepsini tek cümle açıklıyor: **CHOICE dışında her şey IMPLICIT.** CHOICE'ta
 X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
@@ -42,8 +47,9 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 4 | LTE-R10-pGWRecord, Multicloud.dat, IMSCDRS-TokensCSCF.dat | LTE **PASS**; Multicloud **PASS**; IMSCDRS `not set` (`.dat` BER olarak okundu → ASCII hipotezi elendi) |
 | 5 | IMSCDRS-TokensCSCF-minimal, CSCF-MergedCSCF | İkisi de `Invalid length 114` / `411`. CSCF dosyası da `IMSCDRS.TokensCSCF` olarak çözüldü → akış sabit |
 | 6 | IMSCDRS-TokensCSCF-implicit | **PASS** + 34 alanlık ASCII decode döndü |
-| 7 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes | **YANIT BEKLENİYOR** |
-| 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **YANIT BEKLENİYOR** (7 ile paralel gönderildi) |
+| 7 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes | 9. tur ile birlikte yanıtlandı |
+| 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **4/4 PASS** |
+| 9 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes, GGSN-qos ikilisi, CHFChargingDataTypes16 | 4 red + 1 çift red — 2'si gerçek kodlama bulgusu, 3'ü yönlendirme |
 
 ### 7. turda gönderilen dosyalar
 
@@ -116,72 +122,53 @@ EMM'in şeması bizimkiyle alan alan aynı çıktı — fark yorumdaydı, bildir
 
 ## 4. Açık sorular
 
-### 🟡 Tip-seviyesi `[APPLICATION n]` tagging — 7. turda gönderildi
+### ✅ ÇÖZÜLDÜ — Tip-seviyesi `[APPLICATION n]` IMPLICIT'tir (9. tur)
 
-- **Problem:** `FDRInput` (`NrFile ::= [APPLICATION 1] SEQUENCE`) ve
-  `Audit_Record_Collection_St` (`LogEntry ::= [APPLICATION 21] SEQUENCE`)
-- **Kritik ölçüm:** EMM'den geçen 4 dosyanın **hiçbirinde APPLICATION sınıfı tag
-  yok** (hepsi 0; tümü CONTEXT kullanıyor). Bu sınıf hiç sınanmadı.
-- **Mevcut davranış:** X.680 31.2.7 gereği sarmalayıcı — `61 37 30 35 …`
-- **Alternatif:** `61 35 …` (universal SEQUENCE kalkar, 2 bayt kısa)
-- **Reddedilirse:** `AsnFieldTreeResolver.readLeadingTag` içinde tek satır değişir
-
-#### ⚠️ Yanıt geldiğinde okuma sırası — bu olmadan sonuç yanlış yorumlanır
-
-**1. Önce `Audit_Record_Collection_St`'e bak. Temiz deney odur.**
-İç alanlarının **hiçbirinde tag yok** — hepsi çıplak `16` (IA5String) ve `02`
-(INTEGER). Tek tip-seviyesi tag kökteki `[APPLICATION 21]`. Yani tek değişken:
-sonuç doğrudan `readLeadingTag`'i yanıtlar.
-
-**2. `FDRInput` tek başına delil DEĞİLDİR.** Şemasında ayrı bir kusur var:
+Anahtar kelimesiz bir modülde **tip** üzerine yazılan tag da IMPLICIT. İki
+bağımsız modül, iki farklı şekil, aynı sebep:
 
 ```
-FileReceivedTime ::= [APPLICATION 4] IA5String (SIZE(6))
-UTCCode          ::= [APPLICATION 4] IA5String (SIZE(5))
+FDRInput.NrFile.name was probably not set and is not optional
+Audit_Record_Collection_St.LogEntry.collectionConfiguration
+    was probably not set and is not optional
 ```
 
-İki farklı tip **aynı tag'i** taşıyor ve üretilen BER'de yan yana duruyorlar
-(`6408 …`, `6407 …`). Audit bunu WARNING olarak yakalıyor
-(`FDRInput.NrFile.A-[4]`, "position resolves it: X.680 25.6"). Ayrıca FDRInput
-soruyu tek noktada değil **5 noktada** soruyor: kök `[APPLICATION 1]` + iç içe
-`[APPLICATION 2/3/4]` (alanlar tiplerinden tag miras alıyor).
+İkisi de okumanın ulaşabildiği **ilk alanı** işaret ediyor:
 
-Sonuç: **FDRInput reddedilirse sebep üç ayrı şey olabilir** — tip-seviyesi
-tagging, duplicate tag, ya da iç içe miras. Audit'in sonucuna bakmadan ayırt
-edilemez.
-
-| Audit | FDRInput | Çıkarım |
+| dosya | gönderilen | EMM ne yaptı |
 |---|---|---|
-| PASS | PASS | `readLeadingTag` doğru, iç içe miras da tolere ediliyor — iş biter |
-| PASS | REJECT | Tagging doğru; sorun duplicate tag ya da iç içe miras. **Kodu değiştirme**, önce hangisi olduğunu ayır |
-| REJECT | — | X.680 31.2.7 okuması yanlış → `readLeadingTag` değişir, ama önce etki analizi (aşağı bak) |
+| `FDRInput` | `61 37 30 35 62 14 …` | `[APPLICATION 1]`'i açtı, `name` için `[APPLICATION 2]` = `0x62` bekledi, sarmaladığımız `0x30`'u buldu |
+| `Audit` | `75 43 30 41 16 08 …` | `serviceName` OPTIONAL olduğu için atladı, ilk **zorunlu** alan `collectionConfiguration`'da aynı `0x30`'a takıldı |
 
-**3. `IMSChargingDataTypes` bunlardan bağımsızdır.** ENUMERATED sorusu; ayrı
-değerlendirilir, diğer ikisinin sonucundan etkilenmez.
+**Düzeltme:** `readLeadingTag` içinde `UNSPECIFIED` artık `resolveExplicit` ile
+aynı yönde çözülüyor (commit `f5ce531`). Yazılı keyword hâlâ kazanır.
 
-#### Etki alanı — bu sorunun ağırlığı gönderilen dosyalarda değil
+**Etki:** 11 modül, 374 explicit site kalktı (696 → 322).
 
-`audit.tsv` üzerinden ölçüldü (12.08.2026, commit `184c717`):
+**Bağımsız doğrulama:** `TAP0309` (anahtar kelimesiz, 298 site, yazılı keyword
+yok) 8484 → **5632** bayta indi. Aynı TAP3 şemasının `IMPLICIT TAGS` başlıklı
+ikizi `TAP-0309` ise 5622 bayt. İki kopya artık aynı baytları üretiyor — ki
+gerçek TAP3 spesifikasyonu da `DEFINITIONS IMPLICIT TAGS` diyor. Bu, EMM'i
+memnun etmenin ötesinde bir tutarlılık kanıtı.
 
-| ölçü | değer |
-|---|---|
-| UNSPECIFIED modüllerde toplam EXPLICIT alan | **426** (23 modülde) |
-| bunlardan yazılı `EXPLICIT` keyword'ü olmayan (saf tip-seviyesi) | **331** |
-| **`TAP0309` tek başına** | **298** — 426'nın %70'i, 331'in %90'ı |
+**Not:** `asn1tools` eski kodlamamızı X.680'e uygun bulmuştu (`FDRInput` bayt
+bayt round-trip). Yani burada standarttan bilerek sapıyoruz — `5906e76`'daki
+aynı tercih. Bu projede üst kanıt EMM'dir.
 
-`TAP0309`'da yazılı `EXPLICIT` keyword'ü **sıfır**; 298 sitenin tamamı 316 adet
-`[APPLICATION n]` tip tanımından geliyor (`TransferBatch ::= [APPLICATION 1]
-SEQUENCE` gibi), 7 seviye derinlikte. Somut bedel: `TAP0309` 8484 bayt,
-IMPLICIT ikizi `TAP-0309` 5622 bayt — sarmalayıcılar dosyayı **%51 büyütüyor.**
+### ⚠️ 9. turun asıl dersi — üç "FAIL" kodlama hatası değildi
 
-Karşılaştırma: gönderilen iki probe dosyası bu yapıyı **4 ve 1** noktada sınıyor
-(57 ve 69 bayt). EMM'in bu iki küçük dosyaya vereceği yanıt, farkında olmadan
-298 siteye genellenecek.
+Beş redden **üçü yanlış akışa yönlendirmeden** kaynaklandı; kodlama sınanmadı bile:
 
-**Bu yüzden:** `readLeadingTag` değiştirilecekse önce `TAP0309` üzerinde etki
-analizi yapılmalı. Ve Yasin'e sorulacak: **EMM'de TAP/TAP3 için tanımlı çözücü
-var mı?** Varsa `TAP0309` 8. turun en yüksek öncelikli kalemidir — çünkü sorunun
-gerçek yükü orada.
+| dosya | EMM'in beklediği tip | gerçek sorun |
+|---|---|---|
+| `GGSN-qos-implicit` / `-explicit` | `CGSN40ber.CallEventRecord` | Dosyalar `GGSNTurkcellCdrR7` kaydıydı, CGSN40ber akışına verildi → **OCTET STRING deneyi hiç koşmadı** |
+| `IMSChargingDataTypes` | `IMSCDRS.TokensCSCF` | CSCFColl akışına gitti → **ENUMERATED deneyi hiç koşmadı** |
+| `CHFChargingDataTypes16` | `CHFChargingDataTypes16.ChargingRecord` | Bizim sezgimiz `CHFRecord` (CHOICE) seçti, akış `ChargingRecord` (SET) çözüyor → `rootType` ile düzeltildi (`9f60e1f`) |
+
+**Çıkarılan kural:** bir dosya göndermeden önce **EMM'in o akışta hangi tipi
+çözdüğü** bilinmeli. Aksi halde tur, kodlama hakkında hiçbir şey öğretmeden
+harcanır. Bu, `LTE-R10`'un `pGWRecord` düzeltmesiyle aynı sınıf — üçüncü kez
+tekrarlandı.
 
 ### 🟡 Primitive ENUMERATED — 7. turda gönderildi
 
