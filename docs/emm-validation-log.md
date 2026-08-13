@@ -25,6 +25,7 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `CHAD` | BER | CCN/OCC soyunda ilk kanıt; yazılı `EXPLICIT` keyword'leri nötrleştirilmeden geçti |
 | `TurkcellCDRCCNCS5` | BER | CCN/OCC soyu, ikinci örnek |
 | `SMSCBerCdr` | BER | Düz yapı + 71 çok-baytlı tag |
+| `CHFChargingDataTypes16` (kısmi) | BER | **Anahtar kelimesiz + zengin yapı ilk tam kabul** — 2141 bayt, 349 TLV, 6 seviye iç içe, CHOICE/SEQ OF/SET |
 | `FDRInput` | BER | Tip-seviyesi `[APPLICATION 1]` **IMPLICIT** — `61 2D 42 12 …` kabul edildi |
 | `Audit_Record_Collection_St` | BER | Tip-seviyesi `[APPLICATION 21]` **IMPLICIT** — `75 40 16 08 …` kabul edildi |
 | `CGSN40ber` (qos ikilisi) | BER | **OCTET STRING semantiği çözüldü** — aşağıya bak |
@@ -55,7 +56,8 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 9 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes, GGSN-qos ikilisi, CHFChargingDataTypes16 | 4 red + 1 çift red — 2'si gerçek kodlama bulgusu, 3'ü yönlendirme |
 | 10 | FDRInput, Audit (düzeltilmiş), CGSN40ber-qos ikilisi, CHF (rootType'lı) | **4 PASS** + qos ASCII decode döndü; CHF `Invalid length 102` |
 | 11 | CHF: explicit-kept, explicit-collapsed, nfci-minimal | 3 red — ama üçü de bilgi verdi (aşağıda) |
-| 12 | CHF NFI bisect: A/B/C | **HAZIR — gönderilmedi** |
+| 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
+| 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **HAZIR — gönderilmedi** |
 
 ### 7. turda gönderilen dosyalar
 
@@ -439,11 +441,61 @@ Altı örneğin **hepsi** aynı alan altkümesine indirgeniyor:
 | `CHF-B-nfi-plain.ber` | `[0] [1] [3]` — yazılı EXPLICIT olmayanlar | `A3 1C 80 01 09 81 12 … 83 03 …` | 2291 | `4493d847a944ba90432e9ba00ec877650ee44086d82732fe5ab6fd93d7314a50` |
 | `CHF-C-nfi-explicit.ber` | `[0] [2]` — tek EXPLICIT CHOICE alanı | `A3 0B 80 01 09 A2 06 80 04 …` | 2189 | `df064d2963925ee9c3ecd562b9f854636f852501dd989ac6b148f9ada4b385bf` |
 
+**Sonuç: üçü de PASS.**
+
+### 🏆 12. turun kazandırdığı — sınıfın ilk tam kabulü
+
+`CHF-A` geçti: **2141 baytlık tam bir kayıt, 349 TLV, 6 seviye iç içe yapı**
+baştan sona çözüldü. Bu, başlığı tagging modu söylemeyen **ve** zengin yapılı
+(CHOICE + SEQUENCE OF + SET + iç içe constructed) bir modülün ilk tam kabulü.
+
+O sınıfta **144 modül** var ve bugüne kadar hiçbiri geçmemişti; geçen üçü
+(`IMSCDRS` 42, `FDRInput` 4, `Audit` 7 yaprak) hepsi düz yapıydı.
+
+### Kusur mantıkla iki alana indi
+
+| dosya | alanlar | sonuç |
+|---|---|---|
+| A | `[0]` | PASS |
+| B | `[0] [1] [3]` | PASS |
+| C | `[0] [2]` | PASS |
+| (10. tur) | `[0..5]` tam set | FAIL |
+
+`A ∪ B ∪ C = {0,1,2,3}` — hepsi çalışıyor. Geriye **test edilmemiş `[4]` ve
+`[5]`** kalıyor. Kusur ikisinden birinde.
+
+### 13. tur — hangisi ve neden
+
+`[2]` ile `[4]` **aynı tipte** (`EXPLICIT IPAddress`) ve aynı şekli üretiyor
+(`A2 06 {80 04 …}` / `A4 06 {80 04 …}`). `[2]` geçtiğine göre `[4]`'ün de
+geçmesi beklenir — **eğer yapısal bir sebep varsa `[5]`'tedir**, çünkü tek
+yapısal aykırılık orada:
+
+```
+NodeAddress ::= CHOICE { iPAddress [0] IPAddress, domainName [1] IA5String }
+```
+
+`iPAddress [0] IPAddress` — `IPAddress` bir CHOICE ve `[0]` üzerinde **yazılı
+keyword yok**. Bizim kod "CHOICE üzerindeki tag her zaman EXPLICIT"
+(X.680 8.3) diyerek fazladan bir `A0` katmanı ekliyor. Ama 11. tur şunu
+gösterdi: anahtar kelimesiz modülde **varsayılan IMPLICIT, yalnızca yazılı
+keyword kazanır.** `[0]`'da yazılı keyword yok.
+
+| dosya | `[3]` içeriği | ne sorar | bayt |
+|---|---|---|---|
+| `CHF-D-only4.ber` | `A3 0B 80 01 09 A4 06 80 04 …` | `[4]` tek başına sağlam mı | 2189 |
+| `CHF-E-only5.ber` | `A3 0D 80 01 09 A5 08 A0 06 80 04 …` | `[5]` mevcut kodlamayla | 2201 |
+| `CHF-F-only5-flat.ber` | `A3 0B 80 01 09 A5 06 80 04 …` | `[5]` iç `A0` kaldırılmış | 2189 |
+
 | sonuç | çıkarım |
 |---|---|
-| A PASS, B PASS, C FAIL | Sorun `[n] EXPLICIT <CHOICE>` alanında → tek ve net hedef |
-| A PASS, B FAIL | Sorun `[1]` IA5String ya da `[3]` PLMN-Id'de — muhtemelen değer düzeyinde |
-| A FAIL | Sorun NFI'nin kendi çerçevesinde; daha yukarı bakılır |
+| D ✓, E ✗, F ✓ | **Kesin teşhis:** keyword'süz CHOICE alternatifi IMPLICIT olmalı → `AsnFieldTreeResolver`'da yeni ve dar bir kural |
+| D ✓, E ✗, F ✗ | Sorun `[5]`'te ama `A0` değil; `NodeAddress` alternatif seçimimiz (FQDN alanına adres) şüpheli |
+| D ✗ | `[4]` bozuk: IPv6 alanına IPv4 alternatifi koymamız — **değer** düzeyi sorun, kodlama değil |
+
+SHA-256: D `ab0b0f225090fb2e25fcae0884a5296d22cd3a785168f81380d6790ace495b3a`,
+E `07dc5e888a70884cd89ed9d0edd82ce5c99e5cc210f492bbd47dc245ca4657e6`,
+F `ce077c5a5cda8f3112687e13765ce43efaf713aebb66f5e02fd35cac002c334a`
 
 ### (eski) 11. tur ikilisi (`tools/chfExplicitProbe.py`)
 
