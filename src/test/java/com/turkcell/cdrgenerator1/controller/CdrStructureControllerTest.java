@@ -19,6 +19,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.MediaType;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -169,7 +171,46 @@ class CdrStructureControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.containsString("SMSCBerCdr.dat")));
+                        org.hamcrest.Matchers.containsString("SMSCBerCdr.txt")));
+    }
+
+    /**
+     * The rename moved the Token-Separated output from {@code .dat} to
+     * {@code .txt} so the binary BER copy could take that name. Only the name
+     * moved: the body is still the pipe-separated text this endpoint has always
+     * returned, still {@code text/plain}, one line per record.
+     */
+    @Test
+    void theTextOutputIsUnchangedApartFromItsName() throws Exception {
+        AsnStructure structure = AsnStructure.builder()
+                .structureName("SMSCBerCdr")
+                .fields(List.of(
+                        AsnField.builder().fieldName("msisdn").fieldType("IA5String").build(),
+                        AsnField.builder().fieldName("duration").fieldType("INTEGER").build()))
+                .build();
+        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
+
+        String body = """
+                {
+                  "structureName": "SMSCBerCdr",
+                  "recordCount": 2,
+                  "fieldValues": { "msisdn": "905321234567", "duration": "42" }
+                }
+                """;
+
+        String content = mockMvc.perform(post("/api/cdr/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.TEXT_PLAIN))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("SMSCBerCdr.txt")))
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(content.strip().lines().toList())
+                .as("still pipe-separated, still one line per record")
+                .containsExactly("905321234567|42", "905321234567|42");
+        assertThat(content).doesNotContain(".dat");
     }
 
     @Test
@@ -216,7 +257,7 @@ class CdrStructureControllerTest {
                         .content(body))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Content-Disposition",
-                        org.hamcrest.Matchers.containsString("DemoVoice.dat")));
+                        org.hamcrest.Matchers.containsString("DemoVoice.txt")));
     }
 
     @Test

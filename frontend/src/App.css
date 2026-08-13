@@ -313,6 +313,18 @@ textarea {
   margin-bottom: 4px;
 }
 
+/* The three download buttons, shown once a generation has produced bytes. */
+.download-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.download-choice .btn-primary {
+  margin-top: 0;
+}
+
 .radio-disabled {
   opacity: 0.5;
 }

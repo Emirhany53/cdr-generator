@@ -30,10 +30,14 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -376,5 +380,80 @@ class BerGeneratorControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ---------------------------------------------------------------- .ber == .dat
+
+    /**
+     * Both fields are supplied, so nothing is left to {@code ThreadLocalRandom}
+     * and two requests describe the same record. Without that the comparison
+     * below would measure the generator's randomness instead of the requirement.
+     */
+    private String sameRecordRequest(String extension) {
+        String extensionField = extension == null ? "" : ", \"extension\": \"%s\"".formatted(extension);
+        return """
+                {
+                  "structureName": "SimpleRecord",
+                  "recordCount": 2,
+                  "fieldValues": { "msisdn": "905321234567", "duration": "42" }%s
+                }
+                """.formatted(extensionField);
+    }
+
+    private MvcResult generateBer(String extension) throws Exception {
+        return mockMvc.perform(post("/api/cdr/generate-ber")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sameRecordRequest(extension)))
+                .andExpect(status().isOk())
+                .andReturn();
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    /**
+     * The requirement, as the test that fails if it stops holding: {@code .dat}
+     * is the SAME file as {@code .ber}, not a second rendering of it.
+     *
+     * <p>There is one encoder and one {@code byte[]}; {@code extension} decides
+     * only what Content-Disposition calls it. If anyone ever re-encodes for the
+     * {@code .dat} name, or routes it through the text writer, the hashes part
+     * company right here.</p>
+     */
+    @Test
+    void datCarriesExactlyTheBytesBerCarries() throws Exception {
+        byte[] ber = generateBer(null).getResponse().getContentAsByteArray();
+        byte[] dat = generateBer("dat").getResponse().getContentAsByteArray();
+
+        assertThat(ber).as("a non-empty BER file is the premise of the comparison").isNotEmpty();
+        assertThat(sha256(dat))
+                .as("SHA256(.dat) must equal SHA256(.ber)")
+                .isEqualTo(sha256(ber));
+        assertThat(dat).isEqualTo(ber);
+    }
+
+    /** Only the name differs - and it differs the way the consuming flow wants. */
+    @Test
+    void onlyTheFileNameDiffersBetweenBerAndDat() throws Exception {
+        assertThat(generateBer(null).getResponse().getHeader("Content-Disposition"))
+                .contains("SimpleRecord.ber");
+        assertThat(generateBer("dat").getResponse().getHeader("Content-Disposition"))
+                .contains("SimpleRecord.dat");
+    }
+
+    /** Both names serve binary; the Token-Separated text is a different endpoint. */
+    @Test
+    void bothNamesServeBinaryContent() throws Exception {
+        assertThat(generateBer("dat").getResponse().getContentType())
+                .isEqualTo(MediaType.APPLICATION_OCTET_STREAM_VALUE);
+    }
+
+    /** Anything that is not "dat" keeps the default name rather than failing. */
+    @Test
+    void anUnrecognisedExtensionFallsBackToBer() throws Exception {
+        assertThat(generateBer("txt").getResponse().getHeader("Content-Disposition"))
+                .as("txt belongs to /generate; this endpoint only ever serves BER bytes")
+                .contains("SimpleRecord.ber");
     }
 }

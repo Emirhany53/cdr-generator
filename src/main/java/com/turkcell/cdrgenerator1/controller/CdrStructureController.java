@@ -40,7 +40,12 @@ import java.util.Objects;
 public class CdrStructureController {
 
     private static final int MIN_RECORD_COUNT = 1;
-    private static final String DAT_FILE_EXTENSION = ".dat";
+    /**
+     * The Token-Separated text output. It used to be {@code .dat}; that name now
+     * belongs to the binary BER copy {@code /generate-ber} produces, so the two
+     * are never confused by extension alone.
+     */
+    private static final String TEXT_FILE_EXTENSION = ".txt";
     /** Characters allowed in a download file name; everything else becomes '_'. */
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
@@ -175,7 +180,7 @@ public class CdrStructureController {
         return ResponseEntity.ok()
                 .contentType(MediaType.TEXT_PLAIN)
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        ATTACHMENT_TEMPLATE.formatted(safeName, DAT_FILE_EXTENSION))
+                        ATTACHMENT_TEMPLATE.formatted(safeName, TEXT_FILE_EXTENSION))
                 .body(new UrlResource(filePath.toUri()));
     }
 

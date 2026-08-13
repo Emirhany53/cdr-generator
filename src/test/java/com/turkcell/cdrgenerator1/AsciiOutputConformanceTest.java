@@ -35,7 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The {@code .dat} counterpart of {@link AllModulesRoundTripTest}.
+ * The {@code .txt} counterpart of {@link AllModulesRoundTripTest}.
  *
  * <p>Half of what this application promises is Token-Separated ASCII, and until
  * now nothing checked it across the data set: the round-trip test encodes BER,
@@ -151,7 +151,7 @@ class AsciiOutputConformanceTest {
         System.out.printf("ASCII: %d module(s) wrote a file, %.1f columns on average%n",
                 written, written == 0 ? 0 : (double) columnTotal / written);
 
-        assertEquals(List.of(), notWritten, "these modules could not produce a .dat at all");
+        assertEquals(List.of(), notWritten, "these modules could not produce a .txt at all");
         assertEquals(List.of(), wrongLineCount, "the writer promises one line per record");
         assertEquals(List.of(), raggedWidth,
                 "every line must carry the same number of columns - the writer pads the union of "

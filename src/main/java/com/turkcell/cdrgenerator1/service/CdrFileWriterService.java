@@ -35,7 +35,8 @@ public class CdrFileWriterService {
     private static final String EMPTY_PATH = "";
     private static final String EMPTY_VALUE = "";
     private static final String FILE_NAME_PREFIX_SUFFIX = "_";
-    private static final String FILE_NAME_EXTENSION = ".dat";
+    /** Token-Separated text; {@code .dat} is the binary BER copy's name now. */
+    private static final String FILE_NAME_EXTENSION = ".txt";
 
     public Path writeCdrFile(String structureName, List<Map<String, Object>> records) throws IOException {
         List<Map<String, String>> flattenedRecords = records.stream()

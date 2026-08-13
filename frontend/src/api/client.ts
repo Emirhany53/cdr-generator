@@ -95,7 +95,7 @@ async function requestFile(
   return { blob, fileName: extractFileName(response, fallbackFileName) };
 }
 
-export interface GenerateAsciiParams {
+export interface GenerateTextParams {
   structureName?: string;
   contents?: string;
   fieldValues: Record<string, string>;
@@ -103,8 +103,8 @@ export interface GenerateAsciiParams {
   recordCount: number;
 }
 
-export function generateAscii(params: GenerateAsciiParams): Promise<DownloadedFile> {
-  return requestFile("/generate", params, `${params.structureName ?? "cdr"}.dat`);
+export function generateText(params: GenerateTextParams): Promise<DownloadedFile> {
+  return requestFile("/generate", params, `${params.structureName ?? "cdr"}.txt`);
 }
 
 export interface GenerateBerParams {
@@ -123,11 +123,11 @@ export function generateBer(params: GenerateBerParams): Promise<DownloadedFile> 
   );
 }
 
-export function triggerBrowserDownload(file: DownloadedFile): void {
+export function triggerBrowserDownload(file: DownloadedFile, fileName?: string): void {
   const url = URL.createObjectURL(file.blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = file.fileName;
+  link.download = fileName ?? file.fileName;
   document.body.appendChild(link);
   link.click();
   link.remove();

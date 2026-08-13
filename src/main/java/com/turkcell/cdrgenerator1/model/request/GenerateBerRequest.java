@@ -28,6 +28,14 @@ public class GenerateBerRequest {
     private String rootType;
 
     /**
+     * Which name the identical BER bytes are offered under: {@code ber} (the
+     * default) or {@code dat}. The supervisor's flow wants both, byte for byte
+     * the same, so this changes the Content-Disposition file name and NOTHING
+     * else - the response body is the array the encoder produced either way.
+     */
+    private String extension;
+
+    /**
      * Convenience alias so a request body using the JSON key {@code "content"}
      * (singular) still populates {@code contents}. Jackson binds the "content"
      * property to this setter.

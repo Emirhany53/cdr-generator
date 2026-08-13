@@ -203,13 +203,13 @@ class ValidationSampleTest {
             Files.write(file, bytes);
 
             // The same record as ASCII, from the same writer /generate uses.
-            // Half of what this application produces is .dat, and until now no
+            // Half of what this application produces is text, and until now no
             // sample of it was written anywhere - so a break in that half was
             // only visible to somebody who went looking.
-            Path datFile = OUTPUT_DIR.resolve(name + ".dat");
-            Files.copy(writer.writeCdrFile(name, List.of(record)), datFile,
+            Path textFile = OUTPUT_DIR.resolve(name + ".txt");
+            Files.copy(writer.writeCdrFile(name, List.of(record)), textFile,
                     StandardCopyOption.REPLACE_EXISTING);
-            int datColumns = Files.readAllLines(datFile, StandardCharsets.US_ASCII).stream()
+            int datColumns = Files.readAllLines(textFile, StandardCharsets.US_ASCII).stream()
                     .findFirst()
                     .map(line -> line.split("\\|", -1).length)
                     .orElse(0);

@@ -19,7 +19,6 @@ export interface AsnStructure {
   choiceAlternatives: string[] | null;
 }
 
-export type OutputFormat = "ascii" | "ber";
 export type StructureSourceMode = "existing" | "inline";
 
 export interface ApiErrorBody {

@@ -1,13 +1,15 @@
-import { useEffect, useState } from "react";
-import type { AsnStructure, OutputFormat, StructureSourceMode } from "./types";
+import { useEffect, useRef, useState } from "react";
+import type { GeneratingType } from "./components/OutputPanel";
+import type { AsnStructure, StructureSourceMode } from "./types";
 import {
   ApiError,
-  generateAscii,
+  generateText,
   generateBer,
   getStructureDetails,
   getStructureNames,
   parseInlineStructure,
   triggerBrowserDownload,
+  type DownloadedFile,
 } from "./api/client";
 import StructureSourcePicker from "./components/StructureSourcePicker";
 import ChoicePicker from "./components/ChoicePicker";
@@ -32,9 +34,13 @@ export default function App() {
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [repeatCounts, setRepeatCounts] = useState<Record<string, number>>({});
 
-  const [format, setFormat] = useState<OutputFormat>("ber");
+  // One generation per set of inputs, held so the .ber and .dat buttons hand out
+  // the SAME bytes. Re-requesting per button would produce different records -
+  // generation is random and unseeded - and the two files would stop being
+  // identical. Keyed on the request so changing an input starts a fresh one.
+  const cache = useRef<{ key: string; ber?: DownloadedFile; text?: DownloadedFile }>({ key: "" });
   const [recordCount, setRecordCount] = useState(1);
-  const [generating, setGenerating] = useState(false);
+  const [generatingType, setGeneratingType] = useState<GeneratingType>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -123,11 +129,9 @@ export default function App() {
     setRepeatCounts((prev) => ({ ...prev, [path]: count }));
   }
 
-  async function handleGenerate() {
-    if (!structure) return;
-    setGenerating(true);
-    setGenerateError(null);
-    setSuccessMessage(null);
+  /** The request the three buttons all describe; its JSON is the cache key. */
+  function currentParams() {
+    if (!structure) return null;
     const choiceSelections =
       structure.choiceRoot && structure.choiceTypeName
         ? { [structure.choiceTypeName]: selectedAlternative }
@@ -137,25 +141,52 @@ export default function App() {
         .map(([path, value]) => [path, value.trim()])
         .filter(([, value]) => value !== ""),
     );
-
     // Both formats accept the same two input modes: a registered structureName,
     // or inline ASN.1 contents (for a schema not in datastructure.json).
-    const commonParams = {
+    return {
       structureName: sourceMode === "existing" ? structure.structureName : inlineStructureName || structure.structureName,
       contents: sourceMode === "inline" ? inlineContents : undefined,
       fieldValues: trimmedFieldValues,
       choiceSelections,
       recordCount,
     };
+  }
 
+  /**
+   * Downloads one file. The BER bytes are generated once per set of inputs and
+   * reused, so pressing .ber and then .dat gives two files with identical
+   * content - which is the requirement. Generating again per button would not:
+   * generation is random and unseeded.
+   */
+  async function handleDownload(what: "ber" | "dat" | "txt") {
+    const params = currentParams();
+    if (!params) return;
+
+    const key = JSON.stringify(params);
+    if (cache.current.key !== key) {
+      cache.current = { key };
+    }
+
+    setGeneratingType(what);
+    setGenerateError(null);
+    setSuccessMessage(null);
     try {
-      const file = format === "ascii" ? await generateAscii(commonParams) : await generateBer(commonParams);
-      triggerBrowserDownload(file);
-      setSuccessMessage(`${file.fileName} indirildi.`);
+      if (what === "txt") {
+        cache.current.text ??= await generateText(params);
+        const file = cache.current.text;
+        triggerBrowserDownload(file);
+        setSuccessMessage(`${file.fileName} indirildi.`);
+        return;
+      }
+      cache.current.ber ??= await generateBer(params);
+      const file = cache.current.ber;
+      const name = file.fileName.replace(/\.(ber|dat)$/i, `.${what}`);
+      triggerBrowserDownload(file, name);
+      setSuccessMessage(`${name} indirildi.`);
     } catch (err) {
       setGenerateError(err instanceof ApiError ? err.message : String(err));
     } finally {
-      setGenerating(false);
+      setGeneratingType(null);
     }
   }
 
@@ -237,12 +268,12 @@ export default function App() {
           )}
           <OutputPanel
             sourceMode={sourceMode}
-            format={format}
-            onFormatChange={setFormat}
+            onDownloadBer={() => handleDownload("ber")}
+            onDownloadDat={() => handleDownload("dat")}
+            onDownloadText={() => handleDownload("txt")}
             recordCount={recordCount}
             onRecordCountChange={setRecordCount}
-            onGenerate={handleGenerate}
-            generating={generating}
+            generatingType={generatingType}
             disabled={!structure}
           />
         </>

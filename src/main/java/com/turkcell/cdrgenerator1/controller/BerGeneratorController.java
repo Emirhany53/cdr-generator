@@ -48,6 +48,14 @@ import java.util.Objects;
 public class BerGeneratorController {
 
     private static final String BER_FILE_EXTENSION = ".ber";
+    /**
+     * The same bytes under a second name. EMM's flow takes {@code .dat}, and the
+     * requirement is that the two files are byte for byte identical - so there is
+     * one encoder, one array, and only the name differs. Anything that re-encoded
+     * for this would be the bug this constant exists to avoid.
+     */
+    private static final String BINARY_DAT_EXTENSION = ".dat";
+    private static final String DAT_EXTENSION_REQUEST_VALUE = "dat";
     private static final String FILE_NAME_UNSAFE_CHARS = "[^A-Za-z0-9._-]";
     private static final String FILE_NAME_REPLACEMENT = "_";
     private static final int MIN_RECORD_COUNT = 1;
@@ -113,7 +121,7 @@ public class BerGeneratorController {
 
         String safeName = structure.getStructureName()
                 .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
-        String fileName = safeName + BER_FILE_EXTENSION;
+        String fileName = safeName + chosenExtension(request.getExtension());
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
@@ -121,6 +129,16 @@ public class BerGeneratorController {
                 .header(SELF_CHECK_HEADER, selfCheck.summary())
                 .contentLength(fileBytes.length)
                 .body(new ByteArrayResource(fileBytes));
+    }
+
+    /**
+     * {@code .ber} unless the caller asked for {@code dat}. The bytes are the
+     * same array in both cases; see {@link #BINARY_DAT_EXTENSION}.
+     */
+    private String chosenExtension(String requested) {
+        return DAT_EXTENSION_REQUEST_VALUE.equalsIgnoreCase(requested)
+                ? BINARY_DAT_EXTENSION
+                : BER_FILE_EXTENSION;
     }
 
     @Operation(summary = "BER CDR dosyası üret ve indir (HAM METİN)",
