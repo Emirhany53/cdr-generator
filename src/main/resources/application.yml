@@ -30,6 +30,7 @@ app:
         integer-range: true
         primitive-length: true
         type-tag-implicit: true
+        field-tag-implicit: true
 
     ai:
       enabled: true
