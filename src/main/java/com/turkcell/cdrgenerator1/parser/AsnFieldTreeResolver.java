@@ -888,15 +888,33 @@ public class AsnFieldTreeResolver {
                 ? BerTagClass.valueOf(tag.group(1))
                 : BerTagClass.CONTEXT;
         // A tag written on a TYPE, not on a field: "NrFile ::= [APPLICATION 1]
-        // SEQUENCE {...}". When the header named no mode this keeps X.680
-        // 31.2.7's EXPLICIT, deliberately parting company with the field-level
-        // rule in resolveExplicit. The measurement that justifies that rule is
-        // about context-specific FIELD tags - IMSCDRS declares no APPLICATION tag
-        // anywhere - so extending it here would be assuming, not knowing, and it
-        // would silently re-encode FDRInput and Audit_Record_Collection_St.
+        // SEQUENCE {...}". This used to keep X.680 31.2.7's EXPLICIT when the
+        // header named no mode, parting company with resolveExplicit because no
+        // measurement covered the type-level case. Round 9 measured it, on the
+        // two modules built to ask exactly this, and both refused:
+        //
+        //   FDRInput.NrFile.name was probably not set and is not optional
+        //   Audit_Record_Collection_St.LogEntry.collectionConfiguration
+        //       was probably not set and is not optional
+        //
+        // Both name the first field the reading can reach. FDRInput went out as
+        // 61 37 30 35 62 14 ..; EMM opens [APPLICATION 1], expects name's
+        // [APPLICATION 2] (0x62) as the first content octet and finds 0x30, the
+        // universal SEQUENCE we wrapped in. Audit went out as 75 43 30 41 16 08
+        // ..; serviceName is OPTIONAL so it is skipped, and the failure lands on
+        // collectionConfiguration, the first mandatory one - the same 0x30 in
+        // the way. Two modules, two shapes, the same cause.
+        //
+        // So a keyword-less header is IMPLICIT for a type tag too, and the split
+        // this method used to keep does not exist in the consumer: EMM reads
+        // such a module as IMPLICIT throughout. UNSPECIFIED now resolves the
+        // same way here as in resolveExplicit.
+        //
+        // A written keyword still wins, and an EXPLICIT header still means
+        // EXPLICIT - though no module in the current data set writes one.
         boolean explicit = tag.group(3) != null
                 ? tag.group(3).trim().equalsIgnoreCase(EXPLICIT_KEYWORD)
-                : taggingMode != AsnTaggingMode.IMPLICIT && taggingMode != AsnTaggingMode.AUTOMATIC;
+                : taggingMode == AsnTaggingMode.EXPLICIT;
         return new EffectiveTag(Integer.valueOf(tag.group(2)), tagClass, explicit);
     }
 

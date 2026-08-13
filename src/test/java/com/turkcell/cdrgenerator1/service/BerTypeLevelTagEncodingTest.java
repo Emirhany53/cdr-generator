@@ -83,7 +83,7 @@ class BerTypeLevelTagEncodingTest {
     }
 
     @Test
-    void anExplicitlyTaggedRootTypeKeepsTheUniversalSequenceInside() {
+    void aTaggedRootTypeUnderAKeywordlessHeaderReplacesTheUniversalSequence() {
         AsnStructure structure = parser.parseFromContents("Mod", """
                 Mod DEFINITIONS ::= BEGIN
                 NrFile ::= [APPLICATION 1] SEQUENCE {
@@ -92,13 +92,16 @@ class BerTypeLevelTagEncodingTest {
                 END
                 """);
 
-        // No keyword written and the module defaults to EXPLICIT (X.680 31.2.7),
-        // so 61 (APPLICATION 1 constructed) wraps the universal SEQUENCE 30.
-        assertEquals("61053003810107", encodeHex(structure, Map.of("a", "7")));
+        // This is FDRInput's shape, and it used to encode 61 05 30 03 .. on
+        // X.680 31.2.7's default-EXPLICIT reading. EMM refused that file with
+        // "FDRInput.NrFile.name was probably not set": it opens [APPLICATION 1]
+        // and expects the first field, not the universal SEQUENCE we wrapped in.
+        // So the tag replaces 30 rather than wrapping it.
+        assertEquals("6103810107", encodeHex(structure, Map.of("a", "7")));
     }
 
     @Test
-    void aTaggedRootSetKeepsTheUniversalSetTagInsideAnExplicitWrapper() {
+    void aTaggedRootSetUnderAKeywordlessHeaderReplacesTheUniversalSetTag() {
         AsnStructure structure = parser.parseFromContents("Mod", """
                 Mod DEFINITIONS ::= BEGIN
                 Wrapper ::= [APPLICATION 2] SET {
@@ -107,8 +110,10 @@ class BerTypeLevelTagEncodingTest {
                 END
                 """);
 
-        // 62 = APPLICATION 2 constructed; 31 = universal SET (X.690 8.11).
-        assertEquals("62053103810107", encodeHex(structure, Map.of("a", "7")));
+        // Audit_Record_Collection_St's shape, refused the same way and named
+        // its first mandatory field. 62 = APPLICATION 2 constructed, and the
+        // universal SET tag (X.690 8.11) is replaced, not wrapped.
+        assertEquals("6203810107", encodeHex(structure, Map.of("a", "7")));
     }
 
     @Test

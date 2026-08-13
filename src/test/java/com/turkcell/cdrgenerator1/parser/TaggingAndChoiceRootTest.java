@@ -60,20 +60,26 @@ class TaggingAndChoiceRootTest {
      * {@code Audit_Record_Collection_St} encoding as they always have.</p>
      */
     @Test
-    void anUnspecifiedHeaderTreatsAFieldTagAndATypeTagDifferently() {
+    void anUnspecifiedHeaderIsImplicitForAFieldTagAndForATypeTag() {
         var fieldTagged = builder.buildRegistry(
                 "M DEFINITIONS ::= BEGIN Root ::= SEQUENCE { a [1] INTEGER } END");
         AsnFieldTreeResolver.ResolvedRoot field = resolver.resolveRoot(
                 fieldTagged, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
         assertFalse(field.fields().get(0).isExplicit(),
-                "a FIELD tag under a keyword-less header is IMPLICIT - the rule EMM verified");
+                "a FIELD tag under a keyword-less header is IMPLICIT - IMSCDRS measured it");
 
+        // The two used to differ, on the grounds that nothing had measured the
+        // type-level case. Round 9 measured it: FDRInput and
+        // Audit_Record_Collection_St were both refused at their first reachable
+        // field, because EMM found the universal SEQUENCE we wrapped in where it
+        // expected the field itself. A keyword-less header is IMPLICIT
+        // throughout, not only for fields.
         var typeTagged = builder.buildRegistry(
                 "M DEFINITIONS ::= BEGIN Root ::= [APPLICATION 1] SEQUENCE { a [1] IMPLICIT INTEGER } END");
         AsnFieldTreeResolver.ResolvedRoot type = resolver.resolveRoot(
                 typeTagged, "Root", Map.of(), AsnTaggingMode.UNSPECIFIED);
-        assertTrue(type.rootTagCarrier().isExplicit(),
-                "a tag written on a TYPE keeps X.680's EXPLICIT - nothing has measured that case");
+        assertFalse(type.rootTagCarrier().isExplicit(),
+                "a tag written on a TYPE is IMPLICIT too - EMM refused the wrapper twice");
     }
 
     @Test
