@@ -54,6 +54,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **4/4 PASS** |
 | 9 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes, GGSN-qos ikilisi, CHFChargingDataTypes16 | 4 red + 1 çift red — 2'si gerçek kodlama bulgusu, 3'ü yönlendirme |
 | 10 | FDRInput, Audit (düzeltilmiş), CGSN40ber-qos ikilisi, CHF (rootType'lı) | **4 PASS** + qos ASCII decode döndü; CHF `Invalid length 102` |
+| 11 | CHF EXPLICIT ikilisi | **HAZIR — gönderilmedi** |
 
 ### 7. turda gönderilen dosyalar
 
@@ -328,6 +329,53 @@ dosya `IMSCDRS` ve o 42 düz yaprak — içinde CHOICE, SEQUENCE OF, SET yok.
 17 SEQUENCE OF, 7 SET, 10 çok-baytlı tag, 19 long-form uzunluk ve **4 adet
 yazılı `EXPLICIT` keyword'ü** — `5906e76`'nın bilerek dokunmadığı ve hiçbir
 yanıtın kapsamadığı site.
+
+## 8b. CHF — açık kalan tek kodlama sorusu
+
+EMM'in kendi `CHFChargingDataTypes16` şeması Yasin'den alındı (11.tur öncesi).
+`ChargingRecord`'un **20 alanı da birebir aynı**; `NetworkFunctionInformation`,
+`IPAddress`, `IPBinaryAddress`, `NodeAddress`, `PLMN-Id`, `NetworkFunctionName`,
+`NetworkFunctionality` — hepsi aynı. Fark beyanda değil, yorumda; IMSCDRS'teki
+durumun aynısı.
+
+### İki turun birlikte söylediği
+
+| tur | kök | EMM |
+|---|---|---|
+| 9 | `CHFRecord` (CHOICE) → `BF 81 48 …` | "ChargingRecord was probably not set" |
+| 10 | `ChargingRecord` (çıplak SET) → `31 82 …` | "Invalid length 102 of …**nFunctionConsumerInformation**" |
+
+10. tur hatası kaydın **içinden** geliyor ve belirli bir alan adlandırıyor. Yani
+**çıplak SET kökü doğru**; sorun gerçekten `[3]`'ün içinde. (CHOICE sarmalayıcı
+hipotezi bu veriyle çürüdü.)
+
+### Kalan tek yorum farkı: yazılı `EXPLICIT`
+
+Modül başlığı anahtar kelimesiz. 6., 9. ve 10. turlar böyle bir modülde hem
+**alan** hem **tip** tag'inin EMM tarafında IMPLICIT okunduğunu gösterdi.
+Sınanmamış tek site, alanın üzerinde **yazılı duran** `EXPLICIT` keyword'ü —
+bizim kodumuzda keyword kazanır.
+
+Modülün 4 yazılı `EXPLICIT`'inden **3'ü tam da düşen alanın içinde**:
+
+```
+networkFunctionIPv4Address [2] EXPLICIT IPAddress
+networkFunctionIPv6Address [4] EXPLICIT IPAddress
+networkFunctionFQDN        [5] EXPLICIT NodeAddress
+```
+
+### 11. tur ikilisi (`tools/chfExplicitProbe.py`)
+
+| dosya | `[3]` içeriği | bayt | SHA-256 |
+|---|---|---|---|
+| `CHF-explicit-kept.ber` | `A2 06 {80 04 …}` — sarmalayıcı korunur | 2449 | `ef9f5ad3e38eacbb0a8ce2973dd2f17cca4e83d908eaf0f9338b905dcc1b3d82` |
+| `CHF-explicit-collapsed.ber` | `82 04 …` — sarmalayıcı düşer | 2441 | `0fec613322520647e680f12e70ffc8ef9ef09fd215f98780cae240c8284f94a0` |
+
+`collapsed` **geçerse:** anahtar kelimesiz modülde EMM yazılı `EXPLICIT`'i de yok
+sayıyor → kural "başlık mod söylemiyorsa her şey IMPLICIT" haline gelir ve
+`resolveExplicit` içindeki keyword önceliği bu sınıf için kalkar.
+**Geçmezse:** sorun bu değil; sıradaki şüpheli değer düzeyinde (IPv6 alanına
+IPv4 alternatifi, FQDN alanına adres alternatifi seçmemiz).
 
 ## 8. Bağımsız çözücü turu — `asn1tools` (12.08.2026, EMM'den bağımsız)
 
