@@ -37,6 +37,7 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 3. `[n] EXPLICIT <BOOLEAN>` → **IMPLICIT** (`AB 03 01 01 FF` reddedildi, `8B 01 FF` istendi)
 4. Başlığı `IMPLICIT TAGS` demeyen modülde **alan** tag'i → **IMPLICIT**
 5. Başlığı `IMPLICIT TAGS` demeyen modülde **tip** tag'i de → **IMPLICIT** (9. tur, commit `f5ce531`)
+6. Başlığı `IMPLICIT TAGS` demeyen modülde, **yazılı keyword taşımayan** bir tag CHOICE tipli alandaysa → **IMPLICIT** (13. tur, commit `e940f0c`). X.680 8.3'ün istisnası.
 
 Hepsini tek cümle açıklıyor: **CHOICE dışında her şey IMPLICIT.** CHOICE'ta
 X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
@@ -525,13 +526,44 @@ Sonuç: `AllModulesRoundTripTest` ve `ShippedFieldRulesRoundTripTest` düştü,
 `vErrors` 45 → 67. Değişiklik geri alındı; repo `371 test / 0 failure`,
 `vErrors 45` durumunda.
 
-**Yapılması gereken (encoder + verifier birlikte):**
+### ✅ UYGULANDI — commit `e940f0c`
 
-1. `AsnField.choiceTagImplicit` — dar bayrak: `choice && !repeated && !yazılıEXPLICIT && tagNumber!=null && mode==UNSPECIFIED`
-2. `AsnFieldTreeResolver` — bayrağı iki builder çağrısında da set et
-3. `BerEncoderService.wrapInTlv` — bayrak varsa sarmalama, **içeriğin dış tag'ini değiştir**
-4. **`BerVerifier`** — `walkPlain`/`walkRepeated`/`walkAlternative` yollarında aynı bayrağı onurlandır; `onlyChild` bu alanlar için çağrılmamalı
-5. Regresyon: `MMTelChargingDataTypes` ve `CHAD` baytları **değişmemeli** (ikisi de `IMPLICIT TAGS`, 8.3 orada korunuyor)
+Beş parça birlikte gitti:
+
+| # | dosya | ne yapıldı |
+|---|---|---|
+| 1 | `AsnField` | `choiceTagImplicit` bayrağı — `choice && !repeated && yazılı keyword yok && tagNumber!=null && mode==UNSPECIFIED` |
+| 2 | `AsnFieldTreeResolver` | bayrak iki builder çağrısında da set ediliyor |
+| 3 | `BerEncoderService` | `retagOutermost` — sarmalamak yerine içeriğin dış tag'ini değiştiriyor |
+| 4 | `BerVerifier.walkChoice` | bu alanlarda sarmalayıcı aramıyor (`onlyChild` çağrılmıyor) |
+| 5 | `TagShapeRule` | şekil alternatiften geldiğinde "container ama tag primitive" uyarısı vermiyor |
+
+**Sonuç:**
+
+| ölçü | önce | sonra |
+|---|---|---|
+| test | 371 | **372** (yeni regresyon testi) |
+| failure / error | 0 / 0 | **0 / 0** |
+| `vErrors` | 45 | **45** |
+| `vWarnings` | 225 | **229** |
+| bayt değişen modül | — | **1** (`CHFChargingDataTypes16`, 2368 → 2324) |
+
+`[3]` artık EMM'in kabul ettiği şekli üretiyor:
+
+```
+A3 34 80 01 00 81 12 … A2 06 80 04 … 83 03 … A4 06 80 04 … A5 06 80 04 …
+                                                            ^^^^^^^^^^^ A0 katmani gitti
+```
+
+**Regresyon kapısı tuttu:** 12 EMM-kanıtlı modülün tamamı + `TAP0309`/`TAP-0309`
+bayt bayt aynı, referans yakalama testi geçiyor.
+
+**+4 uyarı bilinçli.** Implicit tagging CHOICE alternatifinin kimliğini siler,
+bu yüzden walker o alt ağaçları "doğrulanamadı" diye işaretliyor — "doğru" diye
+değil. Bu, o alanların gerçek durumu.
+
+**Not:** Kural 5 modül / 21 alan için geçerli ama bu üretimde yalnızca CHF
+alanları dolduruldu; diğer 4 modülde ilgili alanlar OPTIONAL ve üretilmedi.
 
 **Etki alanı ölçüldü:** 21 alan / 5 modül (`UNSPECIFIED`). Aynı kalıp
 `IMPLICIT TAGS` modüllerinde 163 alan / 31 modülde var ve **bilerek
