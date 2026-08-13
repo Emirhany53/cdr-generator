@@ -34,6 +34,17 @@ build/
 
 logs/
 .DS_Store
-**/.DS_Store*.ber
 __pycache__/
 .claude/
+
+### Uretilen CDR ciktilari ###
+# Bir .ber ciktisi uretimin sonucudur, kaynak degildir - repoya girmez.
+# Gercekten saklanmasi gereken bir referans yakalama olursa: git add -f <dosya>
+*.ber
+
+### Runtime / hata ayiklama artiklari (repo kokunde) ###
+# Uygulamayi elle calistirinca kalanlar: PID dosyalari, run loglari ve
+# curl ciktilarinin dokuldugu gecici ikili dosyalar.
+/*.pid
+/*.log
+/*.bin
