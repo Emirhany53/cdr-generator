@@ -54,7 +54,8 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 8 | CGSN40ber, TurkcellCDRCCNCS5, CHAD, SMSCBerCdr | **4/4 PASS** |
 | 9 | FDRInput, Audit_Record_Collection_St, IMSChargingDataTypes, GGSN-qos ikilisi, CHFChargingDataTypes16 | 4 red + 1 çift red — 2'si gerçek kodlama bulgusu, 3'ü yönlendirme |
 | 10 | FDRInput, Audit (düzeltilmiş), CGSN40ber-qos ikilisi, CHF (rootType'lı) | **4 PASS** + qos ASCII decode döndü; CHF `Invalid length 102` |
-| 11 | CHF EXPLICIT ikilisi | **HAZIR — gönderilmedi** |
+| 11 | CHF: explicit-kept, explicit-collapsed, nfci-minimal | 3 red — ama üçü de bilgi verdi (aşağıda) |
+| 12 | CHF NFI bisect: A/B/C | **HAZIR — gönderilmedi** |
 
 ### 7. turda gönderilen dosyalar
 
@@ -382,7 +383,69 @@ networkFunctionIPv6Address [4] EXPLICIT IPAddress
 networkFunctionFQDN        [5] EXPLICIT NodeAddress
 ```
 
-### 11. tur ikilisi (`tools/chfExplicitProbe.py`)
+### ✅ 11. tur sonucu — hipotez çürüdü, ama üç şey kesinleşti
+
+**1. "Invalid length N" bir uzunluk değil, düşen düğümün BİTİŞ OFFSETİ.**
+
+| tur | bildirilen | ölçülen |
+|---|---|---|
+| 10 | `Invalid length 102` | `[3]` düğümünün bitişi = **102** |
+| 11 (`minimal`) | `Invalid length 406` | iç içe düğümün bitişi = **406** |
+
+Aynı imza IMSCDRS'te de görülmüştü (590/114/411 = tam dosya boyutu). Artık
+anlamı biliniyor: EMM nereye kadar okuyabildiğini söylüyor.
+
+**2. EMM yazılı `EXPLICIT` keyword'ünü OKUYOR ve UYGULUYOR.** `collapsed`
+varyantının hatası birebir şunu diyor:
+
+```
+networkFunctionIPv4Address choice is explicit and optional without ellipsis and
+explicit tag of that choice has been parsed which means choice coming in data but
+input data element in that explicit choice does not match any of the elements
+```
+
+Yani sarmalayıcıyı düşürmek **yanlış**; mevcut davranışımız (`kept`) doğru.
+Anahtar kelimesiz modülde kural artık tam olarak şu: **varsayılan IMPLICIT,
+yazılı keyword kazanır** — `resolveExplicit`/`readLeadingTag` bugün zaten böyle.
+
+**3. Zengin yapı doğru çözülüyor.** `minimal` varyantı `[3]`'ü geçti ve
+**6 seviye derine** indi:
+
+```
+ChargingRecord (SET)
+ └ listOfMultipleUnitUsage (SEQ OF)
+    └ usedUnitContainers (SEQ OF)
+       └ pDUContainerInformation (SEQUENCE)
+          └ servingNetworkFunctionID (SEQ OF)
+             └ servingNetworkFunctionInformation  <- burada durdu
+```
+
+CHOICE, SEQUENCE OF, SET, iç içe constructed — hepsi 406 bayt boyunca doğru
+çözüldü. **Anahtar kelimesiz sınıfın zengin yapıda çalıştığının ilk kanıtı.**
+
+### Kalan sorun izole edildi
+
+Düşen iki düğüm de aynı tip: `NetworkFunctionInformation`, tam alan setiyle.
+Kayıtta bu tipten **6 örnek** var (biri `[3]`, beşi iç içe
+`servingNetworkFunctionInformation`), bu yüzden tek birini boşaltmak yetmiyor.
+
+### 12. tur — NFI bisect (`tools/chfNfiBisect.py`)
+
+Altı örneğin **hepsi** aynı alan altkümesine indirgeniyor:
+
+| dosya | korunan alanlar | `[3]` içeriği | bayt | SHA-256 |
+|---|---|---|---|---|
+| `CHF-A-nfi-min.ber` | `[0]` | `A3 03 80 01 09` | 2141 | `1b3d40e17e4fd225af800b4249819d62efb0a8b1efbecb62e967bd2ba3b27f5e` |
+| `CHF-B-nfi-plain.ber` | `[0] [1] [3]` — yazılı EXPLICIT olmayanlar | `A3 1C 80 01 09 81 12 … 83 03 …` | 2291 | `4493d847a944ba90432e9ba00ec877650ee44086d82732fe5ab6fd93d7314a50` |
+| `CHF-C-nfi-explicit.ber` | `[0] [2]` — tek EXPLICIT CHOICE alanı | `A3 0B 80 01 09 A2 06 80 04 …` | 2189 | `df064d2963925ee9c3ecd562b9f854636f852501dd989ac6b148f9ada4b385bf` |
+
+| sonuç | çıkarım |
+|---|---|
+| A PASS, B PASS, C FAIL | Sorun `[n] EXPLICIT <CHOICE>` alanında → tek ve net hedef |
+| A PASS, B FAIL | Sorun `[1]` IA5String ya da `[3]` PLMN-Id'de — muhtemelen değer düzeyinde |
+| A FAIL | Sorun NFI'nin kendi çerçevesinde; daha yukarı bakılır |
+
+### (eski) 11. tur ikilisi (`tools/chfExplicitProbe.py`)
 
 | dosya | `[3]` içeriği | bayt | SHA-256 |
 |---|---|---|---|
