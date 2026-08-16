@@ -1,7 +1,8 @@
 # Proje Durumu Checkpoint
 
-**Tarih:** 13 Ağustos 2026
-**Son Commit:** `8959557b458828ac17a0cb07f7c8736396461f6f` (feature/web-ui)
+**Tarih:** 16 Ağustos 2026
+**Son Commit:** `8488d0a` (feature/web-ui) + bu oturumun değişiklikleri
+**Önceki revizyon:** 13 Ağustos 2026 (`8959557`)
 
 Bu doküman, projenin en güncel teknik durumunu, alınan EMM (Ericsson Mediation Manager) doğrulama sonuçlarını ve mimari kararları özetler. Yeni bir oturumda bağlamı hızlıca kavramak için tasarlanmıştır.
 
@@ -26,8 +27,8 @@ Frontend (React/Vite) tarafında UI yerleşimi ve indirme mekanizması güncelle
 ## 3. BER Tarafındaki Mevcut Durum
 
 ### Sayısal Metrikler (Repo üzerinden doğrulanmıştır)
-* **Toplam Modül:** 808
-* **Üretilebilir Yapı:** 802 (6'sı sadece tip/alias tanımladığı veya boş olduğu için atlanıyor).
+* **Toplam Modül:** 808 (`datastructure.json`); açılışta **805'i ayrıştırılıyor**, 3'ü hiç ASN.1 tipi beyan etmediği için atlanıyor.
+* **Üretilebilir Yapı:** 802 (`Array`, `LteReturnTypes`, `SMSCLookupStructures` yalnızca tip takma adı tanımlar; her iki üretim ucu da bunları artık 400 ile reddeder).
 * **Tagging Modları:**
   * `UNSPECIFIED` (Başlıkta mod belirtilmeyenler): 712 modül (~22.133 yaprak alan).
   * `IMPLICIT TAGS`: 96 modül.
@@ -49,7 +50,7 @@ Frontend (React/Vite) tarafında UI yerleşimi ve indirme mekanizması güncelle
 11. `FDRInput`
 12. `Audit_Record_Collection_St`
 
-*(Not: İstemde belirtilen "14 yeni representative BER dosyası EMM'e gönderildi" ifadesi, repo logları ve `emm-validation-log.md` tur kronolojisi (Tur 1-13) ile eşleşmemektedir. Toplamda 34 `.ber` dosyası `target/validation/` altında referans olarak üretilmektedir.)*
+*(Not: `ValidationSampleTest` bugün **21** aile için `.ber` + `.txt` örneği üretiyor — daha önce yazılan 34 rakamı eskimiştir. `target/` gitignore'da olduğu için orada kalan fazladan dosyalar eski koşulardan artıktır, `mvn clean` ile gider.)*
 
 ### Kanıtlanmış Encoding Kuralları ve Verifier Durumu
 `emm-validation-log.md` Tur 13 sonu itibarıyla EMM tarafından kanıtlanmış kurallar (özetle **CHOICE dışında her şey IMPLICIT** kuralı geçerlidir):
@@ -64,7 +65,8 @@ Bu kurallar `BerVerifier` (Yerel Doğrulama Döngüsü) içindeki `VerificationR
 
 ## 4. Test Sayısı ve Validation Metrikleri
 
-* **Test Sayısı Açıklaması:** İstemde sorulan "399 / 440 test sayısı" gerçeği yansıtmamaktadır. Repo üzerinden yapılan statik analiz (`grep -r '@Test'`) sonucunda tam olarak **49 test sınıfında toplam 422 test metodu** bulunmaktadır. Bu sayı `TextCharsetTest`, `TextColumnStabilityTest`, `TextLiteralAndCodeTest` gibi yeni .txt testlerinin eklenmesiyle artmıştır.
+* **Test Sayısı:** 16.08.2026 itibarıyla **497 test, 0 başarısız, 0 atlanan** (`mvn test` ile ölçüldü). 13 Ağustos'ta 422'ydi; aradaki 75 test bu oturumda eklendi (TBCD locale regresyonu, `.txt` manifest/geçici dosya, alansız yapı reddi, Gemini adaptörü ve istem kurucu).
+  **Uyarı:** `target/surefire-reports` altındaki dosyalar `mvn clean` yapılmadıkça birikir; kaynakta artık bulunmayan sınıfların raporları toplamı şişirir. Sayım öncesi `mvn clean` gerekir.
 * **Audit (Validation) Metrikleri:** `AllModulesRoundTripTest` ve `ShippedFieldRulesRoundTripTest` sonucunda üretilen `audit.tsv` verileri:
   * **vErrors:** 45 (17 modülde yoğunlaşmıştır)
   * **vWarnings:** 229 (Bilinçli uyarılar, örn. implicit tagging nedeniyle kimliği silinen alt ağaçlar)
@@ -72,8 +74,8 @@ Bu kurallar `BerVerifier` (Yerel Doğrulama Döngüsü) içindeki `VerificationR
 
 ## 5. .TXT (Eski .DAT) Eksikleri ve Yapay Zeka (AI) Üretimi
 
-* **TXT (ASCII) Analizi:** `docs/emm-validation-log.md`'de belirtildiği üzere `.txt` (eski adıyla ASCII `.dat`) yolu `.ber`'e göre **çok daha az doğrulanmıştır**. Bağımsız oracle veya EMM tarafında parse edilebilirlik doğrulamasından geçmemiş, dışarıdan incelenecek örnek çıktılar (`target/validation/` altında) sınırlı kalmıştır.
-* **AI/Mock Semantic Data Açıkları:** AI (`GEMINI_API_KEY`) kapalıysa üretim rastgele değerlere (`RandomValueSource`) düşer. AI devrede olsa bile, üretilen veriler `FieldValueValidator` tarafından SIZE ve desen kurallarına karşı doğrulanır. Uymayan değer reddedilip yerine rastgele veri üretilir. Sorun, AI'ın her zaman sınır kısıtlarına uyan mantıklı "semantik" veriler üretememesidir (özellikle enum veya birbirine bağımlı conditional alanlarda).
+* **TXT (ASCII) Analizi:** EMM tarafında `.txt` için tek dış kanıt hâlâ `Multicloud`'dur. Ama iç doğrulama 16.08.2026'da genişletildi: 802 modül × 3 kayıt üretilip incelendi — 109.857 hücre, **802/802 modülde satır genişliği tutarlı**, ASCII dışı 0, ayraç sızıntısı 0. Kapatılan açıklar: geçici dosya sızıntısı (artık bellekte üretiliyor), işletim sistemine bağlı satır sonu (artık sabit `\n`), alansız yapının kabulü (artık 400), `|` / satır sonu / ASCII dışı karakterin sessizce dosyayı bozması (artık alanı adlandıran red). `POST /generate/manifest` metni kolon haritasıyla birlikte döner.
+* **AI/Semantic Data Açıkları — artık ÖLÇÜLDÜ.** Rastgele üreticinin ürettiği değer, AI yolunu koruyan `FieldValueValidator`'a soruldu: **34.401 yapraktan 678'i kendi doğrulayıcısından geçemiyor** (249'u NULL alan; ~429'u gerçek). İki kök neden `emm-validation-log.md` §9b'de ayrıntılı: (A) kural eşleşmesi alan adında alt dize arıyor, ASN.1 tipine bakmıyor — `recipAddressTon` "ipAddress" kuralına, `camelDestinationNumberType` "calledNumber" kuralına takılıyor; (B) kural deseni alanın SIZE'ına sığmayınca değer kırpılıyor — `SIZE(6)` bir tarih alanına `"202601"` yazılıyor. Bu alanlarda AI'ın doğru ürettiği değer bile reddedilip rastgeleye düşüyor. **İkisi de `FieldValueGenerator`'ı, dolayısıyla üretilen baytları değiştirdiği için 14 dosyanın EMM yanıtı beklenmektedir.**
 
 ## 6. Açık Sorular ve Öncelikler
 
@@ -83,7 +85,8 @@ Bu kurallar `BerVerifier` (Yerel Doğrulama Döngüsü) içindeki `VerificationR
 3. 712 modülün (UNSPECIFIED) "alan tag'leri implicit'tir" kuralı IMSCDRS kanıtına dayanıyor. Diğer ailelerden (örn. CCN/OCC) daha fazla doğrulama alınması gerekiyor.
 
 ### Sıradaki İşlerin Öncelik Sırası
-1. **EMM'den yeni kanıtların beklenmesi:** Round 8'de gönderilen `CGSN40ber`, `TurkcellCDRCCNCS5`, `CHAD`, `SMSCBerCdr` vb. bağımsız dosyaların (4 farklı aile) sonuçlarının analiz edilmesi.
-2. **ASCII (TXT) Doğrulaması:** TXT çıktısı için kapsamlı örnek setinin (validation manifest'i gibi) üretilip manuel olarak doğrulanması.
-3. **AI Validator İyileştirmesi:** Yapay zekanın reddedilen "geçersiz" semantik verilerinin oranını azaltmak için `field-rules` (regex/pattern) yapılandırmasının genişletilmesi.
+1. **EMM'den 14 dosyanın yanıtının beklenmesi.** Yanıt gelene kadar `BerEncoderService`, `TlvWriter`, parser tagging mantığı ve `FieldValueGenerator` dondurulmuştur.
+2. **Yanıt gelince — değer üretimindeki iki kusur:** (A) kural eşleşmesini tip-duyarlı yapmak, (B) desen SIZE'a sığmayınca kırpmak yerine alana uygun değer üretmek. Ölçümü `emm-validation-log.md` §9b'de; ikisi de üretilen baytları değiştirir.
+3. **TBCD locale düzeltmesinin gözden geçirilmesi:** kendi commit'inde duruyor, tek `git revert` ile geri alınabilir. 126 alan / 60 modülde abone-numarası baytları değişti.
 4. **Duplicate Tag Modülleri:** 17 strict-fail modüldeki ambiguous şema tanımlarının iş birimiyle görüşülerek ASN.1 şemalarında düzeltilmesi veya yoksayılması.
+5. **Ön yüzün testi yok** (949 satır React, 0 test) ve `WebConfig` CORS'u yalnızca `http://localhost:5173`'e izin veriyor — dağıtımdan önce bakılmalı.

@@ -597,6 +597,140 @@ sayıyor → kural "başlık mod söylemiyorsa her şey IMPLICIT" haline gelir v
 **Geçmezse:** sorun bu değil; sıradaki şüpheli değer düzeyinde (IPv6 alanına
 IPv4 alternatifi, FQDN alanına adres alternatifi seçmemiz).
 
+## 9b. 16.08.2026 — EMM beklenirken yapılan denetim (BER üretimine dokunulmadı)
+
+14 dosyanın yanıtı beklendiği için kodlayıcıya, TLV yazıcıya ve tagging
+mantığına **dokunulmadı**. Denetim `.txt` yolu, yapay zeka tesisatı ve test
+kapsamı üzerinde yapıldı. Denetim sonunda `vErrors 45 / vWarnings 229 /
+17 strict-fail modül` değişmeden duruyor — BER tarafının bozulmadığının ölçüsü.
+
+### ⚠️ Kaybolan çalışma (15.08.2026 gecesi)
+
+`target/surefire-reports` altında **23:34'te geçmiş ama kaynakta olmayan**
+6 test sınıfı / 67 test bulundu. `git reflog`'un son kaydı `reset: moving to
+HEAD`; commit'lenmemiş çalışma geri alınmış, git nesnelerinde de yok.
+
+Kanıt sadece raporlar değil: 8080'de duran 23:11 derlemesi, kaynakta bulunmayan
+`POST /api/cdr/generate/manifest` ucunu servis ediyordu. Sözleşmesi o JVM'den
+çıkarıldı ve yeniden yazıldı.
+
+Kaybolan ve bugün geri getirilen dört üretim eksiği: manifest ucu, geçici dosya
+temizliği, `/generate`'in alansız yapıyı reddetmesi, Gemini katmanının testleri.
+
+### 🔴 Türkçe-locale hatası — `TbcdCodec` (ölçüldü ve düzeltildi)
+
+`isLikelyTbcd` alan adını `toLowerCase()` ile katlıyordu, locale vermeden.
+Servis Türkçe makinelerde koşuyor ve orada `'I'` → noktasız `'ı'`:
+
+```
+"servedMSISDN".toLowerCase()   -> "servedmsısdn"   (tr_TR)
+              .contains("msisdn") -> false
+```
+
+`i` taşıyan her token — `msisdn`, `imsi`, `imei` — sessizce ölüydü;
+`callingparty` / `otherparty` çalışmaya devam ettiği için arıza kısmi görünüyordu.
+
+| ölçü | değer |
+|---|---|
+| aday OCTET STRING yaprak (77 modül) | 194 |
+| `tr_TR` altında tanınan | 68 |
+| **davranışı değişen alan / modül** | **126 / 60** |
+
+Üç çağıran da etkileniyordu: `FieldValueGenerator` (paketlemiyordu),
+`FieldValueValidator` (TBCD dalını hiç çalıştırmıyordu), `CdrPromptBuilder`
+(modele "TBCD'ye paketle" demiyordu). İngilizce bir CI'da test yeşil kalır,
+üretimde yanlış davranırdı.
+
+**Düzeltme:** `toLowerCase(Locale.ROOT)` (+ `toUpperCase(Locale.ROOT)`).
+`TbcdCodecLocaleTest` katlamayı açıkça Türkçe locale altında koşturuyor.
+
+**Doğrulama:** `servedIMSI` artık gerçek TBCD üretiyor —
+`82066146401243F0` çözüldüğünde `286016640421340`, yml'deki IMSI desenine uygun.
+
+**EMM için önemi:** düzeltme abone-numarası alanlarının baytlarını değiştirir.
+21 doğrulama örneği içinde etkilenenler: `MMTelChargingDataTypes` 1 alan,
+`GGSNTurkcellCdrR7` 3, `LTE-R10` 3, `TurkcellCDRCCNCS5` 1, `CHAD` 1,
+`CHFChargingDataTypes16` 8. Etkilenmeyenler: `IMSCDRS`, `CGSN40ber`,
+`SMSCBerCdr`, `FDRInput`, `Audit_Record_Collection_St`, `TAP-0309`,
+`IMSChargingDataTypes`. Değişim **yalnızca değer baytlarında**, tagging
+şeklinde değil — `ReferenceCaptureConformanceTest` ve 808 modül round-trip
+geçiyor. 14 dosyanın yanıtı gelene kadar tek `git revert` ile geri alınabilsin
+diye kendi commit'inde tutuldu.
+
+### `.txt` yolu — ölçülen durum ve kapatılan açıklar
+
+802 modül × 3 kayıt üretilip incelendi: 109.857 hücre, **802/802 modülde satır
+genişliği tutarlı**, ASCII dışı 0, ayraç sızıntısı 0, üç kaydı da birebir aynı
+olan modül 0. Temel yapı sağlam. Kapatılanlar:
+
+| açık | önce | sonra |
+|---|---|---|
+| geçici dosya | her indirme `/tmp`'de dosya bırakıyordu (878 dosya / 3,5 MB ölçüldü) | `/generate` bellekte üretiyor, dosya hiç açılmıyor |
+| satır sonu | `System.lineSeparator()` — Windows'ta CRLF | sabit `\n` (Multicloud'un kabul edildiği biçim) |
+| alansız yapı | `/generate` 200 + boş satırlı dosya | 400, `/generate-ber` ile aynı yanıt |
+| `|` ve satır sonu | sessizce kolonu/kaydı bölüyordu | reddediliyor, mesaj kolonu adlandırıyor |
+| ASCII dışı karakter | `UnmappableCharacterException: Input length = 1` | alanı ve karakteri adlandıran red |
+
+Kaçış yerine **red** seçildi: bir kaçış sözleşmesi tel üzerine hiçbir kabul
+edilmiş dosyanın taşımadığı baytlar koyardı; `Multicloud` hiç kullanmıyordu.
+
+`POST /generate/manifest` geri geldi: metin ve kolon haritası **tek üretimden**
+dönüyor, böylece konuma göre okuyan tüketici hangi genişlikte dosya tuttuğunu
+ayırt edebiliyor.
+
+### 🟠 Ölçülen ama BİLEREK dokunulmayan iki kusur
+
+Rastgele üreticinin ürettiği değer, AI yolunu koruyan `FieldValueValidator`'a
+soruldu. **34.401 yapraktan 678'i kendi doğrulayıcısından geçemiyor**
+(249'u NULL alan, gürültü; ~429'u gerçek). İki kök neden:
+
+**(A) Kural eşleşmesi ASN.1 tipine bakmıyor** (`AiConfigProperties.findRuleFor`,
+6+ karakterli ifadeler alt dize olarak da aranıyor):
+
+```
+recipAddressTon             (INTEGER SIZE(3))  -> "ipAddress" kurali
+camelDestinationNumberType  (ENUMERATED)       -> "calledNumber" kurali
+```
+
+Sonuç çift: rastgele üretici anlamsız değer koyuyor (`recipAddressTon = 62128`,
+oysa TON tek haneli), **ve** AI doğru enum değerini üretse bile telefon
+regex'ine takılıp reddediliyor. AI o alanlarda hiç çalışamıyor.
+
+**(B) Kural deseni alanın SIZE'ına sığmayınca değer kırpılıyor**
+(`FieldValueGenerator`, `value.substring(0, effectiveMax)`):
+
+```
+submitDate          IA5STRING(SIZE(6)) -> "20260113" kirpilip "202601"
+callingPartyNumber  IA5STRING(SIZE(6)) -> "055598"
+```
+
+Kırpılan değer artık ne tarih ne telefon numarası. Doğru davranış, deseni
+sığdıramıyorsa alana uygun bir değer üretmek olurdu.
+
+Ek olarak `servedIMEISV` gibi bazı alanlar locale düzeltmesinden sonra da TBCD
+üretmiyor: `toOctetStringContent` düz rakam dizisinin uzunluğunu **bayt** sayısı
+ile karşılaştırıyor (15 > 8), oysa 15 rakam TBCD'de 8 bayta paketleniyor.
+Aynı bayt/karakter karışıklığı ailesinden.
+
+**Üçü de `FieldValueGenerator`'ı değiştirmeyi gerektiriyor, yani EMM'de
+incelenen dosyaların baytlarını.** 14 dosyanın yanıtından sonra ele alınacak.
+
+### Test durumu
+
+| | önce | sonra |
+|---|---|---|
+| test | 422 | **497** |
+| başarısız / hata | 0 / 0 | **0 / 0** |
+| `vErrors` / `vWarnings` | 45 / 229 | **45 / 229** |
+
+Yeni sınıflar: `TbcdCodecLocaleTest`, `TextManifestAndTempFileTest`,
+`UnresolvableStructureTextRefusalTest`, `CdrPromptBuilderTest`,
+`GeminiFieldValueProviderTest`, `GeminiResponseSchemaFactoryTest`.
+Gemini adaptörünün test kapsamı 0'dan gerçek bir HTTP sözleşmesine çıktı
+(`MockRestServiceServer`, ağa çıkmadan).
+
+---
+
 ## 8. Bağımsız çözücü turu — `asn1tools` (12.08.2026, EMM'den bağımsız)
 
 7. turun yanıtı beklenirken yapıldı. Amaç `coverage-validation-plan.md`'nin

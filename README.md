@@ -2,8 +2,8 @@
 
 Turkcell'in Ericsson Mediation Manager (EMM) akışlarını beslemek için, kayıtlı
 ASN.1 şemalarına uygun test CDR'ı üreten bir **Java 21 / Spring Boot**
-uygulaması. Aynı şemadan hem **BER (`.ber`)** hem **Token-Separated ASCII
-(`.dat`)** çıktı üretir.
+uygulaması. Aynı şemadan üç çıktı üretir: **BER (`.ber`)**, byte-for-byte aynı ikili
+kopyası **`.dat`**, ve **Token-Separated ASCII (`.txt`)**.
 
 `datastructure.json` içinde **808 ASN.1 modülü** var; uygulama açılışta hepsini
 ayrıştırır ve 802'si için alan ağacı çıkarır.
@@ -125,14 +125,30 @@ POST /generate-ber/raw?structureName=Demo&recordCount=1
 Content-Type: text/plain
 ```
 
-### ASCII (.dat) dosyası üret
+### ASCII (.txt) dosyası üret
 
 ```
 POST /generate
 ```
 
 Gövde `generate-ber` ile aynı şekildedir. Her satır bir kayıt, alanlar `|` ile
-ayrılır.
+ayrılır, kayıt ayracı her makinede `\n`'dir.
+
+Bir değer `|`, satır sonu ya da US-ASCII dışında bir karakter taşıyorsa istek
+**reddedilir** ve hata hangi kolonun sorunlu olduğunu söyler. Bu biçimde kaçış
+sözleşmesi yoktur; sessizce bozuk bir dosya döndürmek yerine reddedilir.
+
+### ASCII üret ve kolon haritasıyla dön
+
+```
+POST /generate/manifest
+```
+
+`/generate` ile aynı üretimi yapar, dosya yerine JSON döner: `text` ve onu
+açıklayan `columns` listesi. `.txt`'de başlık satırı yoktur ve kolon kümesi
+üretilen kayıtlara bağlıdır (bir `SEQUENCE OF` eleman sayısı kadar kolon grubu
+ekler), bu yüzden aynı yapıdan üretilen iki dosya farklı genişlikte olabilir.
+İkisi tek üretimden geldiği için harita metni her zaman doğru anlatır.
 
 ### Tek kayıt önizle (dosya üretmeden)
 
@@ -228,7 +244,7 @@ Controller ── StructureParserService ──┬── AsnTypeRegistryBuilder 
                                        ├── AiValueSource + FieldValueValidator
                                        └── RandomValueSource + FieldValueGenerator
            ── BerEncoderService ───────── TlvWriter                 (alan ağacı + değer → bayt)
-           ── CdrFileWriterService ────── FixedWidthTextFormatter   (.dat)
+           ── CdrFileWriterService ─────  (.txt: duzlestir, kolon birlestir, yaz)
            ── BerVerifier ─────────────── TlvReader + 5 kural       (bayt → bulgu)
 ```
 
@@ -255,13 +271,15 @@ kurucu) tutar; HTTP çağrısı, istek/yanıt şeması ve sağlayıcıya özgü 
 
 ## Doğrulama ve testler
 
-359 test. Öne çıkanlar:
+497 test. Öne çıkanlar:
 
 | test | ne yapar |
 |---|---|
 | `AllModulesRoundTripTest` | 808 modülün tamamı için üret → geri oku → alan ağacına karşı doğrula |
 | `ReferenceCaptureConformanceTest` | Ürettiğimiz MMTel kaydını **EMM'in kabul ettiği gerçek yakalamayla** katman katman karşılaştırır |
-| `ValidationSampleTest` | Her aile için `target/validation/` altına bir örnek `.ber` + `manifest.tsv` yazar |
+| `ValidationSampleTest` | 21 aile için `target/validation/` altına bir örnek `.ber` + `.txt` + `manifest.tsv` yazar |
+| `AsciiOutputConformanceTest` | 802 modülün `.txt` çıktısını üretir; satır sayısı, kolon hizası ve ayraç sızıntısı denetlenir |
+| `TbcdCodecLocaleTest` | TBCD alan-adı eşleşmesini açıkça Türkçe locale altında koşturur |
 | `ArchitectureAuditTest` | 808 modülü tarar, `target/audit/audit.tsv` ve `findings.tsv` üretir |
 
 `ReferenceCaptureConformanceTest` referans dosyayı sırasıyla
@@ -278,17 +296,23 @@ konulamaz; test yalnızca tag ve uzunluk baytlarını okur.
 
 ## Bilinen açık konular
 
-- **Varsayılan-EXPLICIT modüller.** 808 modülün 712'sinin başlığında
-  `IMPLICIT TAGS` yok, yani `[n]` etiketleri X.680 31.2.7 varsayılanı gereği
-  sarmalayıcı olarak kodlanıyor — 687 modüldeki 20.491 alan. Bu okumayı
-  doğrulayan bir dış kanıt henüz yok; EMM'den gelen üç yanıtın üçü de IMPLICIT
-  başlıklı modüllerdendi.
+- **Varsayılan-EXPLICIT modüller — bu madde ESKİDİ.** 712 modülün alan *ve* tip
+  tag'lerinin IMPLICIT olduğu 5906e76 / f5ce531 ile değişti ve EMM tarafından
+  `IMSCDRS`, `FDRInput`, `Audit_Record_Collection_St`, `CHFChargingDataTypes16`
+  ile doğrulandı. Güncel durum için `docs/emm-validation-log.md` esastır.
 - **6 modül sıfır alan üretir.** Üçü yalnızca tip takma adı tanımlar
   (`SMSCLookupStructures`, `LteReturnTypes`, `Array`), üçü hiç tip beyan etmez.
 - **17 modül `strict` modda dosya üretemez.** Çoğunda sebep şemanın X.680
   25.6'ya göre çözülemez olması.
-- **`.dat` yolu `.ber`'e göre daha az doğrulanmış**; dışarıdan incelenecek örnek
-  çıktı üretilmiyor.
+- **`.txt` yolunun tek dış kanıtı `Multicloud`.** İç doğrulama 802 modülü
+  kapsıyor (`AsciiOutputConformanceTest`) ama EMM'in bu biçim hakkında verdiği
+  tek verdict hâlâ o dosyadır.
+- **Üretilen değerlerde iki ölçülmüş kusur.** Kural eşleşmesi ASN.1 tipine
+  bakmıyor ve desen SIZE'a sığmayınca değer kırpılıyor; 34.401 yaprağın 678'i
+  kendi doğrulayıcısından geçemiyor. Ayrıntı ve rakamlar
+  `docs/emm-validation-log.md` §9b'de. Düzeltmesi üretilen baytları
+  değiştirdiği için EMM yanıtı bekleniyor.
+- **Ön yüzün testi yok** (949 satır React, 0 test).
 
 ---
 
