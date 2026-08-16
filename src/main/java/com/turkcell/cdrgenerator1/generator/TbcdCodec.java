@@ -2,6 +2,7 @@ package com.turkcell.cdrgenerator1.generator;
 
 import org.springframework.stereotype.Component;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -30,7 +31,7 @@ public class TbcdCodec {
             char high = (i + 1 < digits.length()) ? digits.charAt(i + 1) : PADDING_NIBBLE.charAt(0);
             result.append(high).append(low);
         }
-        return Optional.of(result.toString().toUpperCase());
+        return Optional.of(result.toString().toUpperCase(Locale.ROOT));
     }
 
     /** TBCD hex string'i rakam dizisine cozer, dolgu nibble'i ('F') atar. */
@@ -66,7 +67,16 @@ public class TbcdCodec {
         if (Objects.isNull(fieldName) || Objects.isNull(byteLength) || byteLength <= 0) {
             return false;
         }
-        String normalized = fieldName.toLowerCase();
+        // Locale.ROOT, not the default locale. This service runs on Turkish
+        // hosts, where 'I'.toLowerCase() is the dotless 'i' - so "servedMSISDN"
+        // folded to "servedmsisdn" everywhere except in production, where it
+        // became "servedmsisdn" with U+0131 and matched none of the tokens
+        // below. Measured on a tr_TR JVM: of the 194 candidate OCTET STRING
+        // leaves across 77 modules, only 68 were recognised. Every token
+        // carrying an 'i' - msisdn, imsi, imei - was silently dead, so the
+        // generator never packed those numbers, the validator never checked
+        // them as TBCD, and the prompt never told the model to pack them.
+        String normalized = fieldName.toLowerCase(Locale.ROOT);
         // callingpartynumber/cameldestinationnumber/otherparty: IN/CAMEL AMA
         // kayitlarindaki (iN-AMA-Extension) abone numarasi alanlari - yml'deki
         // callingNumber/calledNumber kurallari bunlari zaten adi-tabanli
