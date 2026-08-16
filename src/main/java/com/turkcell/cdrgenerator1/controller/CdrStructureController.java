@@ -7,23 +7,24 @@ import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.request.GenerateRequest;
 import com.turkcell.cdrgenerator1.model.request.ParseInlineRequest;
+import com.turkcell.cdrgenerator1.model.response.TextGenerationManifest;
 import com.turkcell.cdrgenerator1.service.AiRecordSupplier;
 import com.turkcell.cdrgenerator1.service.AsnLiteralFormatter;
 import com.turkcell.cdrgenerator1.service.CdrFileWriterService;
 import com.turkcell.cdrgenerator1.service.StructureParserService;
+import com.turkcell.cdrgenerator1.service.TextGenerationResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.IOException;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,7 +37,7 @@ import java.util.Objects;
 @Slf4j
 @Tag(name = "CDR Yapıları ve ASCII Üretimi",
         description = "ASN.1 yapılarını listeler, alanlarını gösterir ve "
-                + "Token-Separated-ASCII (.dat) CDR dosyaları üretir.")
+                + "Token-Separated-ASCII (.txt) CDR dosyaları üretir.")
 public class CdrStructureController {
 
     private static final int MIN_RECORD_COUNT = 1;
@@ -139,20 +140,53 @@ public class CdrStructureController {
         return ResponseEntity.ok(AsnLiteralFormatter.stripRecord(mockRecord));
     }
 
-    @Operation(summary = "ASCII CDR dosyası üret ve indir",
-            description = "Token-Separated-ASCII (.dat) dosyası üretir: her satır bir kayıt, "
+    @Operation(summary = "ASCII CDR dosyası üret ve indir (.txt)",
+            description = "Token-Separated-ASCII (.txt) dosyası üretir: her satır bir kayıt, "
                     + "alanlar '|' ile ayrılır. Belirtilmeyen alanlar yapay zeka ile mantıklı "
                     + "değerlerle doldurulur; yapay zeka devre dışıysa ya da ürettiği değer "
                     + "kurallara uymazsa rastgele üretime düşülür. Kayıtlı bir structureName ile "
                     + "ya da istek gövdesindeki 'contents' alanına konan inline ASN.1 metniyle "
                     + "çalışır. recordCount değerini yapılandırılan üst sınıra kadar dikkate alır.")
     @PostMapping("/generate")
-    public ResponseEntity<Resource> generateAndDownloadCdr(@RequestBody GenerateRequest request) throws IOException {
-        boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
-        log.info("Incoming ASCII CDR generate request (inline={}) for structure: {}",
-                inlineMode, request.getStructureName());
+    public ResponseEntity<Resource> generateAndDownloadCdr(@RequestBody GenerateRequest request) {
+        AsnStructure structure = resolveStructure(request);
+        TextGenerationResult rendered = generate(request, structure);
 
-        AsnStructure structure = resolveStructure(request, inlineMode);
+        String safeName = structure.getStructureName()
+                .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
+        byte[] bytes = rendered.text().getBytes(StandardCharsets.US_ASCII);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_PLAIN)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        ATTACHMENT_TEMPLATE.formatted(safeName, TEXT_FILE_EXTENSION))
+                .contentLength(bytes.length)
+                .body(new ByteArrayResource(bytes));
+    }
+
+    @Operation(summary = "ASCII CDR üret ve kolon haritasıyla birlikte dön",
+            description = "/generate ile AYNI üretimi yapar, ama dosya yerine JSON döner: üretilen "
+                    + "metin ve o metnin kolon haritası birlikte. .txt dosyasında başlık satırı yoktur "
+                    + "ve kolon kümesi üretilen kayıtlara bağlıdır (bir SEQUENCE OF alanı eleman sayısı "
+                    + "kadar kolon grubu ekler), bu yüzden aynı yapıdan üretilen iki dosya farklı "
+                    + "genişlikte olabilir. Konuma göre okuyan bir tüketici hangisini elinde tuttuğunu "
+                    + "ayırt edemez; 'columns' listesi bunu çözer — listenin i. elemanı, metnin her "
+                    + "satırındaki i. alanın adıdır. Metin ve harita TEK bir üretimden gelir, "
+                    + "dolayısıyla her zaman birbirini anlatır. /generate'in davranışı bundan etkilenmez.")
+    @PostMapping("/generate/manifest")
+    public ResponseEntity<TextGenerationManifest> generateWithManifest(@RequestBody GenerateRequest request) {
+        AsnStructure structure = resolveStructure(request);
+        TextGenerationResult rendered = generate(request, structure);
+
+        return ResponseEntity.ok(TextGenerationManifest.of(structure.getStructureName(),
+                resolveRecordCount(request.getRecordCount()), rendered));
+    }
+
+    /**
+     * The one generation both text endpoints run, so the file a caller downloads
+     * and the manifest it reads can never describe different records.
+     */
+    private TextGenerationResult generate(GenerateRequest request, AsnStructure structure) {
         int effectiveRecordCount = resolveRecordCount(request.getRecordCount());
 
         // Yapay zekadan TUM kayitlar icin degerler tek seferde, toplu olarak alinir.
@@ -170,18 +204,9 @@ public class CdrStructureController {
                     structure.getFields(), index, request.getFieldValues(), aiRecords));
         }
 
-        Path filePath = cdrFileWriterService.writeCdrFile(structure.getStructureName(), records);
-        String safeName = structure.getStructureName()
-                .replaceAll(FILE_NAME_UNSAFE_CHARS, FILE_NAME_REPLACEMENT);
-
-        log.info("Generated ASCII CDR file for '{}': {} record(s)",
+        log.info("Generated ASCII CDR for '{}': {} record(s)",
                 structure.getStructureName(), records.size());
-
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_PLAIN)
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        ATTACHMENT_TEMPLATE.formatted(safeName, TEXT_FILE_EXTENSION))
-                .body(new UrlResource(filePath.toUri()));
+        return cdrFileWriterService.render(records);
     }
 
     private int resolveRecordCount(Integer requestedRecordCount) {
@@ -206,13 +231,16 @@ public class CdrStructureController {
      * BerGeneratorController's resolveStructure so both formats support the
      * same two input modes.
      */
-    private AsnStructure resolveStructure(GenerateRequest request, boolean inlineMode) {
+    private AsnStructure resolveStructure(GenerateRequest request) {
+        boolean inlineMode = Objects.nonNull(request.getContents()) && !request.getContents().isBlank();
+        log.info("Incoming ASCII CDR generate request (inline={}) for structure: {}",
+                inlineMode, request.getStructureName());
+
         if (inlineMode) {
             AsnStructure structure = structureParserService.parseFromContents(
                     request.getStructureName(), request.getContents(), request.getChoiceSelections(),
                     request.getRootType());
-            if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
-                    || structure.getFields().isEmpty()) {
+            if (hasNoFields(structure)) {
                 throw new IllegalArgumentException(
                         "Inline content could not be parsed into any ASN.1 structure");
             }
@@ -226,6 +254,20 @@ public class CdrStructureController {
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }
+        // The BER endpoint has refused this since it was written; the text
+        // endpoint did not, so Array, LteReturnTypes and SMSCLookupStructures -
+        // helper type modules that declare no record - answered 200 with a file
+        // of blank lines. A silent empty success reads as a generator fault.
+        if (hasNoFields(structure)) {
+            throw new IllegalArgumentException(
+                    "Structure '" + request.getStructureName()
+                            + "' resolves to no fields, so it cannot produce a CDR record");
+        }
         return structure;
+    }
+
+    private boolean hasNoFields(AsnStructure structure) {
+        return Objects.isNull(structure) || Objects.isNull(structure.getFields())
+                || structure.getFields().isEmpty();
     }
 }

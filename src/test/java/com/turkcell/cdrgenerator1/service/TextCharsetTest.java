@@ -4,7 +4,6 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.charset.UnmappableCharacterException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -15,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * What the {@code .txt} writer does with a character US-ASCII cannot hold.
+ * What the {@code .txt} writer does with a value the format cannot carry.
  *
  * <p>{@code CdrFileWriterService} writes with
  * {@link StandardCharsets#US_ASCII}. 48 modules declare a {@code UTF8String}
@@ -24,10 +23,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * to ASCII. The random generator draws from an ASCII alphabet, which is why no
  * generated file has ever shown this.</p>
  *
- * <p>These tests pin the behaviour down rather than judge it. Whether EMM wants
- * ASCII, Latin-9 or UTF-8 on the Token-Separated side is not something any
- * result has told us - {@code Multicloud} is the only external confirmation the
- * format has, and its values were ASCII.</p>
+ * <p>Whether EMM wants ASCII, Latin-9 or UTF-8 on the Token-Separated side is
+ * not something any result has told us - {@code Multicloud} is the only external
+ * confirmation the format has, and its values were ASCII. So the writer stays on
+ * US-ASCII and refuses what it cannot represent.</p>
+ *
+ * <h2>Refusing, and saying which field</h2>
+ *
+ * <p>Three characters break a Token-Separated line: {@code |} splits a column,
+ * a line break splits a record, and a non-ASCII character cannot be encoded at
+ * all. The first two used to pass straight through and corrupt the file's shape
+ * silently; the third surfaced as {@code UnmappableCharacterException: Input
+ * length = 1} raised from inside {@code Files.write}, which named neither the
+ * field nor the character. All three are now one refusal that names the column
+ * and the value, so a caller can act on it.</p>
  */
 class TextCharsetTest {
 
@@ -55,41 +64,65 @@ class TextCharsetTest {
     }
 
     /**
-     * A character US-ASCII cannot hold does not become {@code ?} - it aborts the
-     * write.
-     *
-     * <p>{@code Files.write(path, lines, US_ASCII)} configures its encoder to
-     * REPORT rather than REPLACE, so the first Turkish letter throws
-     * {@link java.nio.charset.UnmappableCharacterException}. Nothing catches it
-     * on the way out: {@code writeCdrFile} declares {@code IOException} and the
-     * exception surfaces from the endpoint as a server error whose message says
-     * "Input length = 1" and names no field.</p>
-     *
-     * <p>No data is silently corrupted, which is the good half. The bad half is
-     * that 48 modules declare {@code UTF8String}, the values there come from the
-     * user or the AI provider, and a single {@code ç} makes the whole file
-     * unproducible with a message nobody can act on.</p>
+     * A character US-ASCII cannot hold aborts the write, and the message says
+     * which field carried it.
      */
     @Test
     void aNonAsciiCharacterAbortsTheWrite() {
         assertThatThrownBy(() -> bytesOf(record("name", "\"ÇAĞRI\"")))
-                .isInstanceOf(UnmappableCharacterException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("name")
+                .hasMessageContaining("US-ASCII")
+                .hasMessageContaining("ÇAĞRI");
     }
 
     /** One character is enough, wherever it sits in the record. */
     @Test
     void oneNonAsciiCharacterAnywhereIsEnough() {
         assertThatThrownBy(() -> bytesOf(record("a", "\"AAAAA\"", "b", "\"ş\"")))
-                .isInstanceOf(UnmappableCharacterException.class);
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'b'");
     }
 
-    /** A value carrying the separator would break the line; the writer is not the guard. */
+    /**
+     * The separator inside a value is refused rather than written.
+     *
+     * <p>It used to pass through: two fields went in and three columns came out,
+     * with nothing to tell a consumer that the line it was reading by position
+     * had shifted. Escaping was the alternative and was rejected - it would put
+     * bytes on the wire that no accepted file has ever carried, and
+     * {@code Multicloud}, the only external confirmation this format has, used
+     * none.</p>
+     */
     @Test
-    void theSeparatorInsideAValueIsNotEscaped() throws IOException {
-        byte[] out = bytesOf(record("a", "\"x|y\"", "b", "\"z\""));
+    void theSeparatorInsideAValueIsRefused() {
+        assertThatThrownBy(() -> bytesOf(record("a", "\"x|y\"", "b", "\"z\"")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'a'")
+                .hasMessageContaining("|");
+    }
 
-        assertThat(new String(out, StandardCharsets.US_ASCII).stripTrailing())
-                .as("three columns arrive where two fields were written")
-                .isEqualTo("x|y|z");
+    /** A line break would split one record into two, so it is refused as well. */
+    @Test
+    void aLineBreakInsideAValueIsRefused() {
+        assertThatThrownBy(() -> bytesOf(record("a", "\"x\ny\"")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("satir sonu");
+    }
+
+    /**
+     * The record separator is {@code \n} on every host.
+     *
+     * <p>The writer used to go through {@code Files.write(path, lines, charset)},
+     * which terminates each line with {@link System#lineSeparator()} - so the
+     * same source shipped CRLF from a Windows host and LF from this one. The
+     * separator belongs to the format the consumer parses, and the one
+     * Token-Separated file EMM has accepted carried LF.</p>
+     */
+    @Test
+    void everyRecordEndsWithALineFeedAndNoCarriageReturn() throws IOException {
+        byte[] out = bytesOf(record("a", "\"1\"", "b", "\"2\""));
+
+        assertThat(new String(out, StandardCharsets.US_ASCII)).isEqualTo("1|2\n");
     }
 }
