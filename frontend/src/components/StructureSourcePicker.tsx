@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { StructureSourceMode } from "../types";
 
@@ -35,6 +35,31 @@ export default function StructureSourcePicker(props: StructureSourcePickerProps)
     const needle = search.trim().toLowerCase();
     return existingNames.filter((n) => n.toLowerCase().includes(needle));
   }, [existingNames, search]);
+
+  /**
+   * Keeps the selection in state equal to the one the listbox is showing.
+   *
+   * A sized <select> whose `value` matches no option does not render "nothing
+   * selected" — the browser highlights the first row anyway. So the list looked
+   * as if IMSCDRS were picked while `selectedExistingName` was still "", which
+   * left "Alanları getir" disabled. Clicking the highlighted row did not help:
+   * to the DOM the value was already that row, so no change event fired and the
+   * state never caught up. Filtering made it worse, because every search
+   * re-highlighted a first row that state knew nothing about.
+   *
+   * Adopting the highlighted row is what removes the disagreement: what the user
+   * sees selected is what the button will load.
+   */
+  useEffect(() => {
+    if (existingNamesLoading) return;
+    if (filteredNames.length === 0) {
+      if (selectedExistingName) onSelectedExistingNameChange("");
+      return;
+    }
+    if (!filteredNames.includes(selectedExistingName)) {
+      onSelectedExistingNameChange(filteredNames[0]);
+    }
+  }, [filteredNames, selectedExistingName, existingNamesLoading, onSelectedExistingNameChange]);
 
   function handleFileChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
