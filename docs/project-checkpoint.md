@@ -36,7 +36,16 @@ Frontend (React/Vite) tarafında UI yerleşimi ve indirme mekanizması güncelle
 * **BER Davranış Sınıfı: 32.** 13.08.2026'da 802 modül, kodlayıcının kararını değiştiren 8 eksende (modül modu, kök şekli, yazılı `EXPLICIT`, tip-seviyesi `[APPLICATION]`, nötrleştirme ailesi, CHOICE, SEQUENCE OF, SET) parmak izlendi. O tarihte **8 sınıf / 641 modül (%79)** EMM kanıtıyla temsil ediliyordu; kalan **24 sınıf / 161 modül** kanıtsızdı. 14. tur korpusu bu boşluğu hedefliyor — ayrıntı ve tam tablo: `emm-validation-log.md` §3, "14. turda gönderilen dosyalar". (Sınıflandırma kod olarak repoda değil, günlükte kayıtlıdır.)
 
 ### EMM Coverage ve Doğrulanmış Yapılar
-Şu ana kadar **12 modül** EMM tarafından doğrulanmış ve kabul edilmiştir:
+
+**17.08.2026 — 14. tur sonuçlandı: 7 PASS / 6 red / 1 koşulamadı.** Kabul edilen
+yapı 12'den **19**'a, kanıtlı davranış sınıfı 8/32'den **15/32**'ye, kanıtlı
+modül 641'den **695'e (%86,7)** çıktı. Yeni geçenler: `ConvergenceCdr`,
+`NRTRDEInValidationLookup`, `CME20R12TurkCellber`, `GPRS-Charging-Extensions-Tr`,
+`EMM-IMS-Specific`, `CDRDatamartCCNDMM`, `FCMSMSC`. Redlerin tamamı üç başlıkta
+toplanıyor ve hiçbiri tagging kurallarını çürütmüyor — ayrıntı
+`emm-validation-log.md` §3, "14. tur sonucu".
+
+Önceki 12 modül:
 1. `MMTelChargingDataTypes`
 2. `GGSNTurkcellCdrR7`
 3. `LTE-R10` (pGWRecord)
@@ -85,7 +94,7 @@ Bu kurallar `BerVerifier` (Yerel Doğrulama Döngüsü) içindeki `VerificationR
 3. 712 modülün (UNSPECIFIED) "alan tag'leri implicit'tir" kuralı IMSCDRS kanıtına dayanıyor. Diğer ailelerden (örn. CCN/OCC) daha fazla doğrulama alınması gerekiyor.
 
 ### Sıradaki İşlerin Öncelik Sırası
-1. **EMM'den 14. tur yanıtının beklenmesi.** Yanıt gelene kadar `BerEncoderService`, `TlvWriter`, parser tagging mantığı ve `FieldValueGenerator` dondurulmuştur. Gönderilen 14 dosya (13.08.2026, SHA-256'larıyla birlikte) `emm-validation-log.md` §3'te; hedefi kanıtsız 24 davranış sınıfının 12'sini, 161 modülün 142'sini kapatmak. **Gönderilen baytlar yeniden üretilemez** (üretici tohumsuz, `target/emm-corpus-r14/` silindi) — teşhis SHA kaydı + şema düzeyinde yapılacak.
+1. ~~EMM'den 14. tur yanıtının beklenmesi.~~ **Yanıt 17.08.2026'da geldi, dondurma kalktı.** Bulgu 1 düzeltildi (`2006841`). Sırada: **Bulgu 2** — çözülmemiş `IMPORTS` (21 modül / 58 site; `GPRS-Charging-Extensions` importunun bu veri setindeki karşılığına karar verilmeli) ve **Bulgu 3** — EMM'in beklediği kök tipin modül başına kaydı (`TurkcellImsOmm→PostCcnCdr`, `TAP-0309/TAP0309→CallEventDetail`; `LTE-R10→pGWRecord`, `IMSCDRS→TokensCSCF`, `CHF→ChargingRecord` bugün yalnızca test/istek düzeyinde biliniyor). Ardından 15. tur: bu altı dosya + `IMS-R8-2009-03`.
 2. **Yanıt gelince — değer üretimindeki iki kusur:** (A) kural eşleşmesini tip-duyarlı yapmak, (B) desen SIZE'a sığmayınca kırpmak yerine alana uygun değer üretmek. Ölçümü `emm-validation-log.md` §9b'de; ikisi de üretilen baytları değiştirir.
 3. **TBCD locale düzeltmesinin gözden geçirilmesi:** kendi commit'inde duruyor, tek `git revert` ile geri alınabilir. 126 alan / 60 modülde abone-numarası baytları değişti.
 4. **Duplicate Tag Modülleri:** 17 strict-fail modüldeki ambiguous şema tanımlarının iş birimiyle görüşülerek ASN.1 şemalarında düzeltilmesi veya yoksayılması.
