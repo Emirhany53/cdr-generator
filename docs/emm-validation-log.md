@@ -29,6 +29,13 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `FDRInput` | BER | Tip-seviyesi `[APPLICATION 1]` **IMPLICIT** — `61 2D 42 12 …` kabul edildi |
 | `Audit_Record_Collection_St` | BER | Tip-seviyesi `[APPLICATION 21]` **IMPLICIT** — `75 40 16 08 …` kabul edildi |
 | `CGSN40ber` (qos ikilisi) | BER | **OCTET STRING semantiği çözüldü** — aşağıya bak |
+| `ConvergenceCdr` | BER | `IMPLICIT TAGS`'te **çıplak SEQUENCE kökü** (14. tur) |
+| `NRTRDEInValidationLookup` | BER | tip-seviyesi `[APPLICATION]` + SEQUENCE OF (14. tur) |
+| `CME20R12TurkCellber` | BER | U modunda `[APPLICATION]` + SET birlikte, 74 çok-baytlı tag (14. tur) |
+| `GPRS-Charging-Extensions-Tr` | BER | **kök SET** + CHOICE üzerinde yazılı `EXPLICIT` (14. tur) |
+| `EMM-IMS-Specific` | BER | minimal kök SET (14. tur) |
+| `CDRDatamartCCNDMM` | BER | 171 çok-baytlı tag, düz yapı (14. tur) |
+| `FCMSMSC` | BER | düz SEQUENCE kökünde CHOICE + SET (14. tur) |
 
 ## 2. EMM ile kanıtlanan tagging kuralları
 
@@ -38,9 +45,11 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 4. Başlığı `IMPLICIT TAGS` demeyen modülde **alan** tag'i → **IMPLICIT**
 5. Başlığı `IMPLICIT TAGS` demeyen modülde **tip** tag'i de → **IMPLICIT** (9. tur, commit `f5ce531`)
 6. Başlığı `IMPLICIT TAGS` demeyen modülde, **yazılı keyword taşımayan** bir tag CHOICE tipli alandaysa → **IMPLICIT** (13. tur, commit `e940f0c`). X.680 8.3'ün istisnası.
+7. **Yazılı `EXPLICIT` keyword'ü yalnızca CHOICE tipli alanda sarmalayıcı üretir.** SEQUENCE / SET / primitive hedeflerde bağlam tag'i universal tag'in yerine geçer — modülün soyundan bağımsız (14. tur, commit `2006841`). 2. ve 3. kural bunun iki özel hâliymiş.
 
-Hepsini tek cümle açıklıyor: **CHOICE dışında her şey IMPLICIT.** CHOICE'ta
-X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
+Hepsini tek cümle açıklıyor: **CHOICE dışında her şey IMPLICIT — yazılı keyword
+dahil.** CHOICE'ta X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten
+aynı baytı üretir.
 
 ## 3. Tur tur kronoloji
 
@@ -59,7 +68,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 11 | CHF: explicit-kept, explicit-collapsed, nfci-minimal | 3 red — ama üçü de bilgi verdi (aşağıda) |
 | 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
 | 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
-| 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **YANIT BEKLENİYOR** |
+| 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **7 PASS · 6 red · 1 koşulamadı** (17.08.2026) |
 
 ### 7. turda gönderilen dosyalar
 
@@ -201,6 +210,151 @@ Ayrıca `TAP-0309`'da kodlamadan bağımsız bir **veri** riski var: şemadaki
 `auditControlInfo` içinde `callEventDetailsCount`, `earliestCallTimeStamp`,
 `totalChargeValueList` gibi **kayıtlarla tutarlı olması gereken** alanlar var,
 üretici bunları rastgele dolduruyor. TAP reddedilirse önce buraya bakılmalı.
+
+#### ✅ 14. tur sonucu (17.08.2026) — 7 PASS, 6 red, 1 koşulamadı
+
+Beklenti 6 PASS'ti, 7 geldi. Ama asıl bilgi dağılımda: **tahmin edilen sıra
+tutmadı.** En düşük olasılık verilen üçü geçti (`EMM-IMS-Specific` %20,
+`NRTRDEInValidationLookup` %25, `GPRS-Charging-Extensions-Tr` %35), en yüksek
+verilen ikisi düştü (`CCNCS55_UpdatedCCR_CCN` %70, `TurkcellImsOmm` %55).
+Tahminlerin çoğu "yönlendirme" ekseninden korkuyordu; gerçekte o eksen
+beklenenden iyi, kodlama ekseninde ise iki gerçek kusur çıktı.
+
+| dosya | sonuç | EMM'in beklediği kök | not |
+|---|---|---|---|
+| `ConvergenceCdr` | ✅ PASS | — | `IMPLICIT TAGS`'te çıplak SEQUENCE kökü **kanıtlandı** (18 modül) |
+| `NRTRDEInValidationLookup` | ✅ PASS | — | tip-seviyesi `[APPLICATION]` + SEQUENCE OF (15 modül) |
+| `CME20R12TurkCellber` | ✅ PASS | — | U modunda `[APPLICATION]` + SET, 74 çok-baytlı tag (14 modül) |
+| `GPRS-Charging-Extensions-Tr` | ✅ PASS | — | **kök SET kanıtlandı** + yazılı `EXPLICIT` (CHOICE üzerinde) (3 modül) |
+| `EMM-IMS-Specific` | ✅ PASS | — | minimal kök SET, 8'in kontrolü (2 modül) |
+| `CDRDatamartCCNDMM` | ✅ PASS | — | 171 çok-baytlı tag (1 modül) |
+| `FCMSMSC` | ✅ PASS | — | düz SEQUENCE kökünde CHOICE + SET (1 modül) |
+| `IMS-R8-2009-03` | ⏸ koşulamadı | — | EMM'de akış yok; yeniden gönderilecek |
+| `EnrichedVerazCdr` | ❌ | `EnrichedVerazCdr.CDR` | `Invalid length 28133` @ `redirectingInformationSubs` |
+| `CCNCS55_UpdatedCCR_CCN` | ❌ | `...ChargingDataOutputRecord` ✓ | `Invalid length 38` @ `sCFPDPRecord.ggsnAddressUsed` |
+| `GSN50` | ❌ | `GSN50.CallEventRecord` ✓ | `Invalid length 8` @ `recordExtensions.[0].information` |
+| `TurkcellImsOmm` | ❌ | **`TurkcellImsOmm.PostCcnCdr`** | `Invalid length 484` = tam dosya boyutu |
+| `TAP-0309` | ❌ | **`TAP-0309.CallEventDetail`** | `CallEventDetail was probably not set` |
+| `TAP0309` | ❌ | **`TAP0309.CallEventDetail`** | aynı |
+
+Altı reddin **hiçbiri** tagging kurallarımızı çürütmüyor. Üçü kök tip seçimi,
+ikisi tek bir kodlama kuralı, biri çözülmemiş bir `IMPORTS`.
+
+##### 🔴 Bulgu 1 — yazılı `EXPLICIT`'i tip belirler, soy değil (DÜZELTİLDİ)
+
+İki red aynı şekli gösteriyor. Şemalar:
+
+```
+CCNCS55:      ggsnAddressUsed            [1]   EXPLICIT GSNAddress
+              GSNAddress ::= IPBinaryAddress ::= SEQUENCE { [0] .., [1] .. }
+EnrichedVeraz: redirectingInformationSubs [166] EXPLICIT RedirectingInformation
+              RedirectingInformation ::= SEQUENCE { [1] .., [2] .., .. }
+```
+
+Gönderdiğimiz baytlar (bugün yeniden üretilip TLV olarak okundu):
+
+```
+A1 1A  30 18  80 04 ..  81 10 ..          <- fazladan 30 18
+BF 81 26 81 83  30 81 80  81 18 ..        <- fazladan 30 81 80
+```
+
+Bağlam tag'i ile alanların arasında **fazladan bir universal SEQUENCE** var.
+EMM ikisini de tam o alanda reddetti.
+
+**Kontrol aynı turun içinde:** yazılı `EXPLICIT` taşıyıp **geçen** her modülde
+keyword bir **CHOICE**'un üzerinde — `GPRS-Charging-Extensions-Tr`
+(`[0] EXPLICIT ExtendedDiagnostics`, `[1] EXPLICIT IPAddress`, ikisi de CHOICE)
+ve 12. turdan `CHFChargingDataTypes16` (`[2] EXPLICIT IPAddress`). Bir tek kabul
+bile CHOICE dışı bir sarmalayıcıya dayanmıyor.
+
+| modül | sonuç | başlık | yazılı EXPLICIT nerede |
+|---|---|---|---|
+| `GPRS-Charging-Extensions-Tr` | PASS | IMPLICIT | CHOICE (3 alan) |
+| `CHFChargingDataTypes16` | PASS (12. tur) | UNSPECIFIED | CHOICE |
+| `CCNCS55_UpdatedCCR_CCN` | **FAIL** | UNSPECIFIED | **SEQUENCE** |
+| `EnrichedVerazCdr` | **FAIL** | UNSPECIFIED | **SEQUENCE** |
+
+Yani nötrleştirmeyi soya bağlayan kapı (`isVerifiedExplicitNeutralizationFamily`)
+yanlış yerdeydi; kararı veren **hedef tipin CHOICE olup olmadığı**. Kapı
+kaldırıldı (commit `2006841`). Başlığında açıkça `EXPLICIT TAGS` yazan modül
+dokunulmadan bırakıldı — veri setinde öyle modül yok ve hiçbir ölçüm oraya
+değmiyor.
+
+**Ölçülen etki:** 808 modüllük denetimde **2 modül / 5 alan**; `vErrors` 45 ve
+`vWarnings` 229 değişmedi, 497 test geçiyor. Düzeltilmiş baytlar:
+`A1 18 80 04 .. 81 10 ..` ve `BF 81 26 81 80 81 18 ..`.
+
+Bu, tek cümlelik kuralı bir kez daha doğruluyor ve son boşluğunu kapatıyor:
+**CHOICE dışında her şey IMPLICIT — yazılı keyword dahil.** 2. kural
+(`[n] EXPLICIT <SET>` → sarmalayıcı yok) ve 3. kural (`[n] EXPLICIT <BOOLEAN>`
+→ primitive) zaten bunun iki özel hâliymiş; şimdi ikisi de aynı tek kuraldan
+çıkıyor.
+
+##### 🟠 Bulgu 2 — çözülmemiş `IMPORTS` opak bir primitive olarak yazılıyor
+
+`GSN50`:
+
+```
+recordExtensions [23] ManagementExtensions OPTIONAL
+ManagementExtensions ::= SET OF ManagementExtension
+ManagementExtension ::= SEQUENCE {
+    identifier   [UNIVERSAL 6] OCTET STRING,
+    significance [1] BOOLEAN DEFAULT TRUE,
+    information  [2] GprsCdrExtensions OPTIONAL }
+
+IMPORTS GprsCdrExtensions FROM GPRS-Charging-Extensions { .. ericsson .. }
+```
+
+`GprsCdrExtensions` bu modülde tanımlı değil, **IMPORT edilmiş**. Çözemediğimiz
+için alanı 8 baytlık düz bir değer olarak yazıyoruz — `82 08 4F 58 4E 51 ..` —
+ve EMM `Invalid length 8` diyor: onun şemasında orası yapısal bir tip.
+
+İki iyi haber aynı baytlarda: EMM `recordExtensions.[0].information` diye
+**yol vererek** hata verdi, yani `[23]`'ün `SET OF` kodlamasını ve
+`ManagementExtension` elemanını doğru çözdü. Ayrıca `identifier`'ı geçti —
+`[UNIVERSAL 6]` override okumamız (X.690 8.19.1, `594faad`) çalışıyor.
+
+**Kapsam:** 21 modül / 58 site (`GSN50`, `GSN50X`, `HuaweiGSN50` 11'er;
+`CGSN40ber` 3; `CHAD`, `TurkcellCDRCCNCS5` gibi geçmiş modüllerde 1-2 — orada
+alan üretilmediği ya da yaprak kaldığı için sorun çıkmamış). Düzeltme
+modüller-arası tip çözümü gerektiriyor: `GPRS-Charging-Extensions` importu bu
+veri setinde muhtemelen **`GPRS-Charging-Extensions-Tr`** modülüne karşılık
+geliyor (ki o modül bu turda PASS aldı). İsim birebir tutmadığı için eşleme
+kararı gerekiyor; henüz yapılmadı.
+
+##### 🟡 Bulgu 3 — kök tip seçimi (üç dosya, kodlama kusuru değil)
+
+`LTE-R10` → `pGWRecord`, `IMSCDRS` → `TokensCSCF`, `CHF` → `ChargingRecord`
+düzeltmelerinin aynısı. Hangi tipin "kayıt" olduğu tüketen akışın kararı,
+sezgisel seçicinin değil:
+
+| modül | bizim seçtiğimiz | EMM'in beklediği | fark |
+|---|---|---|---|
+| `TurkcellImsOmm` | modül adıyla anılan kök, 46 yaprak | `PostCcnCdr`, 37 yaprak | ayrı tip |
+| `TAP-0309` | `DataInterChange` (tüm batch) | `CallEventDetail` | akış tek çağrı kaydı okuyor |
+| `TAP0309` | `DataInterChange` | `CallEventDetail` | aynı |
+
+`TAP`'in kök tipi değişince 12.08'de not edilen **`auditControlInfo` iç
+tutarlılık riski de ortadan kalkıyor** — `CallEventDetail` o bloğu hiç
+içermiyor. Üçünün EMM'in adlandırdığı kökle üretilen hâli
+`ValidationSampleTest`'e eklendi, sezgisel okumanın yanına.
+
+`EnrichedVerazCdr` için EMM `CDR` dedi; ölçüldü, sezgisel seçicinin bulduğu kök
+zaten o tip (aynı ağaç, aynı boyut) — orada kök sorunu yok, sorun Bulgu 1'di.
+
+##### Kapsamın yeni hâli
+
+| | 13.08 | 17.08 |
+|---|---|---|
+| EMM kanıtlı davranış sınıfı | 8 / 32 | **15 / 32** |
+| Kanıtlı modül | 641 (%79) | **695 (%86,7)** |
+| EMM'den geçen yapı | 12 | **19** |
+
+Kanıtsız kalan ve **sırada olan** sınıflar: `U·SEQU·-·-·-·-·Q·-` (61 modül,
+`TurkcellImsOmm`), TAP ailesi (11 modül, iki dosya), `U·CHOI·E·-·-·C·Q·-`
+(5, `CCNCS55`), `U·CHOI·E·-·-·C·Q·S` (3, `GSN50`), `I·CHOI·-·-·N·C·Q·S`
+(2, `IMS-R8`), `U·SEQU·E·-·-·-·-·-` (1, `EnrichedVerazCdr`) — toplam 83 modül.
+15. tur bu altısını yeniden gönderirse kanıtlı oran **%97**'ye çıkar.
 
 #### ⚠️ Gönderilen baytlar yeniden üretilemez
 
