@@ -290,7 +290,7 @@ Bu, tek cümlelik kuralı bir kez daha doğruluyor ve son boşluğunu kapatıyor
 → primitive) zaten bunun iki özel hâliymiş; şimdi ikisi de aynı tek kuraldan
 çıkıyor.
 
-##### 🟠 Bulgu 2 — çözülmemiş `IMPORTS` opak bir primitive olarak yazılıyor
+##### 🟠 Bulgu 2 — çözülmemiş `IMPORTS` opak bir primitive olarak yazılıyor (DÜZELTİLDİ, `3f20dd7`)
 
 `GSN50`:
 
@@ -314,15 +314,53 @@ ve EMM `Invalid length 8` diyor: onun şemasında orası yapısal bir tip.
 `ManagementExtension` elemanını doğru çözdü. Ayrıca `identifier`'ı geçti —
 `[UNIVERSAL 6]` override okumamız (X.690 8.19.1, `594faad`) çalışıyor.
 
-**Kapsam:** 21 modül / 58 site (`GSN50`, `GSN50X`, `HuaweiGSN50` 11'er;
-`CGSN40ber` 3; `CHAD`, `TurkcellCDRCCNCS5` gibi geçmiş modüllerde 1-2 — orada
-alan üretilmediği ya da yaprak kaldığı için sorun çıkmamış). Düzeltme
-modüller-arası tip çözümü gerektiriyor: `GPRS-Charging-Extensions` importu bu
-veri setinde muhtemelen **`GPRS-Charging-Extensions-Tr`** modülüne karşılık
-geliyor (ki o modül bu turda PASS aldı). İsim birebir tutmadığı için eşleme
-kararı gerekiyor; henüz yapılmadı.
+**Kök neden:** `IMPORTS` yan tümcesi hiç okunmuyordu. `buildRegistry` tek bir
+modülün metnini alıyor; modül sınırını aşan referansın karşılığı registry'de
+yok, alan çocuksuz kalıyor ve kodlayıcı yaprak yazıyor. Özel bir GSN50 kusuru
+değil, genel bir eksik.
 
-##### 🟡 Bulgu 3 — kök tip seçimi (üç dosya, kodlama kusuru değil)
+**Eşleme tahmin gerektirmedi.** Ölçüldü: **17 modül** `IMPORTS` bildiriyor,
+**7 farklı** kaynak modül adı geçiyor ve yedisi de veri setinde **tam o adla**,
+sembolü tanımlı hâlde mevcut. `GSN50` özelinde import `GPRS-Charging-Extensions`
+diyor ve o modül `GprsCdrExtensions ::= SET { ... }` tanımlayıp `EXPORTS` ile
+dışa veriyor. Benzerliğe göre eşleme **yanlış olurdu**: üç kaynak yalnızca
+sonekle ayrılıyor (`-Tr`, `-KKTC`) ve üç ayrı ithalatçı üçünü ayrı ayrı
+adlandırıyor. Arama birebir ada göre yapılıyor.
+
+**Tagging modu ithal edilen ağaçla birlikte taşınıyor.** Import bir başlık
+sınırı geçiyor: `GSN50 DEFINITIONS ::=` mod söylemiyor,
+`GPRS-Charging-Extensions DEFINITIONS IMPLICIT TAGS ::=` söylüyor. İki okuma
+sıradan bağlam tag'inde aynı sonucu veriyor, tek bir yerde ayrılıyor —
+keyword'süz tag'in CHOICE tipli alanda olması (13. turun kuralı vs X.680 8.3).
+`SDPCCR` ve `CreditControlDataTypes_EC22`'de bu türden **8'er site** var ve her
+iki modülün de ithalatçıları mod söylemeyen modüller, yani fark ölçülebilir.
+Bu yüzden kopyalanan her tanım, kendi modülünün modunu taşıyor
+(`AsnTypeDefinition.taggingMode`).
+
+**Sonuç — `information [2]` artık gerçek yapısıyla üretiliyor:**
+
+```
+B7 82 04 1F                      recordExtensions [23]  (SET OF, IMPLICIT)
+  30 82 04 1B                    ManagementExtension
+    06 08 ..                     identifier [UNIVERSAL 6]   <- override calisiyor
+    81 01 00                     significance [1]
+    A2 82 04 0A                  information [2] GprsCdrExtensions (SET, IMPLICIT)
+      A0 04 { 80 02 .. }         extendedDiagnostics [0] EXPLICIT <CHOICE>  <- sarmalayici KORUNDU
+      A1 82 01 B7 { 30 81 E0 .. } chargingContainers [1] SEQUENCE OF
+```
+
+Yazılı `EXPLICIT` bir CHOICE'un üzerinde olduğu için 7. kural gereği sarmalayıcı
+duruyor; koleksiyon ve SET tag'leri universal tag'in yerine geçiyor.
+`GSN50` 222 bayt / 49 yapraktan **1609 bayt / 135 yaprağa** çıktı.
+
+**Kapsam:** import kapatması 7 modülün baytlarını değiştirdi — `GSN50`,
+`GSN50X`, `HuaweiGSN50`, `GGSNJ2040R6ber`, `IMSChargingDataTypes`,
+`AIMSChargingDataTypes`, `ATS`. Diğer 10 ithalatçıda (`CGSN40ber`, `CHAD`,
+`TurkcellCDRCCNCS5`, `OCC4_12`, `CCN_EC22` …) ithal edilen tip seçilen CHOICE
+alternatifinin dışında kaldığı için üretilen ağaca girmiyor; **EMM'den geçmiş
+hiçbir dosyanın baytı bu yüzden değişmedi.**
+
+##### 🟡 Bulgu 3 — kök tip seçimi (üç dosya, kodlama kusuru değil) (DÜZELTİLDİ, `3f20dd7`)
 
 `LTE-R10` → `pGWRecord`, `IMSCDRS` → `TokensCSCF`, `CHF` → `ChargingRecord`
 düzeltmelerinin aynısı. Hangi tipin "kayıt" olduğu tüketen akışın kararı,
@@ -341,6 +379,34 @@ içermiyor. Üçünün EMM'in adlandırdığı kökle üretilen hâli
 
 `EnrichedVerazCdr` için EMM `CDR` dedi; ölçüldü, sezgisel seçicinin bulduğu kök
 zaten o tip (aynı ağaç, aynı boyut) — orada kök sorunu yok, sorun Bulgu 1'di.
+
+**Bilgi artık kalıcı: `src/main/resources/emm-record-bindings.yml`.** Bu beş
+eşleşme biliniyordu ama hiçbir yerde yazılı değildi; her çağıran ya hatırlıyordu
+ya hatırlamıyordu, aynı sınıftan red bu yüzden tekrar tekrar geldi. Dosya
+şemaların yanında duruyor, her satır hangi turdan geldiğini söylüyor ve
+`StructureParserService` üzerinden **API, arayüz ve doğrulama örnekleri aynı
+yoldan** okuyor. Çağıranın açıkça verdiği `rootType` hâlâ kazanıyor — bir soruyu
+EMM'e sormanın yolu o.
+
+| modül | bağlanan | tür |
+|---|---|---|
+| `IMSCDRS` | `TokensCSCF` | kayıt tipi |
+| `CHFChargingDataTypes16` | `ChargingRecord` | kayıt tipi |
+| `TurkcellImsOmm` | `PostCcnCdr` | kayıt tipi |
+| `TAP-0309` / `TAP0309` | `CallEventDetail` | kayıt tipi |
+| `LTE-R10` | `CallEventRecord` → `pGWRecord` | **CHOICE alternatifi** |
+
+`LTE-R10` ayrı tür çünkü `pGWRecord [79]` bir tip değil, `CallEventRecord`
+CHOICE'unun alternatifi. Kayıt tipi olarak yazılsaydı registry'de karşılığı
+bulunamayıp sessizce düşerdi ve 4. turu geçiren dosya üretilmeyi bırakırdı;
+seçim olarak yazılınca örnek çıktının başı `BF 4E` (sGWRecord) yerine
+**`BF 4F`** (pGWRecord) oluyor.
+
+**Ölçülen etki (tüm oturum, 808 modül):** 15 modülün baytı değişti — 7'si import
+çözümünden, 5'i bağlanan kök tipten, 2'si Bulgu 1'den, 1'i (`CHF`) iç içe bir
+EXPLICIT sitesinden 2 bayt. **`MMTelChargingDataTypes` değişmedi** — referans
+yakalamayla doğrulanan tek modül yerinde duruyor. `vErrors` 45 / `vWarnings` 229
+sabit, 514 test geçiyor.
 
 ##### Kapsamın yeni hâli
 
