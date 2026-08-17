@@ -69,6 +69,7 @@ aynı baytı üretir.
 | 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
 | 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
 | 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **7 PASS · 6 red · 1 koşulamadı** (17.08.2026) |
+| 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | YANIT BEKLENİYOR |
 
 ### 7. turda gönderilen dosyalar
 
@@ -433,6 +434,64 @@ değerlerini değiştirdi. **Yukarıdaki SHA-256 listesi EMM'in elindeki baytlar
 tek kaydıdır.** Bir dosya reddedilirse teşhis bayt karşılaştırmasıyla değil,
 şema/kural düzeyinde yapılacak; gerekirse aynı sınıf yeniden üretilip yeni
 SHA ile gönderilecek.
+
+### 15. turda gönderilen dosyalar
+
+Sorumluya **17.08.2026**'da gönderildi. 14. turun altı reddi, düzeltmeler
+uygulandıktan sonra yeniden üretildi; artı EMM'de akış bulunamadığı için
+koşulamayan `IMS-R8-2009-03`. Yeni bir soru sorulmuyor — bu tur **14. turun
+üç bulgusunun düzeltildiğini** sınıyor.
+
+SHA'lar **gönderimden önce** yazıldı (14. turun dersi: dosyalar `target/`
+altında kalıp `mvn clean` ile silinmişti ve üretici tohumsuz olduğu için
+yeniden üretilemiyorlar).
+
+| # | dosya | bayt | TLV | derin | kök | SHA-256 |
+|---|---|---|---|---|---|---|
+| 1 | `TurkcellImsOmm.ber` | 446 | 38 | 1 | `PostCcnCdr` | `446fb98456d0e723e3e6f83e974ee5baf7e6e88feab18a005ba153d8b900fd65` |
+| 2 | `TAP-0309.ber` | 3019 | 423 | 8 | `CallEventDetail` | `414caded90dd195ef77f8fb5cbd880dc845a117bd759792d0e1044fd2e1fae63` |
+| 3 | `TAP0309.ber` | 2663 | 367 | 8 | `CallEventDetail` | `4284a416ccc3c161f8a213a3ba77f24cca0c6f7887545102a6eefb1515166977` |
+| 4 | `EnrichedVerazCdr.ber` | 29.444 | 199 | 2 | `CDR` | `f8e8084f36f8b819d09c59d059952f0c3b0ca8aed7887611523fe8fd602a7fd2` |
+| 5 | `CCNCS55_UpdatedCCR_CCN.ber` | 486 | 71 | 4 | `ChargingDataOutputRecord` | `de7a6171a99edcf4877a19d55e4026bdb3da1972de99e1ada0d16756e6907a25` |
+| 6 | `GSN50.ber` | 2230 | 375 | 10 | `CallEventRecord` | `01058bb5276c09f4472b9fa2db0bfac0027cd907f96b6b2c717bb180936302fd` |
+| 7 | `IMS-R8-2009-03.ber` | 2343 | 281 | 6 | `IMSRecord` | `0768b9ec9ce388c14e6158d8afdf1c6c751f94dfa46d230c7a5e10f74ab63d84` |
+
+Yedisi de self-check'ten **0 hata / 0 uyarı** ile geçti ve TLV bütünlüğü
+doğrulandı (taşma yok). Yedisi de `ValidationSampleTest`'te kayıtlı, yani
+`target/validation/` altında her koşuda üretiliyorlar — ama **aynı baytlarla
+değil**, üretici tohumsuz.
+
+#### Her dosya neyi sınıyor
+
+| # | dosya | 14. turdaki hata | uygulanan düzeltme |
+|---|---|---|---|
+| 1 | `TurkcellImsOmm` | `Invalid length 484` (tam dosya boyutu) | kök tip `PostCcnCdr`'a bağlandı (`3f20dd7`) |
+| 2 | `TAP-0309` | `CallEventDetail was probably not set` | kök tip `CallEventDetail`'e bağlandı |
+| 3 | `TAP0309` | aynı | aynı |
+| 4 | `EnrichedVerazCdr` | `Invalid length 28133` @ `redirectingInformationSubs` | yazılı `EXPLICIT` nötrleştirildi (`2006841`) |
+| 5 | `CCNCS55_UpdatedCCR_CCN` | `Invalid length 38` @ `sCFPDPRecord.ggsnAddressUsed` | aynı kural |
+| 6 | `GSN50` | `Invalid length 8` @ `recordExtensions.[0].information` | `IMPORTS` corpus'a karşı çözüldü (`3f20dd7`) |
+| 7 | `IMS-R8-2009-03` | koşulamadı (akış yok) | değişiklik yok; akış sorusu |
+
+#### Beklenti — gönderimden önce yazıldı
+
+| # | dosya | tahmin | dayanak / kalan risk |
+|---|---|---|---|
+| 1 | `TurkcellImsOmm` | **~%85** | `PostCcnCdr` 37 düz IA5String alan, `IMSCDRS.TokensCSCF`'in (34 düz alan, aynı başlık sınıfı, PASS) birebir ikizi. EMM tipi kendi adlandırdı, yani akış var ve o tipe bağlı. |
+| 2 | `TAP-0309` | **~%60** | Kök artık EMM'in adlandırdığı tip ve `auditControlInfo` tutarlılık riski bu tiple ortadan kalktı. Risk: TAP ailesi hiç geçmedi, 8 seviye derinlik, `CallEventDetail` bir CHOICE — ilk alternatifi (`mobileOriginatedCall`) seçiyoruz, akış başkasını bekliyor olabilir. |
+| 3 | `TAP0309` | **~%55** | 2 ile aynı, artı başlığı mod söylemiyor: 4-7. kurallara dayanıyor. |
+| 4 | `EnrichedVerazCdr` | **~%75** | EMM 29.456 baytın **27.997'sini çözmüştü**, yani ondan önceki ~180 alan doğruydu; düşen tek site düzeltildi ve modülde bu türden yalnızca 4 site var. Risk: 29 KB boyut. |
+| 5 | `CCNCS55_UpdatedCCR_CCN` | **~%70** | Soy kanıtlı (`CHAD`, `TurkcellCDRCCNCS5` PASS) ve düşen site düzeltildi. Risk: EMM kaydın **ikinci alanında** durmuştu, yani kalan 50 yaprak hakkında dış kanıt yok. |
+| 6 | `GSN50` | **~%55** | Düşen alan artık gerçek `GprsCdrExtensions ::= SET` yapısıyla çıkıyor; EMM `identifier [UNIVERSAL 6]`'yı ve `SET OF` sarmalayıcısını zaten doğru çözmüştü. Risk: ithal edilen alt ağaç **86 yeni yaprak** getiriyor ve o yüzey EMM tarafından hiç görülmedi. |
+| 7 | `IMS-R8-2009-03` | **akışa bağlı** | Kodlama tarafı düşük riskli (MMTel/IMS soyu en iyi kanıtlanmış aile, yazılı `EXPLICIT` yok). Tek soru EMM'de bu tip için çözücü tanımlı mı. |
+
+**Beklenti: 7'den ~4-5 PASS.**
+
+⚠️ **Bir PASS'ın kapsamadığı şey.** `TurkcellImsOmm` geçerse 61 modüllük
+`U·SEQU·-·-·-·-·Q·-` sınıfı **tam kapanmaz**: sınıfın ayırt edici özelliği
+keyword'süz düz SEQUENCE kökünde **SEQUENCE OF** bulunması, ama `PostCcnCdr`'da
+hiç koleksiyon yok (37 alanın hepsi IA5String). Koleksiyon sorusu bu turda da
+sınanmıyor; kapatmak için aynı sınıftan koleksiyon taşıyan bir kök gerekiyor.
 
 ### IMSCDRS'in çözülmesi — altı turluk eleme
 
