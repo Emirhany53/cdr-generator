@@ -273,13 +273,22 @@ public class AsnFieldTreeResolver {
         Set<String> nextVisiting = new HashSet<>(visiting);
         nextVisiting.add(typeName);
 
+        // An imported definition was written under its own module's header, so
+        // its body is read under that header's mode rather than the importing
+        // module's. See AsnTypeDefinition.taggingMode; null for every locally
+        // declared type, which is the whole registry until an IMPORTS clause is
+        // closed against a corpus.
+        AsnTaggingMode declaringMode = Objects.nonNull(definition.getTaggingMode())
+                ? definition.getTaggingMode()
+                : taggingMode;
+
         List<AsnField> result = switch (definition.getKind()) {
             case ENUMERATED -> List.of();
-            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache, taggingMode);
-            case SEQUENCE -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+            case ALIAS -> resolveAlias(registry, definition, choiceSelections, nextVisiting, depth, cache, declaringMode);
+            case SEQUENCE -> parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, declaringMode);
             case SET -> sortSetComponents(
-                    parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode));
-            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, taggingMode);
+                    parseFieldLines(registry, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, declaringMode));
+            case CHOICE -> resolveChoiceAlternative(registry, typeName, definition.getRawBody(), choiceSelections, nextVisiting, depth, cache, declaringMode);
         };
 
         cache.put(cacheKey, result);

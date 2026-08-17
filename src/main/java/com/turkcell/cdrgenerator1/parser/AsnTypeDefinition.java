@@ -26,4 +26,21 @@ public class AsnTypeDefinition {
      * element under them was flattened the same way.</p>
      */
     private String tagPrefix;
+
+    /**
+     * The tagging mode of the module this type was DECLARED in, set only when
+     * that is not the module being resolved - i.e. on a definition pulled in
+     * through an {@code IMPORTS} clause. Null means "the module being resolved",
+     * which is every locally declared type.
+     *
+     * <p>An import crosses a header. {@code GSN50 DEFINITIONS ::=} names no
+     * mode; {@code GPRS-Charging-Extensions DEFINITIONS IMPLICIT TAGS ::=} names
+     * one, and the types it exports were written under it. The two headers agree
+     * about an ordinary context tag - both make it IMPLICIT - and differ in one
+     * place: a tag carrying no written keyword on a CHOICE-typed field, which
+     * round 13 measured as IMPLICIT for a mode-less header while X.680 8.3 keeps
+     * it EXPLICIT under a declared one. Carrying the mode with the definition is
+     * what keeps the imported subtree encoded the way its own module says.</p>
+     */
+    private AsnTaggingMode taggingMode;
 }

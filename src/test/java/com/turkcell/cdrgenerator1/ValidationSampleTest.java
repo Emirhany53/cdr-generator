@@ -3,6 +3,7 @@ package com.turkcell.cdrgenerator1;
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.AiConfigProperties;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
+import com.turkcell.cdrgenerator1.config.EmmRecordBindings;
 import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
 import com.turkcell.cdrgenerator1.generator.BcdTimestampFactory;
 import com.turkcell.cdrgenerator1.generator.CdrRecordBuilder;
@@ -151,18 +152,19 @@ class ValidationSampleTest {
             new Sample("FCMSMSC"),
             // Sent in round 14, not run: EMM had no flow for it that day.
             new Sample("IMS-R8-2009-03"),
-            // Round 14 rejected these four for naming the wrong record type -
+            // Round 14 rejected these three for naming the wrong record type -
             // the same correction LTE-R10 (pGWRecord), IMSCDRS (TokensCSCF) and
-            // CHF (ChargingRecord) each needed. The type EMM named is kept
-            // beside the heuristic's reading, not instead of it, so the next
-            // round can show which one the flow decodes.
+            // CHF (ChargingRecord) each needed. No rootType is passed here:
+            // emm-record-bindings.yml now carries what EMM named, so these
+            // resolve to PostCcnCdr and CallEventDetail through the same path
+            // the API and the UI use. Passing it here as well would prove only
+            // that this test can pass an argument.
             new Sample("TurkcellImsOmm"),
-            new Sample("TurkcellImsOmm", "PostCcnCdr", "TurkcellImsOmm-PostCcnCdr"),
-            new Sample("TAP-0309", "CallEventDetail", "TAP-0309-CallEventDetail"),
             new Sample("TAP0309"),
-            new Sample("TAP0309", "CallEventDetail", "TAP0309-CallEventDetail"),
+            // EMM named EnrichedVerazCdr.CDR and the heuristic already picks CDR
+            // - the module declares one record - so there is nothing to bind.
+            // Round 14 refused it at a field, which 2006841 fixed.
             new Sample("EnrichedVerazCdr"),
-            new Sample("EnrichedVerazCdr", "CDR", "EnrichedVerazCdr-CDR"),
             // Round 14 rejected these two at a field, with the root type EMM
             // named matching the one we encoded. Both are real encoding
             // findings: a written EXPLICIT keyword in a header-less module
@@ -252,10 +254,16 @@ class ValidationSampleTest {
                     : structure.isChoiceRoot() ? "CHOICE alternative"
                     : structure.isSetRoot() ? "universal SET" : "universal SEQUENCE";
 
+            // The bound type is consulted for the label too: a module EMM has
+            // answered for is encoded as the type EMM named, and a manifest
+            // reporting the module name beside that type's leaves would be
+            // describing a file nobody generated.
+            String boundRecordType = EmmRecordBindings.shipped().recordTypeFor(sample.module());
             manifest.add(String.join("\t", name,
                     structure.isChoiceRoot() && structure.getChoiceTypeName() != null
                             ? structure.getChoiceTypeName()
-                            : sample.rootType() != null ? sample.rootType() : structure.getStructureName(),
+                            : sample.rootType() != null ? sample.rootType()
+                            : boundRecordType != null ? boundRecordType : structure.getStructureName(),
                     rootShape,
                     taggingMode(sample.module()),
                     String.valueOf(bytes.length),

@@ -43,6 +43,65 @@ public class AsnTypeRegistryBuilder {
      */
     public static final String SYNTHETIC_NAME_SEPARATOR = "$";
 
+    /** The whole {@code IMPORTS ... ;} clause of a module header, when it has one. */
+    private static final Pattern IMPORTS_BLOCK = Pattern.compile("\\bIMPORTS\\b(.*?);", Pattern.DOTALL);
+
+    /**
+     * One {@code FROM ModuleName} inside an IMPORTS clause, with the object
+     * identifier that may follow it. The OID is matched so it can be skipped:
+     * its {@code itu-t (0) identified-organization (4)} tokens sit exactly where
+     * the next clause's symbol list starts, and reading them as symbols would
+     * invent imports the module never declared.
+     */
+    private static final Pattern IMPORTS_FROM = Pattern.compile(
+            "\\bFROM\\s+([A-Za-z][\\w-]*)\\s*(\\{[^}]*\\})?");
+
+    /** A bare type reference - what an imported symbol looks like. */
+    private static final Pattern SYMBOL_NAME = Pattern.compile("[A-Za-z][\\w-]*");
+
+    /**
+     * The symbols this module imports, mapped to the module each comes from.
+     *
+     * <p>Reading it is what lets a caller that holds more than one module close
+     * the reference. Without it a type like {@code GSN50}'s
+     * {@code information [2] GprsCdrExtensions} resolves to nothing, the field
+     * ends up childless, and the encoder writes a leaf value where a structured
+     * type belongs - which is how {@code 82 08 4F 58 4E 51 ..} reached EMM and
+     * came back as {@code Invalid length 8}.</p>
+     *
+     * <p>Only the name is read. Resolving it against a corpus is the caller's
+     * job ({@code StructureParserService}), because this class sees one module's
+     * text and nothing else.</p>
+     */
+    public Map<String, String> readImports(String contents) {
+        Map<String, String> imports = new LinkedHashMap<>();
+        if (contents == null || contents.isBlank()) {
+            return imports;
+        }
+        Matcher block = IMPORTS_BLOCK.matcher(stripLineComments(contents));
+        while (block.find()) {
+            String body = block.group(1);
+            Matcher from = IMPORTS_FROM.matcher(body);
+            int symbolsStart = 0;
+            while (from.find()) {
+                for (String symbol : readSymbols(body.substring(symbolsStart, from.start()))) {
+                    imports.putIfAbsent(symbol, from.group(1));
+                }
+                symbolsStart = from.end();
+            }
+        }
+        return imports;
+    }
+
+    private List<String> readSymbols(String text) {
+        List<String> symbols = new ArrayList<>();
+        Matcher name = SYMBOL_NAME.matcher(text);
+        while (name.find()) {
+            symbols.add(name.group());
+        }
+        return symbols;
+    }
+
     public Map<String, AsnTypeDefinition> buildRegistry(String contents) {
         Map<String, AsnTypeDefinition> registry = new LinkedHashMap<>();
         if (contents == null || contents.isBlank()) {

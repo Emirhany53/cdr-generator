@@ -234,9 +234,15 @@ class StructureParserServiceTest {
      * {@code TokensCSCF} directly, rejected it. Which type a consuming flow is
      * bound to is not written anywhere in the schema, so the caller has to be
      * able to say it.
+     *
+     * <p>Named after the shape rather than the module: the real {@code IMSCDRS}
+     * now carries a shipped binding to {@code TokensCSCF}, and these three tests
+     * are about the heuristic and the caller's override, which is what a module
+     * with no binding gets. {@code EmmRecordBindingsTest} covers the bound
+     * case.</p>
      */
     private static final String SEVERAL_TOP_TYPES = """
-            IMSCDRS DEFINITIONS ::=
+            SeveralTopTypes DEFINITIONS ::=
             BEGIN
             Cdrs ::= CHOICE {
                 tokenMTAS [0] TokensMTAS,
@@ -252,7 +258,7 @@ class StructureParserServiceTest {
 
     @Test
     void withoutAnOverrideTheUnreferencedChoiceStillWins() {
-        AsnStructure structure = parser.parseFromContents("IMSCDRS", SEVERAL_TOP_TYPES);
+        AsnStructure structure = parser.parseFromContents("SeveralTopTypes", SEVERAL_TOP_TYPES);
 
         assertNotNull(structure);
         assertTrue(structure.isChoiceRoot(), "the auto-selected root must stay the Cdrs CHOICE");
@@ -262,7 +268,7 @@ class StructureParserServiceTest {
     @Test
     void aNamedRootTypeReplacesTheAutoSelectedOne() {
         AsnStructure structure = parser.parseFromContents(
-                "IMSCDRS", SEVERAL_TOP_TYPES, null, "TokensCSCF");
+                "SeveralTopTypes", SEVERAL_TOP_TYPES, null, "TokensCSCF");
 
         assertNotNull(structure);
         assertFalse(structure.isChoiceRoot(),
@@ -275,7 +281,7 @@ class StructureParserServiceTest {
     @Test
     void anUnknownRootTypeFallsBackInsteadOfFailing() {
         AsnStructure structure = parser.parseFromContents(
-                "IMSCDRS", SEVERAL_TOP_TYPES, null, "TypoedName");
+                "SeveralTopTypes", SEVERAL_TOP_TYPES, null, "TypoedName");
 
         assertNotNull(structure, "a stale override must degrade to the auto-selected root");
         assertTrue(structure.isChoiceRoot());

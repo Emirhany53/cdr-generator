@@ -2,6 +2,7 @@ package com.turkcell.cdrgenerator1;
 
 import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.config.CdrConfigProperties;
+import com.turkcell.cdrgenerator1.config.EmmRecordBindings;
 import com.turkcell.cdrgenerator1.config.SelfCheckProperties;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
@@ -160,6 +161,14 @@ class ArchitectureAuditTest {
                 root = (String) selectRoot.invoke(parser, registry, Map.of(), mode);
             } catch (ReflectiveOperationException ignored) {
                 // keep "-"
+            }
+            // A module EMM has answered for is encoded as the type EMM named,
+            // not the heuristic's pick. Reporting the pick here would put a
+            // root in the audit that no generated file carries - IMSCDRS would
+            // read "Cdrs" beside TokensCSCF's 34 leaves.
+            String boundRecordType = EmmRecordBindings.shipped().recordTypeFor(dto.getName());
+            if (boundRecordType != null && registry.containsKey(boundRecordType)) {
+                root = boundRecordType;
             }
             AsnTypeDefinition involvedParty = registry.get("InvolvedParty");
             boolean mmtelFamily = involvedParty != null && involvedParty.getKind() == AsnTypeKind.CHOICE;

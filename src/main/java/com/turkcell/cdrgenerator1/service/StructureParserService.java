@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.service;
 
+import com.turkcell.cdrgenerator1.config.EmmRecordBindings;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.CdrStructureDto;
 import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
@@ -51,6 +52,10 @@ public class StructureParserService {
     private static final Pattern SEQUENCE_OF_ALIAS = Pattern.compile(
             "^\\s*SEQUENCE\\s+OF\\s+([A-Za-z][\\w-]*)\\s*$");
 
+    /** The module name that opens an ASN.1 module header. */
+    private static final Pattern MODULE_HEADER_NAME = Pattern.compile(
+            "([A-Za-z][\\w-]*)\\s*(?:\\{[^}]*\\})?\\s*DEFINITIONS\\b");
+
     private final CdrStructureReaderService cdrStructureReaderService;
     private final AsnTypeRegistryBuilder registryBuilder;
     private final AsnFieldTreeResolver fieldTreeResolver;
@@ -59,12 +64,35 @@ public class StructureParserService {
     // Raw ASN.1 contents kept per structure so a request can re-resolve the
     // structure with a specific CHOICE selection (see getStructureByName(name, selections)).
     private final Map<String, String> rawContentsByName = new LinkedHashMap<>();
+    /**
+     * Every module's text keyed by module name, filled before the first parse so
+     * an IMPORTS clause resolves whatever order the modules arrive in. Separate
+     * from {@link #rawContentsByName}, which is keyed by the STRUCTURE name a
+     * module produced and only grows as modules parse successfully - an import
+     * has to find its source even when that source is a pure type library
+     * nobody generates records from.
+     */
+    private final Map<String, String> moduleContentsByName = new LinkedHashMap<>();
+    /**
+     * Which type EMM decodes as the record, per module. Shipped data rather than
+     * an injected dependency: it is a file that travels with the schemas, every
+     * caller needs the same copy, and reading it here is what makes the API, the
+     * UI behind it and the validation samples all encode the type EMM asked for
+     * without each having to remember it.
+     */
+    private final EmmRecordBindings recordBindings = EmmRecordBindings.shipped();
 
     @PostConstruct
     public void init() {
         log.info("Starting to parse ASN.1 structures from JSON...");
         long startedAt = System.currentTimeMillis();
         List<CdrStructureDto> rawStructures = cdrStructureReaderService.readAllStructures();
+
+        for (CdrStructureDto dto : rawStructures) {
+            if (Objects.nonNull(dto.getName()) && Objects.nonNull(dto.getContents())) {
+                moduleContentsByName.putIfAbsent(dto.getName(), dto.getContents());
+            }
+        }
 
         for (CdrStructureDto dto : rawStructures) {
             try {
@@ -140,11 +168,14 @@ public class StructureParserService {
         if (registry.isEmpty()) {
             return null;
         }
+        closeImports(registry, contents);
 
         AsnTaggingMode taggingMode = registryBuilder.detectTaggingMode(contents);
-        Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
+        String moduleName = moduleNameOf(suppliedName, contents);
+        Map<String, String> selections = applyBoundAlternatives(moduleName, choiceSelections);
 
-        String rootTypeName = resolveRootTypeName(registry, selections, taggingMode, rootType);
+        String rootTypeName =
+                resolveRootTypeName(registry, selections, taggingMode, rootType, moduleName);
         AsnFieldTreeResolver.ResolvedRoot root =
                 fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
         AsnFieldTreeResolver.ChoiceAlternatives choiceInfo =
@@ -186,7 +217,8 @@ public class StructureParserService {
     private String resolveRootTypeName(Map<String, AsnTypeDefinition> registry,
                                        Map<String, String> choiceSelections,
                                        AsnTaggingMode taggingMode,
-                                       String requestedRootType) {
+                                       String requestedRootType,
+                                       String moduleName) {
         if (Objects.nonNull(requestedRootType) && !requestedRootType.isBlank()) {
             if (registry.containsKey(requestedRootType)) {
                 log.debug("Using caller-supplied root type '{}'", requestedRootType);
@@ -195,7 +227,54 @@ public class StructureParserService {
             log.warn("Requested root type '{}' is not defined in this module; falling back to the "
                     + "auto-selected root. Known types: {}", requestedRootType, registry.keySet());
         }
+        String boundRecordType = recordBindings.recordTypeFor(moduleName);
+        if (Objects.nonNull(boundRecordType)) {
+            if (registry.containsKey(boundRecordType)) {
+                log.debug("Module '{}' is bound to record type '{}' by EMM's answer", moduleName, boundRecordType);
+                return boundRecordType;
+            }
+            log.warn("Module '{}' is bound to record type '{}', which it does not define; "
+                    + "falling back to the auto-selected root", moduleName, boundRecordType);
+        }
         return selectRootTypeName(registry, choiceSelections, taggingMode);
+    }
+
+    /**
+     * The caller's CHOICE selections over the ones EMM's answer bound to this
+     * module. The caller wins: a binding records what a flow was measured to
+     * expect, and someone deliberately asking for another alternative - to send
+     * EMM the comparison that settles a question - must still get it.
+     */
+    private Map<String, String> applyBoundAlternatives(String moduleName,
+                                                       Map<String, String> choiceSelections) {
+        Map<String, String> requested = Objects.isNull(choiceSelections) ? Map.of() : choiceSelections;
+        Map<String, String> bound = recordBindings.choiceAlternativesFor(moduleName);
+        if (bound.isEmpty()) {
+            return requested;
+        }
+        Map<String, String> merged = new LinkedHashMap<>(bound);
+        merged.putAll(requested);
+        return merged;
+    }
+
+    /**
+     * The module name to look a binding up under: what the caller registered the
+     * structure as, falling back to the name in the ASN.1 header. Both are the
+     * module name for anything read from the shipped data set; they diverge only
+     * for content posted inline under a name of the caller's choosing, where the
+     * header is the more trustworthy of the two.
+     */
+    private String moduleNameOf(String suppliedName, String contents) {
+        if (Objects.nonNull(suppliedName) && !suppliedName.isBlank()
+                && Objects.nonNull(recordBindings.recordTypeFor(suppliedName))) {
+            return suppliedName;
+        }
+        String headerName = suppliedModuleName(contents);
+        if (Objects.nonNull(recordBindings.recordTypeFor(headerName))
+                || !recordBindings.choiceAlternativesFor(headerName).isEmpty()) {
+            return headerName;
+        }
+        return Objects.nonNull(suppliedName) && !suppliedName.isBlank() ? suppliedName : headerName;
     }
 
     /**
@@ -299,6 +378,122 @@ public class StructureParserService {
 
         Matcher matcher = SEQUENCE_OF_ALIAS.matcher(aliasTarget);
         return matcher.matches() ? matcher.group(1) : null;
+    }
+
+    /**
+     * Pulls in every type this module IMPORTS, so a reference across a module
+     * boundary resolves like any other.
+     *
+     * <p>Until this ran, a registry held one module's text and nothing else. An
+     * imported name matched no definition, the field got no children, and the
+     * encoder wrote a leaf where a structured type belongs. EMM answered on
+     * exactly that: {@code GSN50}'s
+     * {@code recordExtensions.[0].information [2] GprsCdrExtensions} went out as
+     * {@code 82 08 4F 58 4E 51 ..} and came back {@code Invalid length 8}. The
+     * type is real and so is the module that exports it -
+     * {@code GPRS-Charging-Extensions} declares
+     * {@code GprsCdrExtensions ::= SET { .. }} and names it in an EXPORTS
+     * clause.</p>
+     *
+     * <p>The lookup is by exact module name, never by resemblance. Measured over
+     * the whole corpus, that is enough: 17 modules declare an IMPORTS clause,
+     * they name 7 distinct source modules, and every one of those exists under
+     * exactly that name with the imported symbol defined in it. Three of the
+     * seven differ only by a suffix - {@code GPRS-Charging-Extensions},
+     * {@code -Tr} and {@code -KKTC} - and three different importers name three
+     * different ones, so matching on similarity would silently pick the wrong
+     * variant where an exact match picks the right one.</p>
+     *
+     * <p>A symbol the module also declares itself is left alone, and a source
+     * module that is missing or does not define the symbol is logged and
+     * skipped: an unresolvable import degrades to the previous behaviour rather
+     * than failing the parse.</p>
+     */
+    private void closeImports(Map<String, AsnTypeDefinition> registry, String contents) {
+        Map<String, String> imports = registryBuilder.readImports(contents);
+        if (imports.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, String> imported : imports.entrySet()) {
+            String symbol = imported.getKey();
+            String sourceModule = imported.getValue();
+            if (registry.containsKey(symbol)) {
+                continue;
+            }
+            String sourceContents = moduleContentsByName.get(sourceModule);
+            if (Objects.isNull(sourceContents)) {
+                log.warn("Module '{}' imports '{}' from '{}', which this data set does not contain; "
+                        + "the reference stays unresolved", suppliedModuleName(contents), symbol, sourceModule);
+                continue;
+            }
+            mergeImportedType(registry, symbol, sourceModule, sourceContents);
+        }
+    }
+
+    /**
+     * Copies one imported type and everything it reaches into the importing
+     * registry, tagging each copy with the source module's tagging mode.
+     *
+     * <p>The closure is taken over the source module's own registry, so a type
+     * the export depends on comes along even when it is not itself exported -
+     * {@code GprsCdrExtensions} is the only name in
+     * {@code GPRS-Charging-Extensions}'s EXPORTS clause, and it reaches 40 of
+     * the module's 43 types. A name already present in the importing module is
+     * never overwritten: a local declaration is what that module means by it.</p>
+     */
+    private void mergeImportedType(Map<String, AsnTypeDefinition> registry, String symbol,
+                                   String sourceModule, String sourceContents) {
+        Map<String, AsnTypeDefinition> sourceRegistry = registryBuilder.buildRegistry(sourceContents);
+        if (!sourceRegistry.containsKey(symbol)) {
+            log.warn("Module '{}' does not define the imported symbol '{}'; the reference stays unresolved",
+                    sourceModule, symbol);
+            return;
+        }
+        // The source module may itself import; closing it first means a chain
+        // resolves in one pass rather than stopping at the first boundary.
+        closeImports(sourceRegistry, sourceContents);
+
+        AsnTaggingMode sourceMode = registryBuilder.detectTaggingMode(sourceContents);
+        Map<String, Set<String>> edges = buildReferenceEdges(sourceRegistry);
+
+        Set<String> toCopy = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        queue.add(symbol);
+        toCopy.add(symbol);
+        while (!queue.isEmpty()) {
+            for (String target : edges.getOrDefault(queue.poll(), Set.of())) {
+                if (toCopy.add(target)) {
+                    queue.add(target);
+                }
+            }
+        }
+
+        int copied = 0;
+        for (String name : toCopy) {
+            AsnTypeDefinition definition = sourceRegistry.get(name);
+            if (Objects.isNull(definition) || registry.containsKey(name)) {
+                continue;
+            }
+            registry.put(name, AsnTypeDefinition.builder()
+                    .typeName(definition.getTypeName())
+                    .kind(definition.getKind())
+                    .rawBody(definition.getRawBody())
+                    .aliasTarget(definition.getAliasTarget())
+                    .tagPrefix(definition.getTagPrefix())
+                    // Null on the source definition means "the module it was
+                    // declared in", which from here is the source module.
+                    .taggingMode(Objects.requireNonNullElse(definition.getTaggingMode(), sourceMode))
+                    .build());
+            copied++;
+        }
+        log.debug("Imported '{}' from '{}' ({} tagging), pulling in {} type(s)",
+                symbol, sourceModule, sourceMode, copied);
+    }
+
+    /** The module name from the header, for a log line that names the right module. */
+    private String suppliedModuleName(String contents) {
+        Matcher header = MODULE_HEADER_NAME.matcher(contents);
+        return header.find() ? header.group(1) : "<inline>";
     }
 
     /**

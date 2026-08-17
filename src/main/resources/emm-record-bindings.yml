@@ -1,0 +1,64 @@
+# Which type inside a module the consuming EMM flow decodes as the record, and
+# which CHOICE alternative it expects there.
+#
+# Neither fact is written anywhere in the ASN.1 text. A module can declare
+# several records and EMM binds a flow to one of them; the parser's heuristic
+# answers "which type is this module's record?", which is the right question
+# only when the module describes one. Every entry below was learned from EMM's
+# own answer and nothing else - a rejection that named the type it wanted, or an
+# acceptance of a file encoded as that type. Do not add a guess here: an entry
+# changes the bytes every generated file carries, and a wrong one is
+# indistinguishable from the defect it would be hiding.
+#
+# recordType         the type to encode as the record, instead of the heuristic's pick
+# choiceAlternatives which alternative to select for a given CHOICE type
+#
+# The full history behind each line is in docs/emm-validation-log.md.
+
+modules:
+
+  IMSCDRS:
+    recordType: TokensCSCF
+    evidence: >-
+      Rounds 1-6. The CSCFColl flow decodes IMSCDRS.TokensCSCF, not the Cdrs
+      CHOICE the heuristic picks. Offered five times as Cdrs and refused every
+      time ("the type IMSCDRS.TokensCSCF was probably not set"); the bare
+      TokensCSCF SEQUENCE was accepted in round 6 and EMM returned all 34
+      decoded values.
+
+  CHFChargingDataTypes16:
+    recordType: ChargingRecord
+    evidence: >-
+      Round 10 refused the heuristic's CHFRecord with "ChargingRecord was
+      probably not set". Rounds 12 and 13 accepted five files encoded as
+      ChargingRecord.
+
+  TurkcellImsOmm:
+    recordType: PostCcnCdr
+    evidence: >-
+      Round 14. EMM named TurkcellImsOmm.PostCcnCdr as the expected structure
+      and refused our file with "Invalid length 484" - the whole file size,
+      its signature for a record it could not open at all. PostCcnCdr is 37
+      flat fields; the heuristic had picked a 46-leaf sibling. Awaiting an
+      accepted file.
+
+  TAP-0309:
+    recordType: CallEventDetail
+    evidence: >-
+      Round 14. EMM named TAP-0309.CallEventDetail: the flow reads one call
+      event, not the DataInterChange batch the heuristic picks. Awaiting an
+      accepted file.
+
+  TAP0309:
+    recordType: CallEventDetail
+    evidence: >-
+      Round 14, same answer as TAP-0309 for the keyword-less twin.
+      Awaiting an accepted file.
+
+  LTE-R10:
+    choiceAlternatives:
+      CallEventRecord: pGWRecord
+    evidence: >-
+      Round 4 PASS. pGWRecord [79] is an alternative of the CallEventRecord
+      CHOICE, not a type - so it is a selection, not a recordType. Rounds 1-3
+      failed on the first alternative before this was pinned down.
