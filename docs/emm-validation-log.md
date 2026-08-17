@@ -59,6 +59,7 @@ X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten aynı baytı üretir.
 | 11 | CHF: explicit-kept, explicit-collapsed, nfci-minimal | 3 red — ama üçü de bilgi verdi (aşağıda) |
 | 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
 | 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
+| 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **YANIT BEKLENİYOR** |
 
 ### 7. turda gönderilen dosyalar
 
@@ -114,6 +115,104 @@ gruba giriyorlar (§8). `SMSCBerCdr`'de ayrıca gerçek bir şema kusuru var:
   açık soru olur.
 - Toplamda amaç, "682 modül tek kanıta dayanıyor" cümlesini **dört farklı
   aileden kanıt var** haline getirmek.
+
+### 14. turda gönderilen dosyalar — davranış sınıfı korpusu
+
+Sorumluya **13.08.2026 17:36**'da iki parti hâlinde (7+7) gönderildi.
+Yanıt bu satır yazılırken (17.08.2026) hâlâ beklenmektedir. Bu tur o gün
+günlüğe işlenmemişti; aşağıdaki kayıt oturum dökümünden geri getirildi.
+
+**Seçim yöntemi — 32 BER davranış sınıfı.** 802 üretilebilir modül, kodlayıcının
+verdiği kararı değiştiren **8 eksende** parmak izlendi: modül modu (U/I), kök
+şekli, yazılı `EXPLICIT`, tip-seviyesi `[APPLICATION]`, nötrleştirme ailesi,
+CHOICE, SEQUENCE OF, SET. Çok-baytlı tag ve long-form uzunluk **mekanik**
+sayılıp dışarıda bırakıldı — `IMSCDRS.TokensCSCF` ikisini de taşıyor ve EMM
+34/34 alanı doğru çözdü; sınıfa katılsalardı 32 yerine 51 sınıf çıkıyordu.
+
+| | |
+|---|---|
+| Toplam BER davranış sınıfı | **32** |
+| O tarihte EMM kanıtıyla temsil edilen | **8 sınıf / 641 modül (%79)** |
+| Kanıtsız | **24 sınıf / 161 modül (%20)** |
+| Gönderilen dosya | **14** — kanıtsız 24 sınıfın 12'sini, 161 modülün **142'sini (%88)** kapsıyor |
+
+Kapsanmayan 12 sınıf toplam 19 modül; hepsi tekil varyant (ortalama 1,6 modül).
+Dosya başına getiri 14'lük sette ~10 modül, kuyrukta ~1,4 modül — kuyruk bilerek
+bırakıldı.
+
+| # | dosya | bayt | kök | mod | yaprak | SHA-256 |
+|---|---|---|---|---|---|---|
+| 1 | `TurkcellImsOmm.ber` | 484 | `TurkcellImsOmm` | U | 46 | `c00053d4222b5d6888669f439a82800fe4d13361df11e7b6b65f2538fc931c12` |
+| 2 | `ConvergenceCdr.ber` | 727 | `ConvergenceCdr` | I | 65 | `21ab0f7077f1c55bda69bfaeefddc0771e05b5f391b1d69c9b0bf47f3b57137d` |
+| 3 | `NRTRDEInValidationLookup.ber` | 213 | tip-tag'li | U | 24 | `3c2798b2890427b29637566775832a2ecc7502f5eac7fd2224ed9e605af22505` |
+| 4 | `CME20R12TurkCellber.ber` | 981 | `CallDataRecord` | U | 125 | `d6af371cd12d47ab84983a401d6fc55d8a735d061efd32bb71ec4205b03f9cbe` |
+| 5 | `TAP-0309.ber` | 4832 | `DataInterChange` | I | 483 | `d58881938d3eb196b36de2f8e582307f92a4cd203f83c64b5124da26c7c06d75` |
+| 6 | `TAP0309.ber` | 4251 | `DataInterChange` | U | 425 | `62258da58ef84db40bd58ed8d9282fc95db46cd626fbf5c155b9526a90e8ef3d` |
+| 7 | `CCNCS55_UpdatedCCR_CCN.ber` | 556 | `ChargingDataOutputRecord` | U | 64 | `09e8978a6ef3d7ae59ce994a50154c128000ac34202741c3b9eeb68586da2b11` |
+| 8 | `GPRS-Charging-Extensions-Tr.ber` | 1199 | universal SET | I | 159 | `8a97ebf8602ac5d666a734c020fd0d54d66a15ac2a9e2844ab87c8f3d9012b6e` |
+| 9 | `GSN50.ber` | 438 | `CallEventRecord` | U | 55 | `3268e04de65a604f986b0c4dbec0b49fefa3db7df55243929982c553a62794dd` |
+| 10 | `IMS-R8-2009-03.ber` | 2697 | `IMSRecord` | I | 257 | `ef9bd72bf5f66d78ac0cc02d424f0de10e3526ba00e58fc21a436e2739183523` |
+| 11 | `EMM-IMS-Specific.ber` | 195 | universal SET | I | 27 | `5633e3f3d78a1c28b709682214bddf6e2edabac726512706ea799c6d7c1628fd` |
+| 12 | `EnrichedVerazCdr.ber` | 29.456 | `EnrichedVerazCdr` | U | 194 | `c7c594a1329724fe91e739bf6293a68f67c8efc4978bf3f83da3e02e75694b85` |
+| 13 | `CDRDatamartCCNDMM.ber` | 1987 | `CDRDatamartCCNDMM` | U | 201 | `98468bd3cb7b72a263146e01979a8d0a0140f55bad50ac8cd47a6741ceaa7dad` |
+| 14 | `FCMSMSC.ber` | 717 | `FCMSMSC` | U | 43 | `5adda8124e158c508e1086cb1813c436100c9b84650b10857c623ef70c17ba58` |
+
+On dördü de self-check'ten **0 hata** ile geçti (`NRTRDEInValidationLookup` 2
+uyarı, gerisi 0) ve TLV bütünlüğü doğrulandı. Aile dağılımı: TAP 2 ·
+paket-alanı 3 · MMTel/IMS 2 · CCN/OCC 1 · NRTRDE 1 · CME 1 · GPRS 1 · diğer 3.
+
+#### Her dosya hangi soruyu soruyor
+
+| # | dosya | test ettiği hipotez | PASS ne kanıtlar | FAIL ne öğretir |
+|---|---|---|---|---|
+| 1 | `TurkcellImsOmm` | keyword'süz düz SEQUENCE kökünde SEQUENCE OF | **61 modüllük en büyük tek boşluk** kapanır | koleksiyon kodlaması U modunda farklı |
+| 2 | `ConvergenceCdr` | `IMPLICIT TAGS`'te çıplak SEQUENCE kökü | 18 modül; tüm I-kanıtları CHOICE köklüydü | kök şekli mod ile etkileşiyor |
+| 3 | `NRTRDEInValidationLookup` | tip-seviyesi `[APPLICATION]` + SEQUENCE OF | 15 modül; `f5ce531` koleksiyonda da geçerli | tip tag'i koleksiyonda farklı davranıyor |
+| 4 | `CME20R12TurkCellber` | U modunda `[APPLICATION]` + SET birlikte | 14 modül, 74 çok-baytlı tag | iki özellik birlikte bozuluyor |
+| 5 | `TAP-0309` | TAP ailesi, 10 seviye derinlik, 630 çok-baytlı tag | hiç test edilmemiş büyük aile + en derin yapı | TAP'e özgü bir kural var |
+| 6 | `TAP0309` | aynı şema, keyword'süz başlık — **5 ile A/B çifti** | U/I ayrımının TAP'te de tuttuğu | ayrım TAP'te tutmuyor |
+| 7 | `CCNCS55_UpdatedCCR_CCN` | yazılı `EXPLICIT`, nötrleştirme ailesi **dışında** | aile kapısının doğru yerde olduğu | nötrleştirme genelleşmeli |
+| 8 | `GPRS-Charging-Extensions-Tr` | **kök SET** + yazılı `EXPLICIT` | kök SET hiç test edilmedi | `31` kök tag'i kabul edilmiyor |
+| 9 | `GSN50` | `[UNIVERSAL n]` override (`594faad`) | X.690 8.19.1 okumamız doğru | override kuralı yanlış |
+| 10 | `IMS-R8-2009-03` | nötrleştirme ailesi, yazılı `EXPLICIT` **yok** | aile kapısı keyword'süz sitede de doğru | kapı yazılı keyword'e bağlı |
+| 11 | `EMM-IMS-Specific` | minimal kök SET (27 yaprak) | 8'in kontrolü — sade vaka | 8 ile birlikte kök SET sorunu |
+| 12 | `EnrichedVerazCdr` | 29 KB, 26 long-form uzunluk, 194 alan | büyük dosya + uzunluk mekaniği | boyut sınırı veya uzunluk kodlaması |
+| 13 | `CDRDatamartCCNDMM` | 171 çok-baytlı tag, düz yapı | yoğun çok-baytlı tag | tag kodlama sınırı |
+| 14 | `FCMSMSC` | düz SEQUENCE kökünde CHOICE + SET | 8 modül | kök-içi CHOICE farklı |
+
+#### Gönderilirken yazılan tahmin
+
+Yanıt geldiğinde neyi öğrendiğimizi ölçebilmek için önceden kaydedildi:
+`CCNCS55_UpdatedCCR_CCN` ~%70 · `IMS-R8-2009-03` ~%65 · `ConvergenceCdr` ~%60 ·
+`TurkcellImsOmm` ~%55 · `GSN50` / `CDRDatamartCCNDMM` / `FCMSMSC` ~%50 ·
+`EnrichedVerazCdr` ~%45 · `CME20R12TurkCellber` ~%40 ·
+`GPRS-Charging-Extensions-Tr` ~%35 · `TAP-0309` ~%30 ·
+`NRTRDEInValidationLookup` / `TAP0309` ~%25 · `EMM-IMS-Specific` ~%20.
+**Beklenti: 14'ten ~6 PASS.**
+
+İki bağımsız risk ekseni ayrıldı: **kodlama** (baytlar doğru mu — 6 kanıtlanmış
+kural, 9 invariant, 0 ihlal, öngörü iyi) ve **yönlendirme** (EMM'de o tip için
+akış tanımlı mı, hangi tipi bekliyor — bilgi bizde yok, 9. turda üç dosya
+yalnızca bu yüzden yandı). Düşük tahminlerin çoğu ikinci eksenden geliyor.
+`NRTRDEInValidationLookup` ("Lookup" = arama tablosu) ve `EMM-IMS-Specific`
+(EMM'in kendi iç yapısı) muhtemelen gönderilen bir CDR tipi bile değil.
+
+Ayrıca `TAP-0309`'da kodlamadan bağımsız bir **veri** riski var: şemadaki
+`auditControlInfo` içinde `callEventDetailsCount`, `earliestCallTimeStamp`,
+`totalChargeValueList` gibi **kayıtlarla tutarlı olması gereken** alanlar var,
+üretici bunları rastgele dolduruyor. TAP reddedilirse önce buraya bakılmalı.
+
+#### ⚠️ Gönderilen baytlar yeniden üretilemez
+
+Dosyalar `target/emm-corpus-r14/` altında toplanmıştı; `target/` gitignore'da ve
+16.08'deki `mvn clean` ile silindi. On dördü `ValidationSampleTest`'e **geçici**
+olarak eklenip üretildi, düzenleme sonra geri alındı — bugün sample listesinde
+21 aile var, bu 14'ü yok. Üretici tohumsuz rastgele olduğu için aynı komut aynı
+baytları vermez; üstelik 33e8b01 (TBCD locale) abone-numarası alanlarının
+değerlerini değiştirdi. **Yukarıdaki SHA-256 listesi EMM'in elindeki baytların
+tek kaydıdır.** Bir dosya reddedilirse teşhis bayt karşılaştırmasıyla değil,
+şema/kural düzeyinde yapılacak; gerekirse aynı sınıf yeniden üretilip yeni
+SHA ile gönderilecek.
 
 ### IMSCDRS'in çözülmesi — altı turluk eleme
 

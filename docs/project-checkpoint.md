@@ -33,7 +33,7 @@ Frontend (React/Vite) tarafında UI yerleşimi ve indirme mekanizması güncelle
   * `UNSPECIFIED` (Başlıkta mod belirtilmeyenler): 712 modül (~22.133 yaprak alan).
   * `IMPLICIT TAGS`: 96 modül.
   * `EXPLICIT TAGS` / `AUTOMATIC TAGS`: 0 modül.
-* **BER Behavior Class (Davranış Sınıfı):** Repoda veya dokümanlarda "32 BER behavior class" veya "behavior_class" şeklinde bir sınıflandırma **bulunmamaktadır**. Yapılar, tagging modları (Unspecified/Implicit) ve kök şekilleri (Choice, Set, Sequence) üzerinden sınıflandırılmaktadır.
+* **BER Davranış Sınıfı: 32.** 13.08.2026'da 802 modül, kodlayıcının kararını değiştiren 8 eksende (modül modu, kök şekli, yazılı `EXPLICIT`, tip-seviyesi `[APPLICATION]`, nötrleştirme ailesi, CHOICE, SEQUENCE OF, SET) parmak izlendi. O tarihte **8 sınıf / 641 modül (%79)** EMM kanıtıyla temsil ediliyordu; kalan **24 sınıf / 161 modül** kanıtsızdı. 14. tur korpusu bu boşluğu hedefliyor — ayrıntı ve tam tablo: `emm-validation-log.md` §3, "14. turda gönderilen dosyalar". (Sınıflandırma kod olarak repoda değil, günlükte kayıtlıdır.)
 
 ### EMM Coverage ve Doğrulanmış Yapılar
 Şu ana kadar **12 modül** EMM tarafından doğrulanmış ve kabul edilmiştir:
@@ -85,7 +85,7 @@ Bu kurallar `BerVerifier` (Yerel Doğrulama Döngüsü) içindeki `VerificationR
 3. 712 modülün (UNSPECIFIED) "alan tag'leri implicit'tir" kuralı IMSCDRS kanıtına dayanıyor. Diğer ailelerden (örn. CCN/OCC) daha fazla doğrulama alınması gerekiyor.
 
 ### Sıradaki İşlerin Öncelik Sırası
-1. **EMM'den 14 dosyanın yanıtının beklenmesi.** Yanıt gelene kadar `BerEncoderService`, `TlvWriter`, parser tagging mantığı ve `FieldValueGenerator` dondurulmuştur.
+1. **EMM'den 14. tur yanıtının beklenmesi.** Yanıt gelene kadar `BerEncoderService`, `TlvWriter`, parser tagging mantığı ve `FieldValueGenerator` dondurulmuştur. Gönderilen 14 dosya (13.08.2026, SHA-256'larıyla birlikte) `emm-validation-log.md` §3'te; hedefi kanıtsız 24 davranış sınıfının 12'sini, 161 modülün 142'sini kapatmak. **Gönderilen baytlar yeniden üretilemez** (üretici tohumsuz, `target/emm-corpus-r14/` silindi) — teşhis SHA kaydı + şema düzeyinde yapılacak.
 2. **Yanıt gelince — değer üretimindeki iki kusur:** (A) kural eşleşmesini tip-duyarlı yapmak, (B) desen SIZE'a sığmayınca kırpmak yerine alana uygun değer üretmek. Ölçümü `emm-validation-log.md` §9b'de; ikisi de üretilen baytları değiştirir.
 3. **TBCD locale düzeltmesinin gözden geçirilmesi:** kendi commit'inde duruyor, tek `git revert` ile geri alınabilir. 126 alan / 60 modülde abone-numarası baytları değişti.
 4. **Duplicate Tag Modülleri:** 17 strict-fail modüldeki ambiguous şema tanımlarının iş birimiyle görüşülerek ASN.1 şemalarında düzeltilmesi veya yoksayılması.
