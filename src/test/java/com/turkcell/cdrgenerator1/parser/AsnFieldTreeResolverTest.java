@@ -1,5 +1,6 @@
 package com.turkcell.cdrgenerator1.parser;
 
+import com.turkcell.cdrgenerator1.model.AsnDeclaredTagging;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
 import org.junit.jupiter.api.Test;
@@ -66,6 +67,12 @@ class AsnFieldTreeResolverTest {
         assertEquals("OCTET STRING", cmd.getFieldType());
     }
 
+    /**
+     * The keyword is read from the text and kept in {@code declaredTagging};
+     * what the encoder does with it is a separate decision, and outside a
+     * CHOICE that decision is IMPLICIT. See
+     * {@link #writtenExplicitSurvivesOnlyOnAChoice}.
+     */
     @Test
     void explicitKeywordIsDetected() {
         List<AsnField> fields = resolve("""
@@ -76,7 +83,11 @@ class AsnFieldTreeResolverTest {
                 }
                 END
                 """, "Root");
-        assertTrue(fields.get(0).isExplicit());
+        assertEquals(AsnDeclaredTagging.EXPLICIT, fields.get(0).getDeclaredTagging(),
+                "the written keyword must survive parsing even where it does not survive encoding");
+        assertFalse(fields.get(0).isExplicit(),
+                "a written EXPLICIT on a primitive adds no wrapper - EMM asked for 8B 01 FF, "
+                        + "not AB 03 01 01 FF, on LTE-R10.dynamicAddressFlag");
     }
 
     @Test
@@ -168,18 +179,21 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
-     * Carrying neither verified fingerprint (this fixture defines no
-     * {@code InvolvedParty} and no {@code GSNAddress}/{@code IPAddress} pair),
-     * {@code AsnFieldTreeResolver.effectiveExplicit} must leave every written
-     * EXPLICIT untouched - scalar CHOICE, plain SEQUENCE, plain repeated
-     * element alike. {@code NodeAddress} here is deliberately CCN-shaped rather
-     * than 3GPP-shaped: nothing should change for a lineage until a real
-     * decoder has answered for it (see
-     * {@link #explicitIsPreservedOutsideTheVerifiedInvolvedPartyFamily} for
-     * the SET/plain-SEQUENCE-focused sibling of this test).
+     * The target type decides, not the module's lineage. This fixture carries
+     * no verified fingerprint at all - no {@code InvolvedParty}, no
+     * {@code GSNAddress}/{@code IPAddress} pair - and the written EXPLICIT
+     * still survives only where the type is a CHOICE.
+     *
+     * <p>Round 14 is what moved this test from asserting the opposite. Two
+     * modules outside both fingerprinted lineages were refused at exactly the
+     * field where a written EXPLICIT wrapped a SEQUENCE:
+     * {@code CCNCS55_UpdatedCCR_CCN.ChargingDataOutputRecord.sCFPDPRecord.ggsnAddressUsed}
+     * and {@code EnrichedVerazCdr.CDR.redirectingInformationSubs}. In the same
+     * round every module that PASSED while carrying a written EXPLICIT has it
+     * on a CHOICE.</p>
      */
     @Test
-    void explicitIsPreservedForEveryShapeOutsideAnyVerifiedFamily() {
+    void writtenExplicitSurvivesOnlyOnAChoice() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
@@ -198,10 +212,11 @@ class AsnFieldTreeResolverTest {
                 """, "Root");
 
         assertTrue(fields.get(0).isExplicit(), "scalar CHOICE must keep its EXPLICIT tag");
-        assertTrue(fields.get(1).isExplicit(),
-                "outside any verified family, a plain SEQUENCE field must keep its written EXPLICIT");
-        assertTrue(fields.get(2).isExplicit(),
-                "outside any verified family, a SEQUENCE OF <non-CHOICE> must keep its written EXPLICIT too");
+        assertFalse(fields.get(1).isExplicit(),
+                "a written EXPLICIT on a plain SEQUENCE adds no wrapper - the shape EMM refused in "
+                        + "EnrichedVerazCdr.CDR.redirectingInformationSubs");
+        assertFalse(fields.get(2).isExplicit(),
+                "nor on a SEQUENCE OF <non-CHOICE>: the collection tag replaces the universal one");
     }
 
     /**
@@ -421,16 +436,18 @@ class AsnFieldTreeResolverTest {
     }
 
     /**
-     * The exact same shapes, but WITHOUT the InvolvedParty fingerprint -
-     * simulating LTE-R10's {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress}
-     * (PDPAddress is a SET in that module) and any GGSN/LTE-family field that
-     * writes EXPLICIT on a plain SEQUENCE or SET. There is no EMM verification
-     * for that CDR family, so every written EXPLICIT must be left exactly as
-     * written; this is what keeps the fix from becoming a blanket "ignore
-     * EXPLICIT" rule applied to the whole data set.
+     * The exact same shapes without the InvolvedParty fingerprint - LTE-R10's
+     * {@code servedPDPPDNAddress [9] EXPLICIT PDPAddress} (a SET there) and any
+     * field writing EXPLICIT on a plain SEQUENCE or SET. They neutralize for the
+     * same reason the fingerprinted ones do: the type is not a CHOICE.
+     *
+     * <p>This test asserted the opposite while the neutralization was gated on a
+     * lineage. The gate is gone (see {@link #writtenExplicitSurvivesOnlyOnAChoice}),
+     * so what remains to guard is that the rule reaches a SET and a repeated
+     * SEQUENCE, not only the shapes the MMTel capture happened to contain.</p>
      */
     @Test
-    void explicitIsPreservedOutsideTheVerifiedInvolvedPartyFamily() {
+    void writtenExplicitOnASetOrRepeatedSequenceAddsNoWrapper() {
         List<AsnField> fields = resolve("""
                 M DEFINITIONS IMPLICIT TAGS ::=
                 BEGIN
@@ -443,11 +460,10 @@ class AsnFieldTreeResolverTest {
                 END
                 """, "Root");
 
-        assertTrue(fields.get(0).isExplicit(),
-                "without the InvolvedParty fingerprint (e.g. LTE-R10) a written EXPLICIT on a SET "
-                        + "must be left untouched - there is no EMM evidence for that CDR family");
-        assertTrue(fields.get(1).isExplicit(),
-                "same for a plain repeated SEQUENCE outside the verified family");
+        assertFalse(fields.get(0).isExplicit(),
+                "a written EXPLICIT on a SET adds no wrapper, fingerprint or not");
+        assertFalse(fields.get(1).isExplicit(),
+                "same for a plain repeated SEQUENCE");
     }
 
     /**

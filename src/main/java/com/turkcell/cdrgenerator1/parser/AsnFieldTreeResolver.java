@@ -468,7 +468,7 @@ public class AsnFieldTreeResolver {
                 .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .tagNumber(effectiveTag.tagNumber())
                 .tagClass(effectiveTag.tagClass())
-                .explicit(effectiveExplicit(registry, effectiveTag, repeated, choiceElement))
+                .explicit(effectiveExplicit(effectiveTag, repeated, choiceElement, taggingMode))
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
@@ -556,14 +556,37 @@ public class AsnFieldTreeResolver {
      * every OCTET STRING in the family carrying two bytes of our own framing as
      * data, in a file that passes.</p>
      *
-     * <p>This is still NOT safe to apply everywhere, so it stays gated on
-     * {@link #isVerifiedExplicitNeutralizationFamily}: outside the two lineages
-     * a real decoder has answered for, every written EXPLICIT is returned
-     * untouched. The open case is the modules whose header omits
-     * {@code IMPLICIT TAGS} ({@code BroadSoft2Tesla},
-     * {@code CDRDatamartPEPSIivr}), where the wrapper comes from the X.680
-     * 31.2.7 default rather than a written keyword and no capture has confirmed
-     * either reading.</p>
+     * <p>This was gated on a family test for as long as only those two lineages
+     * had an EMM answer. Round 14 answered for two more, and neither shares an
+     * ancestor with them:</p>
+     *
+     * <pre>
+     * Invalid length 38 of field
+     *   "CCNCS55_UpdatedCCR_CCN.ChargingDataOutputRecord.sCFPDPRecord.ggsnAddressUsed"
+     * Invalid length 28133 of field
+     *   "EnrichedVerazCdr.CDR.redirectingInformationSubs"
+     * </pre>
+     *
+     * <p>{@code ggsnAddressUsed [1] EXPLICIT GSNAddress} resolves through
+     * {@code GSNAddress ::= IPBinaryAddress} to a SEQUENCE - the CCN/OCC alias
+     * shape this method's family test deliberately excluded - and went out as
+     * {@code A1 1A 30 18 80 04 .. 81 10 ..}.
+     * {@code redirectingInformationSubs [166] EXPLICIT RedirectingInformation}
+     * is a plain SEQUENCE in a module carrying no address types at all, and went
+     * out as {@code BF 81 26 81 83 30 81 80 ..}. Both carry the same extra
+     * universal SEQUENCE between the context tag and the fields, and EMM refused
+     * both at exactly that field.</p>
+     *
+     * <p>The control is in the same round. Every module that PASSED while
+     * carrying a written EXPLICIT has it on a CHOICE, where the wrapper is kept
+     * either way: {@code GPRS-Charging-Extensions-Tr}
+     * ({@code [0] EXPLICIT ExtendedDiagnostics}, {@code [1] EXPLICIT IPAddress})
+     * and, from round 12, {@code CHFChargingDataTypes16}'s
+     * {@code [2] EXPLICIT IPAddress}. Not one acceptance depends on a wrapper
+     * around a non-CHOICE. So the lineage was never what decided it - the target
+     * type was - and the family gate is gone. What remains is the same sentence
+     * every other rule reduces to: outside a CHOICE, everything is IMPLICIT,
+     * written keyword included.</p>
      */
     /**
      * True where X.680 8.3's "a tag on a CHOICE is always EXPLICIT" gives way to
@@ -588,19 +611,23 @@ public class AsnFieldTreeResolver {
                 && taggingMode == AsnTaggingMode.UNSPECIFIED;
     }
 
-    private boolean effectiveExplicit(Map<String, AsnTypeDefinition> registry, EffectiveTag tag,
-                                      boolean repeated, boolean choiceElement) {
+    private boolean effectiveExplicit(EffectiveTag tag, boolean repeated, boolean choiceElement,
+                                      AsnTaggingMode taggingMode) {
         if (universalTagCannotWrap(tag)) {
             return false;
         }
-        boolean writtenExplicit = tag.explicit();
         if (!repeated && choiceElement) {
-            return writtenExplicit;
+            return tag.explicit();
         }
-        if (isVerifiedExplicitNeutralizationFamily(registry)) {
-            return false;
+        // A header that says EXPLICIT TAGS out loud is left alone. Every
+        // measurement behind the neutralization comes from a module that either
+        // says IMPLICIT TAGS or says nothing at all; no module in this data set
+        // declares EXPLICIT TAGS, so widening it there would be extrapolation
+        // with nothing to gain and X.680 to contradict.
+        if (taggingMode == AsnTaggingMode.EXPLICIT) {
+            return tag.explicit();
         }
-        return writtenExplicit;
+        return false;
     }
 
     /**
@@ -656,15 +683,6 @@ public class AsnFieldTreeResolver {
 
 
     /**
-     * True for the two module lineages whose EXPLICIT-almost-everywhere anomaly
-     * a real EMM decoder has answered for (see {@link #effectiveExplicit}):
-     * MMTel/AIMS/IMS/UAG/ATS, and the 3GPP packet-domain CDR family.
-     */
-    private boolean isVerifiedExplicitNeutralizationFamily(Map<String, AsnTypeDefinition> registry) {
-        return isMmtelPartyAddressingFamily(registry) || isPacketDomainCdrFamily(registry);
-    }
-
-    /**
      * True when this module's registry carries the shared {@code InvolvedParty}
      * CHOICE lineage - the structural fingerprint of the MMTel/AIMS/IMS/UAG/ATS
      * family, verified against a real EMM-accepted MMTel reference capture.
@@ -681,26 +699,6 @@ public class AsnFieldTreeResolver {
         return involvedParty != null && involvedParty.getKind() == AsnTypeKind.CHOICE;
     }
 
-    /**
-     * True when this module's registry carries the 3GPP TS 32.298 packet-domain
-     * address types - a named {@code GSNAddress} resolving through an
-     * {@code IPAddress} CHOICE over an {@code IPBinaryAddress} CHOICE. That
-     * triple is the fingerprint of the GGSN/GSN/LTE/CDRF lineage EMM rejected
-     * (21 modules in the current data set, {@code LTE-R10} and
-     * {@code GGSNTurkcellCdrR7} among them).
-     *
-     * <p>Deliberately narrower than "declares GSNAddress": the CCN/OCC/CHAD
-     * modules alias {@code GSNAddress ::= IPBinaryAddress} directly and define
-     * no {@code IPAddress} CHOICE at all. They are a different lineage with
-     * their own EXPLICIT usage and no EMM answer, so they stay outside.</p>
-     */
-    private boolean isPacketDomainCdrFamily(Map<String, AsnTypeDefinition> registry) {
-        AsnTypeDefinition ipAddress = registry.get("IPAddress");
-        AsnTypeDefinition ipBinaryAddress = registry.get("IPBinaryAddress");
-        return registry.containsKey("GSNAddress")
-                && ipAddress != null && ipAddress.getKind() == AsnTypeKind.CHOICE
-                && ipBinaryAddress != null && ipBinaryAddress.getKind() == AsnTypeKind.CHOICE;
-    }
 
     /**
      * Splits a SEQUENCE/SET/CHOICE body into individual field entries.
@@ -837,7 +835,7 @@ public class AsnFieldTreeResolver {
                     .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                     .tagNumber(fieldTag.tagNumber())
                     .tagClass(fieldTag.tagClass())
-                    .explicit(effectiveExplicit(registry, fieldTag, repeated, choiceElement))
+                    .explicit(effectiveExplicit(fieldTag, repeated, choiceElement, taggingMode))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build();

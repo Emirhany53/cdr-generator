@@ -137,7 +137,39 @@ class ValidationSampleTest {
             // "ChargingRecord was probably not set". Same class of correction as
             // LTE-R10's pGWRecord - which type is the record is the consuming
             // flow's call, not the parser's.
-            new Sample("CHFChargingDataTypes16", "ChargingRecord", "CHFChargingDataTypes16"));
+            new Sample("CHFChargingDataTypes16", "ChargingRecord", "CHFChargingDataTypes16"),
+            // Round 14 (13.08.2026), the behaviour-class corpus. These seven
+            // came back PASS, so each one is now the standing evidence for its
+            // class and belongs in the sample set rather than in a scratch
+            // directory that mvn clean deletes.
+            new Sample("ConvergenceCdr"),
+            new Sample("NRTRDEInValidationLookup"),
+            new Sample("CME20R12TurkCellber"),
+            new Sample("GPRS-Charging-Extensions-Tr"),
+            new Sample("EMM-IMS-Specific"),
+            new Sample("CDRDatamartCCNDMM"),
+            new Sample("FCMSMSC"),
+            // Sent in round 14, not run: EMM had no flow for it that day.
+            new Sample("IMS-R8-2009-03"),
+            // Round 14 rejected these four for naming the wrong record type -
+            // the same correction LTE-R10 (pGWRecord), IMSCDRS (TokensCSCF) and
+            // CHF (ChargingRecord) each needed. The type EMM named is kept
+            // beside the heuristic's reading, not instead of it, so the next
+            // round can show which one the flow decodes.
+            new Sample("TurkcellImsOmm"),
+            new Sample("TurkcellImsOmm", "PostCcnCdr", "TurkcellImsOmm-PostCcnCdr"),
+            new Sample("TAP-0309", "CallEventDetail", "TAP-0309-CallEventDetail"),
+            new Sample("TAP0309"),
+            new Sample("TAP0309", "CallEventDetail", "TAP0309-CallEventDetail"),
+            new Sample("EnrichedVerazCdr"),
+            new Sample("EnrichedVerazCdr", "CDR", "EnrichedVerazCdr-CDR"),
+            // Round 14 rejected these two at a field, with the root type EMM
+            // named matching the one we encoded. Both are real encoding
+            // findings: a written EXPLICIT keyword in a header-less module
+            // (CCNCS55), and a field whose type is IMPORTed from another
+            // module and never resolved (GSN50's recordExtensions).
+            new Sample("CCNCS55_UpdatedCCR_CCN"),
+            new Sample("GSN50"));
 
     /** CHOICE alternative to select per sample, keyed by output file name. */
     private static final Map<String, Map<String, String>> CHOICE_SELECTIONS = Map.of(
