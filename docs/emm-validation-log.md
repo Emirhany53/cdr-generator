@@ -452,15 +452,15 @@ SHA'lar **gönderimden önce** yazıldı (14. turun dersi: dosyalar `target/`
 altında kalıp `mvn clean` ile silinmişti ve üretici tohumsuz olduğu için
 yeniden üretilemiyorlar).
 
-| # | dosya | bayt | TLV | derin | kök | SHA-256 |
-|---|---|---|---|---|---|---|
-| 1 | `TurkcellImsOmm.ber` | 446 | 38 | 1 | `PostCcnCdr` | `446fb98456d0e723e3e6f83e974ee5baf7e6e88feab18a005ba153d8b900fd65` |
-| 2 | `TAP-0309.ber` | 3019 | 423 | 8 | `CallEventDetail` | `414caded90dd195ef77f8fb5cbd880dc845a117bd759792d0e1044fd2e1fae63` |
-| 3 | `TAP0309.ber` | 2663 | 367 | 8 | `CallEventDetail` | `4284a416ccc3c161f8a213a3ba77f24cca0c6f7887545102a6eefb1515166977` |
-| 4 | `EnrichedVerazCdr.ber` | 29.444 | 199 | 2 | `CDR` | `f8e8084f36f8b819d09c59d059952f0c3b0ca8aed7887611523fe8fd602a7fd2` |
-| 5 | `CCNCS55_UpdatedCCR_CCN.ber` | 486 | 71 | 4 | `ChargingDataOutputRecord` | `de7a6171a99edcf4877a19d55e4026bdb3da1972de99e1ada0d16756e6907a25` |
-| 6 | `GSN50.ber` | 2230 | 375 | 10 | `CallEventRecord` | `01058bb5276c09f4472b9fa2db0bfac0027cd907f96b6b2c717bb180936302fd` |
-| 7 | `IMS-R8-2009-03.ber` | 2343 | 281 | 6 | `IMSRecord` | `0768b9ec9ce388c14e6158d8afdf1c6c751f94dfa46d230c7a5e10f74ab63d84` |
+| # | dosya | bayt | TLV | derin | kök | sonuç | SHA-256 |
+|---|---|---|---|---|---|---|---|
+| 1 | `TurkcellImsOmm.ber` | 446 | 38 | 1 | `PostCcnCdr` | ✅ PASS | `446fb98456d0e723e3e6f83e974ee5baf7e6e88feab18a005ba153d8b900fd65` |
+| 2 | `TAP-0309.ber` | 3019 | 423 | 8 | `CallEventDetail` | ✅ PASS | `414caded90dd195ef77f8fb5cbd880dc845a117bd759792d0e1044fd2e1fae63` |
+| 3 | `TAP0309.ber` | 2663 | 367 | 8 | `CallEventDetail` | ✅ PASS | `4284a416ccc3c161f8a213a3ba77f24cca0c6f7887545102a6eefb1515166977` |
+| 4 | `EnrichedVerazCdr.ber` | 29.444 | 199 | 2 | `CDR` | ✅ PASS | `f8e8084f36f8b819d09c59d059952f0c3b0ca8aed7887611523fe8fd602a7fd2` |
+| 5 | `CCNCS55_UpdatedCCR_CCN.ber` | 486 | 71 | 4 | `ChargingDataOutputRecord` | ✅ PASS | `de7a6171a99edcf4877a19d55e4026bdb3da1972de99e1ada0d16756e6907a25` |
+| 6 | `GSN50.ber` | 2230 | 375 | 10 | `CallEventRecord` | ✅ PASS | `01058bb5276c09f4472b9fa2db0bfac0027cd907f96b6b2c717bb180936302fd` |
+| 7 | `IMS-R8-2009-03.ber` | 2343 | 281 | 6 | `IMSRecord` | ❌ red | `0768b9ec9ce388c14e6158d8afdf1c6c751f94dfa46d230c7a5e10f74ab63d84` |
 
 Yedisi de self-check'ten **0 hata / 0 uyarı** ile geçti ve TLV bütünlüğü
 doğrulandı (taşma yok). Yedisi de `ValidationSampleTest`'te kayıtlı, yani
@@ -516,6 +516,33 @@ EMM tarafından doğrulandı.** Her düzeltme, onu doğrulayan dosyayla birlikte
 
 Yedi dosyanın altısı ilk denemede geçti. Tahminlerin sıralaması bu sefer de
 tutmadı — en düşük iki tahmin (`TAP0309` %55, `GSN50` %55) geçti.
+
+**EMM'in yanıtı (birebir).** Altı dosya için hiçbir mesaj dönmedi; sorumlunun
+ifadesiyle *"7 dosyadan sadece bir tanesinde hata aldık"*. Tek hata:
+
+```
+Failed to decode received data.
+A block of 'IMS-R8-2009-03.ber', originating from IMS-R8-2009-03, was corrupt
+(this would have been record #0).
+Invalid length 513 of field "recordExtensions"
+```
+
+Sorumlunun eklediği yönlendirme bilgisi:
+
+```
+Decoder tarafından beklenen structure: IMS-R8-2009-03.IMSRecord
+```
+
+Beklenen kök tip bizim kodladığımızın aynısı (`IMSRecord`, dosya başı
+`BF 45 82 09 22` = `[69] aTSRecord`), yani bu turda **yönlendirme ekseninde hiç
+kayıp yok** — altı kabul + bir alan-içi hata.
+
+**Kabul edilen baytlar kayıt altında.** Yukarıdaki tablodaki altı SHA-256, EMM'in
+kabul ettiği dosyaların kendisidir; dosyalar `target/emm-corpus-r15/` altında
+üretildi ve SHA'ları gönderimden önce yazıldı. 14. turda bu yapılmamıştı ve
+gönderilen baytlar geri getirilemedi; 15. turda `IMS-R8-2009-03`'ün teşhisi
+doğrudan gönderilen dosya üzerinden yapılabildi (aşağıda), disiplin ilk turunda
+işe yaradı.
 
 **Kapsam:**
 
