@@ -36,6 +36,12 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `EMM-IMS-Specific` | BER | minimal kök SET (14. tur) |
 | `CDRDatamartCCNDMM` | BER | 171 çok-baytlı tag, düz yapı (14. tur) |
 | `FCMSMSC` | BER | düz SEQUENCE kökünde CHOICE + SET (14. tur) |
+| `TurkcellImsOmm` (PostCcnCdr) | BER | kök tip bağlaması çalışıyor (15. tur) |
+| `TAP-0309` (CallEventDetail) | BER | **TAP ailesinin ilk kabulü**, 8 seviye derinlik (15. tur) |
+| `TAP0309` (CallEventDetail) | BER | TAP'in keyword'süz ikizi (15. tur) |
+| `EnrichedVerazCdr` | BER | 29 KB, 26 long-form uzunluk; 7. kural doğrulandı (15. tur) |
+| `CCNCS55_UpdatedCCR_CCN` | BER | 7. kural, ikinci bağımsız soyda doğrulandı (15. tur) |
+| `GSN50` | BER | **çözülmüş `IMPORTS`** — ithal edilen `SET` doğru çözüldü (15. tur) |
 
 ## 2. EMM ile kanıtlanan tagging kuralları
 
@@ -69,7 +75,7 @@ aynı baytı üretir.
 | 12 | CHF NFI bisect: A/B/C | **3/3 PASS** — zengin anahtar-kelimesiz modül ilk kez tam çözüldü |
 | 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
 | 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **7 PASS · 6 red · 1 koşulamadı** (17.08.2026) |
-| 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | YANIT BEKLENİYOR |
+| 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | **6 PASS · 1 red** (18.08.2026) — üç düzeltmenin üçü de doğrulandı |
 
 ### 7. turda gönderilen dosyalar
 
@@ -492,6 +498,104 @@ değil**, üretici tohumsuz.
 keyword'süz düz SEQUENCE kökünde **SEQUENCE OF** bulunması, ama `PostCcnCdr`'da
 hiç koleksiyon yok (37 alanın hepsi IA5String). Koleksiyon sorusu bu turda da
 sınanmıyor; kapatmak için aynı sınıftan koleksiyon taşıyan bir kök gerekiyor.
+
+#### ✅ 15. tur sonucu (18.08.2026) — 6 PASS, 1 red
+
+Tahmin 4-5 PASS'ti, **6** geldi. Daha önemlisi: **14. turun üç bulgusunun üçü de
+EMM tarafından doğrulandı.** Her düzeltme, onu doğrulayan dosyayla birlikte:
+
+| dosya | tahmin | sonuç | neyi kanıtladı |
+|---|---|---|---|
+| `TurkcellImsOmm` | ~%85 | ✅ | kök tip bağlaması (`emm-record-bindings.yml`) çalışıyor |
+| `TAP-0309` | ~%60 | ✅ | **TAP ailesinin ilk kabulü** — 8 seviye, 423 TLV |
+| `TAP0309` | ~%55 | ✅ | aynı, keyword'süz başlıkta |
+| `EnrichedVerazCdr` | ~%75 | ✅ | **7. kural** — 29 KB dosya baştan sona çözüldü |
+| `CCNCS55_UpdatedCCR_CCN` | ~%70 | ✅ | 7. kural, ikinci bağımsız soyda |
+| `GSN50` | ~%55 | ✅ | **`IMPORTS` çözümü** — ithal edilen `SET` doğru okundu |
+| `IMS-R8-2009-03` | akışa bağlı | ❌ | akış varmış; hata başka yerde (aşağıda) |
+
+Yedi dosyanın altısı ilk denemede geçti. Tahminlerin sıralaması bu sefer de
+tutmadı — en düşük iki tahmin (`TAP0309` %55, `GSN50` %55) geçti.
+
+**Kapsam:**
+
+| | 13.08 | 17.08 | bugün |
+|---|---|---|---|
+| Kanıtlı davranış sınıfı | 8 / 32 | 15 / 32 | **21 / 32** |
+| Kanıtlı modül | 641 (%79) | 695 (%86,7) | **776 (%96,8)** |
+| EMM'den geçen yapı | 12 | 19 | **25** |
+
+Kalan 11 sınıf toplam **26 modül**; ortalama 2,4 modül, hepsi tekil varyant.
+
+##### 🔴 Bulgu 4 — şemanın kendisi eksik: gövdesi yorumlanmış tip
+
+`IMS-R8-2009-03` bu turda ilk kez koşabildi ve gerçek bir hata verdi:
+
+```
+Invalid length 513 of field "recordExtensions"
+```
+
+**Bayt kesinliğinde teşhis — ilk kez.** Gönderilen dosya elde tutuldu ve
+SHA'sı gönderimden önce yazıldığı için hata doğrudan baytla eşleştirildi:
+
+| | |
+|---|---|
+| `recordExtensions [25]` başlangıç | ofset 501 |
+| gönderilen | `B9 0A  04 08 4E 47 44 46 32 39 44 58` |
+| bitiş ofseti | **513** — EMM'in bildirdiği sayının aynısı |
+
+11. turda çıkarılan kural (*"Invalid length N" bir uzunluk değil, düşen düğümün
+bitiş ofseti*) üçüncü kez doğrulandı.
+
+**Kök neden encoder'da değil, vendor'lanan şemada.** Zincir:
+
+```
+recordExtensions [25] ManagementExtensions
+ManagementExtensions ::= SET OF ManagementExtension
+ManagementExtension  ::= SET
+{
+ -- ...
+ -- operator specific record extensions
+ -- ...
+}
+```
+
+Tip tanımlı ama **gövdesi tamamen yorum**. Modülün `IMPORTS` satırı da
+`--IMPORTS` diye yorumlanmış. Yani şemayı vendor'layan taraf paylaşılan
+tanımları elemiş. Çözümleyici koleksiyonu doğru anlıyor (`repeated=true`,
+`set=true`) ama elemanın alanı olmadığı için eleman yaprak olarak yazılıyor:
+`04 08 <8 bayt>`. EMM ise orada bir `SET` bekliyor.
+
+**Self-check bunu yakalayamaz** — üretilen baytları onları üreten alan ağacına
+karşı denetler; boş bir tip kendisiyle tutarlıdır. Bu, günlüğün açılışındaki
+uyarının bir örneği.
+
+**Kopyalama yoluyla doldurmak tahmin olur — ölçüldü.** Korpusta
+`ManagementExtension` **yedi farklı** gövdeyle tanımlı:
+
+| kaç modül | tanım |
+|---|---|
+| 10 | `SEQUENCE { identifier OBJECT IDENTIFIER, significance [1] BOOLEAN DEFAULT FALSE, information [2] OCTET STRING }` |
+| 4 | `SEQUENCE { identifier [UNIVERSAL 6] OCTET STRING, …, information [2] GprsCdrExtensions }` |
+| 2 | `SEQUENCE { …, information [2] ProtocolEnhancements }` |
+| 2 | **`SET`** { `totalNumberOfMessagesSent [1]`, `contributionId [2]`, `nodeId [3]`, … } — `UAGRecordsBer`, `UAGRecordsBer2` |
+| 3 | diğer tekil varyantlar |
+| 1 | boş — `IMS-R8-2009-03`'ün kendisi |
+
+`IMS-R8`'inki `SET` olarak bildirilmiş ve korpusta `SET` diyen tek eşleşme
+`UAGRecordsBer` / `UAGRecordsBer2` (ikisi de IMS/UAG soyu). Yakın bir aday, ama
+**yedi seçenek arasından biri**; şemadan gelen bir bağ yok. Yasin'den EMM'in
+`IMS-R8-2009-03` şemasındaki `ManagementExtension` tanımı istenecek — CHF'te
+aynı yol izlenmişti.
+
+**Kapsam:** korpusta gövdesi boş yapısal tip **9 adet / 3 modülde** —
+`IMS-R8-2009-03` (1), `NRTRDEFdrFile` (4), `NRTRDEFERFile` (4).
+
+**Ara davranış olarak önerilen (henüz uygulanmadı):** alanı OPTIONAL ve tipi
+alanı olmayan bir yapısal tipse, yaprak yazmak yerine **alanı hiç yazmamak**.
+Bilerek yanlış bir opak değer koymaktan iyidir ve dosyayı çözülebilir kılar.
+Bilinmeyen (registry'de olmayan) tip adı bunun dışında kalmalı: orada tipin
+primitive olma ihtimali var, yaprak makul bir varsayılan.
 
 ### IMSCDRS'in çözülmesi — altı turluk eleme
 

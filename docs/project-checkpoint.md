@@ -37,6 +37,13 @@ Frontend (React/Vite) tarafında UI yerleşimi ve indirme mekanizması güncelle
 
 ### EMM Coverage ve Doğrulanmış Yapılar
 
+**18.08.2026 — 15. tur sonuçlandı: 6 PASS / 1 red.** 14. turun üç bulgusunun
+üçü de EMM tarafından doğrulandı (7. tagging kuralı, `IMPORTS` çözümü, kök tip
+bağlaması). Kabul edilen yapı **25**, kanıtlı davranış sınıfı **21/32**, kanıtlı
+modül **776 (%96,8)**. Tek red `IMS-R8-2009-03`: encoder kusuru değil, vendor'lanan
+şemada `ManagementExtension` gövdesi yorumlanmış — ayrıntı `emm-validation-log.md`
+§3 "Bulgu 4". Sıradaki iş Yasin'den EMM'in bu modül için tuttuğu tanımı almak.
+
 **17.08.2026 — 14. tur sonuçlandı: 7 PASS / 6 red / 1 koşulamadı.** Kabul edilen
 yapı 12'den **19**'a, kanıtlı davranış sınıfı 8/32'den **15/32**'ye, kanıtlı
 modül 641'den **695'e (%86,7)** çıktı. Yeni geçenler: `ConvergenceCdr`,
