@@ -582,11 +582,44 @@ uyarının bir örneği.
 | 3 | diğer tekil varyantlar |
 | 1 | boş — `IMS-R8-2009-03`'ün kendisi |
 
-`IMS-R8`'inki `SET` olarak bildirilmiş ve korpusta `SET` diyen tek eşleşme
-`UAGRecordsBer` / `UAGRecordsBer2` (ikisi de IMS/UAG soyu). Yakın bir aday, ama
-**yedi seçenek arasından biri**; şemadan gelen bir bağ yok. Yasin'den EMM'in
-`IMS-R8-2009-03` şemasındaki `ManagementExtension` tanımı istenecek — CHF'te
-aynı yol izlenmişti.
+**18.08 — modülün tam metni geldi, aday sayısı ikiye indi.** Yorumlanmış
+`IMPORTS` bloğu kaynağı adıyla veriyor:
+
+```
+--IMPORTS
+--RecordType, IPAddress, ManagementExtensions, NodeAddress, LocalSequenceNumber,
+--SubscriptionID, TimeStamp, ServiceContextID
+--FROM GenericChargingDataTypes {itu-t (0) ... genericChargingDataTypes (0) ...}
+```
+
+`GenericChargingDataTypes` **bu veri setinde yok**, yani import kapatması onu
+çözemez. Ama vendor'lama deseni artık görünür: o sekiz tipin **yedisi modüle
+elle gömülmüş** (`RecordType`, `IPAddress`, `NodeAddress`,
+`LocalSequenceNumber`, `SubscriptionID`, `TimeStamp`, `ServiceContextID` —
+hepsinin gövdesi dolu). Boş bırakılan tek tip `ManagementExtension`, yani
+tek bir aktarım boşluğu.
+
+İki aday kaldı:
+
+| aday | dayanak | zayıf yanı |
+|---|---|---|
+| **A —** `SEQUENCE { identifier OBJECT IDENTIFIER, significance [1] BOOLEAN DEFAULT FALSE, information [2] OCTET STRING }` | Yorumlanmış IMPORTS bu tipi **3GPP generic** modülden aldığını söylüyor; korpustaki **10 modül** birebir bu gövdeyi taşıyor (`LTE-R10`, `GGSNTurkcellCdrR7`, `CDRF-R7/R9`, `LTE-R8` …) | IMS-R8'in kendi stub'ı `SET` diyor, bu `SEQUENCE` |
+| **B —** `SET { totalNumberOfMessagesSent [1], contributionId [2], nodeId [3], … }` | Stub'daki `SET` anahtar kelimesiyle uyuşuyor; `UAGRecordsBer` / `UAGRecordsBer2` aynı IMS/UAG soyundan | Yalnızca 2 modül; IMPORTS'un işaret ettiği generic modül değil |
+
+⚠️ **A, EMM tarafından doğrulanmış DEĞİL.** `LTE-R10` ve `GGSNTurkcellCdrR7`
+bu tipi tanımlıyor ama **hiçbir alanda kullanmıyor** — ölçüldü. Yani o iki
+kabul edilmiş dosyada EMM hiç `ManagementExtension` çözmedi. A'nın gücü
+korpus tutarlılığından ve IMPORTS satırından geliyor, dış kanıttan değil.
+
+EMM'in hatası da ayırt etmiyor: `04 08` gönderdik, hem `30` hem `31` beklentisi
+bunu reddederdi.
+
+İki yol var ve ikisi birlikte de yürütülebilir: (1) Yasin'den **EMM'in
+`GenericChargingDataTypes`'taki `ManagementExtension` tanımı**nı istemek,
+(2) tek turda A/B çifti göndermek — `IMSCDRS` ve `CHF` tam olarak böyle
+çözülmüştü. Üçüncü bir dosya (`recordExtensions` hiç yazılmadan) kalan
+~1830 baytın doğruluğunu bağımsız olarak kanıtlar; EMM 2343 baytın yalnızca
+513'üne kadar okuyabildi.
 
 **Kapsam:** korpusta gövdesi boş yapısal tip **9 adet / 3 modülde** —
 `IMS-R8-2009-03` (1), `NRTRDEFdrFile` (4), `NRTRDEFERFile` (4).
