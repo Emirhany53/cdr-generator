@@ -479,6 +479,8 @@ public class AsnFieldTreeResolver {
                 .tagClass(effectiveTag.tagClass())
                 .explicit(effectiveExplicit(effectiveTag, repeated, choiceElement, taggingMode))
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
+                .structuralTypeWithNoComponents(
+                        field.isOptional() && isStructuralTypeWithNoComponents(registry, innerType))
                 .children(children.isEmpty() ? null : children)
                 .build();
         if (repeated) {
@@ -846,6 +848,8 @@ public class AsnFieldTreeResolver {
                     .tagClass(fieldTag.tagClass())
                     .explicit(effectiveExplicit(fieldTag, repeated, choiceElement, taggingMode))
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
+                    .structuralTypeWithNoComponents(
+                            parsed.isOptional() && isStructuralTypeWithNoComponents(registry, innerType))
                     .children(children.isEmpty() ? null : children)
                     .build();
             if (repeated) {
@@ -1292,6 +1296,49 @@ public class AsnFieldTreeResolver {
             }
             if (def.getKind() == AsnTypeKind.SET) {
                 return true;
+            }
+            if (def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+                return false;
+            }
+            String target = stripConstraint(stripAliasTag(def.getAliasTarget()));
+            current = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
+        }
+        return false;
+    }
+
+    /**
+     * True when {@code typeName} resolves to a SEQUENCE, SET or CHOICE whose
+     * body declares NO components, following ALIAS chains and named collection
+     * aliases exactly as {@link #isSetType} does.
+     *
+     * <p>This asks about the DEFINITION, not about the resolution result.
+     * {@link #resolveByTypeName} returns an empty list in four unrelated cases -
+     * type absent from the registry, recursion guard tripped, ENUMERATED, and
+     * structured-but-empty - and only the last is a container the encoder must
+     * still write as one. Reading the outcome instead of the body would fold the
+     * other three in with it: an unresolved type name may well be primitive, and
+     * a field cut off by the depth guard has real components that simply were
+     * not walked.</p>
+     *
+     * <p>The body is blank rather than absent because
+     * {@link AsnTypeRegistryBuilder} strips comments before it records
+     * {@code rawBody}, so {@code SET { -- operator specific record extensions }}
+     * arrives here as whitespace. See
+     * {@link com.turkcell.cdrgenerator1.model.AsnField#isStructuralTypeWithNoComponents()}
+     * for the site that made this necessary and what EMM answered there.</p>
+     */
+    private boolean isStructuralTypeWithNoComponents(Map<String, AsnTypeDefinition> registry, String typeName) {
+        String current = stripConstraint(typeName);
+        Set<String> guard = new HashSet<>();
+        while (current != null && guard.add(current)) {
+            AsnTypeDefinition def = registry.get(current);
+            if (def == null) {
+                return false;
+            }
+            if (def.getKind() == AsnTypeKind.SEQUENCE
+                    || def.getKind() == AsnTypeKind.SET
+                    || def.getKind() == AsnTypeKind.CHOICE) {
+                return def.getRawBody() == null || def.getRawBody().isBlank();
             }
             if (def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
                 return false;

@@ -174,6 +174,17 @@ public class CdrRecordBuilder {
                 record.put(recordKey, field.isRepeated()
                         ? buildRepeatedGroup(field, context, fieldPath)
                         : buildFields(field.getChildren(), context, fieldPath, field.isChoice()));
+            } else if (field.isStructuralTypeWithNoComponents()) {
+                // The type IS a container; it just declares nothing (X.690 8.11:
+                // a SET or SEQUENCE with no components has zero content octets).
+                // An empty BODY is therefore the value here, not a leaf - which
+                // is what the encoder reads to write 31 00 / 30 00 instead of a
+                // generated string under OCTET STRING's tag.
+                //
+                // Exactly one element for a collection: every element of a
+                // SET OF <empty SET> is the same 31 00, so a second one carries
+                // no information and only puts a duplicate TLV on the wire.
+                record.put(recordKey, field.isRepeated() ? List.of(Map.of()) : Map.of());
             } else if (field.isRepeated()) {
                 record.put(recordKey, buildRepeatedLeaf(field, context, fieldPath));
             } else {

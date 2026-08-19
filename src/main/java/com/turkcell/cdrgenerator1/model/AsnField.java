@@ -176,5 +176,50 @@ public class AsnField {
      */
     private Integer universalTagOverride;
 
+    /**
+     * True when this field's type - or, for a collection, its ELEMENT type - is
+     * a type the registry KNOWS and that is declared SEQUENCE, SET or CHOICE,
+     * but whose body declares no components at all.
+     *
+     * <p>{@link #children} is null for four different reasons: the type is not
+     * in the registry, the recursion guard stopped, the type is an ENUMERATED,
+     * or the type is structured and empty. Only the last one is a container, and
+     * without this flag the encoder cannot tell it from the other three - it
+     * sees an empty child list and writes a primitive leaf.</p>
+     *
+     * <p>{@code IMS-R8-2009-03} is where that showed:</p>
+     *
+     * <pre>
+     * recordExtensions [25] ManagementExtensions OPTIONAL
+     * ManagementExtensions ::= SET OF ManagementExtension
+     * ManagementExtension  ::= SET { -- operator specific record extensions }
+     * </pre>
+     *
+     * <p>The body is entirely comment, and the module's IMPORTS clause is
+     * commented out too, so nothing else can supply one - confirmed by the
+     * schema's owner: {@code GenericChargingDataTypes} is named in that comment
+     * but never used. The empty SET is the definition, not a gap in it. X.690
+     * 8.11 gives it one encoding, {@code 31 00}, and X.690 8.10 requires each
+     * element of the SET OF to carry it; we sent {@code 04 08 4E 47 44 46 ..}
+     * instead and EMM refused the record at exactly that offset ("Invalid length
+     * 513", the node's end offset).</p>
+     *
+     * <p>9 sites carry this across the corpus, all of them OPTIONAL, in 3
+     * modules: {@code IMS-R8-2009-03} (1, a SET), {@code NRTRDEFdrFile} and
+     * {@code NRTRDEFERFile} (4 each, SEQUENCEs). None of the three is an IMPORTS
+     * source, so no other module's bytes can change through them.</p>
+     *
+     * <p>Deliberately set ONLY where the field is also OPTIONAL. Nothing about
+     * X.690 8.11 needs that - a mandatory componentless SET would encode
+     * {@code 31 00} just the same - but every one of the 9 measured sites is
+     * OPTIONAL, and holding the flag to the ground that was measured is what
+     * keeps a mandatory field somewhere else from silently changing shape. The
+     * condition lives here rather than at the two use sites so
+     * {@code CdrRecordBuilder} and {@code BerEncoderService} cannot drift apart:
+     * the builder emits an empty body exactly where the encoder expects one, and
+     * a mismatch would surface as "is constructed and expects an object value".</p>
+     */
+    private boolean structuralTypeWithNoComponents;
+
     private List<AsnField> children;
 }

@@ -226,6 +226,12 @@ public class BerEncoderService {
             throw new BerEncodingException(
                     "Field '" + field.getFieldName() + "' is constructed and expects an object value");
         }
+        // A structured type that declares no components has no child list to
+        // walk, and X.690 8.11 gives it zero content octets - so the container
+        // is written, empty, rather than skipped or filled with a leaf.
+        if (Objects.isNull(field.getChildren())) {
+            return new byte[0];
+        }
         return encodeFieldList(field.getChildren(), childValues);
     }
 
@@ -330,9 +336,20 @@ public class BerEncoderService {
         return tlvWriter.encodeHex(text);
     }
 
-    /** A field is constructed when the resolver attached child definitions to it. */
+    /**
+     * A field is constructed when the resolver attached child definitions to it,
+     * or when it names a structured type that declares no components at all.
+     *
+     * <p>The second case has no children to count and still has to go out as a
+     * container: {@code ManagementExtension ::= SET { -- operator specific }} is
+     * an empty SET, and X.690 8.11 encodes it {@code 31 00}. Reading only the
+     * child list sent {@code 04 08 4E 47 44 46 ..} in its place and EMM refused
+     * the record at that node. See
+     * {@link AsnField#isStructuralTypeWithNoComponents()}.</p>
+     */
     private boolean isConstructed(AsnField field) {
-        return Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty();
+        return field.isStructuralTypeWithNoComponents()
+                || (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty());
     }
 
     /**

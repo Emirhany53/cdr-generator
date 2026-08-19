@@ -76,6 +76,7 @@ aynı baytı üretir.
 | 13 | CHF: D `[4]`, E `[5]`, F `[5]` düzleştirilmiş | **D ✓ · E ✗ · F ✓** — teşhis kesin, düzeltme doğrulandı |
 | 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **7 PASS · 6 red · 1 koşulamadı** (17.08.2026) |
 | 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | **6 PASS · 1 red** (18.08.2026) — üç düzeltmenin üçü de doğrulandı |
+| 16 | `IMS-R8-2009-03-A` (boş SET kodlaması 31 00, tek değişken) | **red — ama `[25]` doğrulandı** (19.08.2026): `recordExtensions` hatası kalktı, EMM 513 → **2065**'e ilerledi, yeni hata `list-of-Call-Transfer-Info` |
 
 ### 7. turda gönderilen dosyalar
 
@@ -670,6 +671,44 @@ primitive olma ihtimali var, yaprak makul bir varsayılan.
 
 Bildirilen "Invalid length N" her seferinde **tam dosya boyutuydu** (590/114/411).
 EMM'in şeması bizimkiyle alan alan aynı çıktı — fark yorumdaydı, bildirimde değil.
+
+### 16. turda gönderilen dosyalar
+
+Sorumluya gönderildi. Bu turda, `IMS-R8-2009-03` dosyasındaki
+`ManagementExtension ::= SET {}` boş gövdesi için `31 00` kodlaması test edildi.
+Dosya, 15. turda gönderilen dosyanın üzerinden yalnızca `recordExtensions` kısmı
+değiştirilerek oluşturuldu; geri kalan baytlar aynıdır.
+
+| # | dosya | bayt | sonuç | SHA-256 |
+|---|---|---|---|---|
+| 1 | `IMS-R8-2009-03-A.ber` | 2335 | ❌ red — ama başka alanda | `a175b59782472e3cddcb94b4edf67109640fba98adeae37376e30b34d5474c8a` |
+
+- **Kök uzunluğu**: `bf 45 82 09 1a`
+- **recordExtensions byte'ları**: `b9 02 31 00`
+
+#### ✅ 16. tur sonucu (19.08.2026) — `[25]` doğrulandı, hata ileri taşındı
+
+Dosya yine reddedildi, ama **`recordExtensions` hatası ortadan kalktı**:
+
+```
+Invalid length 2065 of field "list-of-Call-Transfer-Info"
+```
+
+**Ne kanıtlandı.** EMM'in durduğu ofset **513 → 2065**'e taşındı. Aradaki
+mesafe ölçüldü: 15. turda kök gövdesinin ilk 20 üst düzey bileşeni okunabilmişti,
+16. turda **113**'ü okundu — yani **93 yeni bileşen / 1560 yeni bayt** çözüldü.
+
+Bu, `ManagementExtension ::= SET {}` okumasının **EMM tarafından doğrulanması**
+demek. `04 08 <8 bayt>` yaprağı yerine `31 00` (X.690 8.11: bileşeni olmayan bir
+SET'in içerik okteti yoktur) yazmak doğruymuş. Aynı zamanda Yasin'in
+"`GenericChargingDataTypes` kullanılmıyor, sadece yorumda var" bilgisini dolaylı
+olarak teyit ediyor: aday A (`SEQUENCE` gövdeli 3GPP generic) ya da aday B
+(`UAGRecordsBer`'in `SET` gövdesi) doğru olsaydı, boş bir `31 00` o noktada
+reddedilirdi. Şema eksik değilmiş — boş `SET` tanımın kendisiymiş.
+
+11. turda çıkarılan kural (*"Invalid length N" bir uzunluk değil, düşen düğümün
+bitiş ofseti*) beşinci kez doğrulandı: `[428]` düğümü ofset 2031'de başlıyor,
+**2065**'te bitiyor; TLV uzunluğu 30, dosya boyutu 2335 — ikisi de değil.
 
 ## 4. Açık sorular
 
