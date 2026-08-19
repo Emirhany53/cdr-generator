@@ -448,7 +448,27 @@ public class AsnFieldTreeResolver {
         if (inlineCollection) {
             innerType = extractRepeatedInnerType(innerType);
         }
-        boolean repeated = field.isRepeated() || inlineCollection || isAliasRepeated(registry, innerType);
+        boolean aliasRepeated = isAliasRepeated(registry, innerType);
+        boolean repeated = field.isRepeated() || inlineCollection || aliasRepeated;
+        // Two collection layers, e.g. list-of-Call-Transfer-Info [428]
+        // SEQUENCE OF Call-Transfer-Info-List, Call-Transfer-Info-List ::=
+        // SEQUENCE OF Call-Transfer-Info: the field's own inline collection is
+        // the FIRST layer, and the ELEMENT type it names (innerType, here
+        // "Call-Transfer-Info-List") being itself a named collection alias -
+        // aliasRepeated - is the SECOND. See AsnField#isNestedCollectionElement.
+        //
+        // The field's own inline collection is read from field.isRepeated(),
+        // NOT the local 'inlineCollection' above: parseFieldLine already
+        // reduces "SEQUENCE OF X" to X and sets isRepeated() on the ORIGINAL
+        // (unresolved) field the moment it parses the line, so by the time
+        // this method runs, field.getFieldType() never still carries the
+        // "SEQUENCE OF"/"SET OF" prefix and 'inlineCollection' here is always
+        // false. field.isRepeated() is the one signal that survives that
+        // earlier reduction and still says the field's OWN text was a
+        // collection.
+        boolean nestedCollectionElement = field.isRepeated() && aliasRepeated;
+        boolean nestedCollectionElementIsSet = nestedCollectionElement
+                && isAliasRepeatedAsSet(registry, innerType);
         List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                 cache, taggingMode);
         String fieldType = resolveFieldType(registry, field.getFieldType(), innerType, children);
@@ -481,6 +501,8 @@ public class AsnFieldTreeResolver {
                 .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                 .structuralTypeWithNoComponents(
                         field.isOptional() && isStructuralTypeWithNoComponents(registry, innerType))
+                .nestedCollectionElement(nestedCollectionElement)
+                .nestedCollectionElementIsSet(nestedCollectionElementIsSet)
                 .children(children.isEmpty() ? null : children)
                 .build();
         if (repeated) {
@@ -816,7 +838,15 @@ public class AsnFieldTreeResolver {
             if (inlineCollection) {
                 innerType = extractRepeatedInnerType(innerType);
             }
-            boolean repeated = parsed.isRepeated() || inlineCollection || isAliasRepeated(registry, innerType);
+            boolean aliasRepeated = isAliasRepeated(registry, innerType);
+            boolean repeated = parsed.isRepeated() || inlineCollection || aliasRepeated;
+            // See AsnField#isNestedCollectionElement and the twin computation
+            // (and the note on why 'parsed.isRepeated()', not the local
+            // 'inlineCollection', is the field's-own-collection signal here)
+            // in attachChildren.
+            boolean nestedCollectionElement = parsed.isRepeated() && aliasRepeated;
+            boolean nestedCollectionElementIsSet = nestedCollectionElement
+                    && isAliasRepeatedAsSet(registry, innerType);
             List<AsnField> children = resolveByTypeName(registry, innerType, choiceSelections, visiting, depth + 1,
                     cache, taggingMode);
 
@@ -850,6 +880,8 @@ public class AsnFieldTreeResolver {
                     .universalTagOverride(resolveUniversalTagOverride(registry, innerType))
                     .structuralTypeWithNoComponents(
                             parsed.isOptional() && isStructuralTypeWithNoComponents(registry, innerType))
+                    .nestedCollectionElement(nestedCollectionElement)
+                    .nestedCollectionElementIsSet(nestedCollectionElementIsSet)
                     .children(children.isEmpty() ? null : children)
                     .build();
             if (repeated) {
@@ -1154,6 +1186,27 @@ public class AsnFieldTreeResolver {
             return false;
         }
         return isRepeatedExpression(stripConstraint(stripAliasTag(def.getAliasTarget())));
+    }
+
+    /**
+     * True when {@code typeName} is a {@link #isAliasRepeated} alias declared
+     * {@code SET OF} rather than {@code SEQUENCE OF}.
+     *
+     * <p>Only consulted for {@link AsnField#isNestedCollectionElement} - the
+     * middle layer's OWN kind, distinct from {@link #isSetType}, which follows
+     * the SAME alias one step further to the innermost element type
+     * ({@code Call-Transfer-Info-List} -&gt; {@code Call-Transfer-Info}). Two
+     * different questions the two-layer case needs answered separately: what
+     * wraps the middle collection's own elements, and what tag the middle
+     * wrapper itself carries.</p>
+     */
+    private boolean isAliasRepeatedAsSet(Map<String, AsnTypeDefinition> registry, String typeName) {
+        AsnTypeDefinition def = registry.get(typeName);
+        if (def == null || def.getKind() != AsnTypeKind.ALIAS || def.getAliasTarget() == null) {
+            return false;
+        }
+        String target = stripConstraint(stripAliasTag(def.getAliasTarget()));
+        return isRepeatedExpression(target) && SET_OF_PREFIX.matcher(target).lookingAt();
     }
 
     /**
@@ -1462,6 +1515,9 @@ public class AsnFieldTreeResolver {
     private static final Pattern COLLECTION_PREFIX = Pattern.compile(
             "^(?:SEQUENCE|SET)\\b.*?\\bOF\\b\\s*",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    /** Distinguishes {@code SET OF} from {@code SEQUENCE OF} for {@link #isAliasRepeatedAsSet}. */
+    private static final Pattern SET_OF_PREFIX = Pattern.compile("^SET\\b", Pattern.CASE_INSENSITIVE);
 
     private boolean isRepeatedExpression(String typeExpr) {
         return Objects.nonNull(typeExpr)

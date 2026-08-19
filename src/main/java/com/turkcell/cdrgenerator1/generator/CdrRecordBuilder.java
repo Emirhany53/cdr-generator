@@ -171,9 +171,11 @@ public class CdrRecordBuilder {
             String fieldPath = buildPath(pathPrefix, field.getFieldName());
 
             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
-                record.put(recordKey, field.isRepeated()
-                        ? buildRepeatedGroup(field, context, fieldPath)
-                        : buildFields(field.getChildren(), context, fieldPath, field.isChoice()));
+                record.put(recordKey, field.isNestedCollectionElement()
+                        ? buildNestedCollectionGroup(field, context, fieldPath)
+                        : field.isRepeated()
+                                ? buildRepeatedGroup(field, context, fieldPath)
+                                : buildFields(field.getChildren(), context, fieldPath, field.isChoice()));
             } else if (field.isStructuralTypeWithNoComponents()) {
                 // The type IS a container; it just declares nothing (X.690 8.11:
                 // a SET or SEQUENCE with no components has zero content octets).
@@ -205,6 +207,30 @@ public class CdrRecordBuilder {
             items.add(buildFields(field.getChildren(), context, elementPath, field.isChoice()));
         }
         return items;
+    }
+
+    /**
+     * A {@link AsnField#isNestedCollectionElement()} field: the outer
+     * collection generates exactly ONE instance of its middle-layer type
+     * (e.g. one {@code Call-Transfer-Info-List}), holding
+     * {@link #repeatCountFor} elements of the innermost type (e.g.
+     * {@code Call-Transfer-Info}) - the same element count an ordinary
+     * single-layer collection would generate, just wrapped one layer deeper.
+     *
+     * <p>The outer list always has size 1: nothing in the corpus measures how
+     * many middle-layer instances a real record carries, so generating more
+     * than the one instance needed to prove the missing wrapper would be
+     * inventing an answer nobody asked for.</p>
+     */
+    private List<List<Map<String, Object>>> buildNestedCollectionGroup(AsnField field, ValueSourceContext context,
+                                                                       String fieldPath) {
+        int innerCount = repeatCountFor(field);
+        List<Map<String, Object>> innerElements = new ArrayList<>(innerCount);
+        for (int index = 0; index < innerCount; index++) {
+            String elementPath = fieldPath + INDEX_OPEN + index + INDEX_CLOSE;
+            innerElements.add(buildFields(field.getChildren(), context, elementPath, field.isChoice()));
+        }
+        return List.of(innerElements);
     }
 
     private List<String> buildRepeatedLeaf(AsnField field, ValueSourceContext context, String fieldPath) {

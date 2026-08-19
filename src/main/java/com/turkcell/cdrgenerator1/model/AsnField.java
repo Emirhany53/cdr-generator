@@ -221,5 +221,48 @@ public class AsnField {
      */
     private boolean structuralTypeWithNoComponents;
 
+    /**
+     * True when this field's own repetition ({@link #repeated}) wraps an
+     * ELEMENT type that is ITSELF a named {@code SEQUENCE OF} / {@code SET OF}
+     * alias - two collection layers where {@link #repeated} can only record
+     * one.
+     *
+     * <p>{@code list-of-Call-Transfer-Info [428] SEQUENCE OF
+     * Call-Transfer-Info-List} is the case: the field's inline
+     * {@code SEQUENCE OF} is the layer {@link #repeated} already carries, but
+     * {@code Call-Transfer-Info-List ::= SEQUENCE OF Call-Transfer-Info} is a
+     * SECOND collection with no field of its own to hold a flag - so
+     * {@link com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver#resolveAlias}
+     * opened it and had nowhere to record that it had. {@link #children} ended
+     * up holding {@code Call-Transfer-Info}'s fields directly, one collection
+     * layer short: the encoder wrote {@code BF 83 2C .. 31 0D .. 31 0D ..} with
+     * the middle {@code Call-Transfer-Info-List} wrapper never written - X.690
+     * 8.10 makes the content of a {@code SEQUENCE OF T} the concatenation of
+     * T's own encodings, and T here (Call-Transfer-Info-List) is itself a
+     * {@code SEQUENCE OF}, so it needed its own {@code 30 ..} TLV around the
+     * {@code 31 0D} elements. EMM refused the record exactly at that missing
+     * node's end offset ("Invalid length 2065").</p>
+     *
+     * <p>Deliberately narrow: only true when BOTH the field's own type is an
+     * inline collection AND the element type it names is itself a named
+     * collection alias - the one shape measured to lose a layer. A field whose
+     * element type is an ordinary SEQUENCE/SET (the overwhelming majority of
+     * repeated fields, including every EMM-accepted one) leaves this false and
+     * encodes exactly as before.</p>
+     */
+    private boolean nestedCollectionElement;
+
+    /**
+     * For {@link #nestedCollectionElement}, whether the MIDDLE collection - the
+     * named alias itself ({@code Call-Transfer-Info-List ::= SEQUENCE OF
+     * Call-Transfer-Info}) - is declared {@code SET OF} rather than
+     * {@code SEQUENCE OF}. This is NOT {@link #set}: {@link #set} already
+     * correctly names the INNERMOST element's kind (Call-Transfer-Info, a SET,
+     * unaffected by this change), while this flag picks the universal tag - 17
+     * vs 16 - for the wrapper the middle layer needs around its own elements
+     * and did not have anywhere to write before.
+     */
+    private boolean nestedCollectionElementIsSet;
+
     private List<AsnField> children;
 }

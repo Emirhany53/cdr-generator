@@ -42,6 +42,7 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 | `EnrichedVerazCdr` | BER | 29 KB, 26 long-form uzunluk; 7. kural doğrulandı (15. tur) |
 | `CCNCS55_UpdatedCCR_CCN` | BER | 7. kural, ikinci bağımsız soyda doğrulandı (15. tur) |
 | `GSN50` | BER | **çözülmüş `IMPORTS`** — ithal edilen `SET` doğru çözüldü (15. tur) |
+| `IMS-R8-2009-03` (ATSRecord) | BER | boş `SET` gövdesi `31 00`; iç içe koleksiyonun kayıp orta katmanı (`30`) tamamlandı (16-17. tur) |
 
 ## 2. EMM ile kanıtlanan tagging kuralları
 
@@ -77,6 +78,7 @@ aynı baytı üretir.
 | 14 | Davranış sınıfı korpusu — 14 dosya (13.08.2026) | **7 PASS · 6 red · 1 koşulamadı** (17.08.2026) |
 | 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | **6 PASS · 1 red** (18.08.2026) — üç düzeltmenin üçü de doğrulandı |
 | 16 | `IMS-R8-2009-03-A` (boş SET kodlaması 31 00, tek değişken) | **red — ama `[25]` doğrulandı** (19.08.2026): `recordExtensions` hatası kalktı, EMM 513 → **2065**'e ilerledi, yeni hata `list-of-Call-Transfer-Info` |
+| 17 | `IMS-R8-2009-03-A-round17` (iç içe koleksiyonun orta katmanı, tek değişken) | **PASS** (19.08.2026) — `IMS-R8-2009-03` bu sınıfın ilk tam kabulü |
 
 ### 7. turda gönderilen dosyalar
 
@@ -709,6 +711,103 @@ reddedilirdi. Şema eksik değilmiş — boş `SET` tanımın kendisiymiş.
 11. turda çıkarılan kural (*"Invalid length N" bir uzunluk değil, düşen düğümün
 bitiş ofseti*) beşinci kez doğrulandı: `[428]` düğümü ofset 2031'de başlıyor,
 **2065**'te bitiyor; TLV uzunluğu 30, dosya boyutu 2335 — ikisi de değil.
+
+##### 🔴 Bulgu 5 — iç içe koleksiyonun orta katmanı yazılmıyor
+
+Yeni hatanın kök nedeni `ManagementExtension`'dan bağımsız ve **şema kusuru
+değil**; zincirin üç katmanı da tam gövdeli:
+
+```
+list-of-Call-Transfer-Info [428] SEQUENCE OF Call-Transfer-Info-List OPTIONAL
+Call-Transfer-Info-List   ::= SEQUENCE OF Call-Transfer-Info
+Call-Transfer-Info        ::= SET { call-Transfer-Type [0] OPTIONAL,
+                                    call-Transfer-Data [1] UTF8String OPTIONAL }
+```
+
+**İki koleksiyon katmanı var, biz bir tane yazıyoruz.** `AsnField.repeated` bir
+boolean — "koleksiyon mu?" sorusunu cevaplıyor, "kaç katman?" sorusunu değil.
+`resolveAlias` ikinci `SEQUENCE OF`'u açıyor ama onu kaydedecek yer yok, ve
+`children` doğrudan `Call-Transfer-Info`'nun alanlarını taşıyor.
+
+| | bayt |
+|---|---|
+| gönderilen | `BF 83 2C 1E  31 0D 80 01 00 81 08 ..  31 0D 80 01 00 81 08 ..` |
+| olması gereken | `BF 83 2C 20  30 1E  31 0D ..  31 0D ..` |
+
+X.690 8.10: bir `SEQUENCE OF T`'nin içeriği **T'nin kendi kodlamalarının**
+birleşimidir. Burada T = `Call-Transfer-Info-List`, o da bir `SEQUENCE OF` —
+yani kendi `30` TLV'sini taşımak zorunda. `[428]` IMPLICIT olduğu için yalnızca
+**dış** koleksiyonun universal tag'inin yerine geçiyor; orta katmana dokunmuyor.
+
+**Kapsam ölçüldü.** Korpusta iç içe koleksiyon **36 site / 20 modül**, hepsi tam
+olarak 2 katman (3 katman yok). Ama 36'dan **yalnızca 1'i üretilen ağaçta**:
+`IMS-R8-2009-03.ATSRecord.list-of-Call-Transfer-Info`. Kalan 35'i
+`ContextParameterValueType.groups` ve XML modüllerindeki muadilleri — hiçbiri
+modülünün seçili kökünden erişilebilir değil. Bu önemli, çünkü aralarında
+EMM'den geçmiş üç yapı var (`CHAD`, `TurkcellCDRCCNCS5`,
+`CCNCS55_UpdatedCCR_CCN`); erişilemedikleri için baytları değişemez.
+
+**Karşıt örnek — bozulmaması gereken tek katmanlı desen.** MMTel'in
+`list-Of-Calling-Party-Address ::= ListOfInvolvedParties`,
+`ListOfInvolvedParties ::= SEQUENCE OF InvolvedParty` sitesi EMM'den geçmiş ve
+gerçek yakalamaya karşı doğrulanmış. Orada alan satırında **kendi** koleksiyonu
+yok, tek katman var. Ayırt edici koşul tam olarak bu: alanın kendisi koleksiyon
+**ve** adlandırdığı eleman tipinin de koleksiyon alias'ı olması.
+
+### 17. turda gönderilen dosyalar
+
+Tek dosya, tek değişken. 16. turun A dosyasının üzerinden **yalnızca `[428]`
+düğümü** yamalanarak üretildi; `[25]` dahil diğer her bayt aynı.
+
+| # | dosya | bayt | sonuç | SHA-256 |
+|---|---|---|---|---|
+| 1 | `IMS-R8-2009-03-A-round17.ber` | 2337 | ✅ **PASS** | `3c7f0b1940efef823d2e5176005a429eb47aa6bbe46b7ccdb9495ac304955ef3` |
+
+- **Kök**: `bf 45 82 09 1c` (len=2332, dosya sonuyla örtüşüyor); 126 üst düzey
+  bileşen, boşluksuz döşeme
+- **`recordExtensions [25]`**: `b9 02 31 00` — **16. turun düzeltmesi korundu**
+- **`list-of-Call-Transfer-Info [428]`**:
+  `bf 83 2c 20  30 1e  31 0d 80 01 00 81 08 ..  31 0d 80 01 00 81 08 ..`
+- 16. tur A dosyasına göre değişmeyen bölgeler: `[25]` öncesi ve kendisi,
+  `[25]`–`[428]` arası **1526 bayt**, `[428]` sonrası **270 bayt** — hepsi birebir
+
+Dosya `scratchpad/round17/` altında duruyor (`target/` değil: 14. turda dosyalar
+`mvn clean` ile silinmiş ve üretici tohumsuz olduğu için geri getirilememişti).
+
+#### ✅ 17. tur sonucu (19.08.2026) — PASS, `IMS-R8-2009-03` tam kabul
+
+Sorumlunun ifadesiyle *"dosya başarıyla işlendi"* — önceki hiçbir hata mesajı
+dönmedi. Bu, 14. turdan beri üç ayrı bulguyla uğraşılan `IMS-R8-2009-03`'ün
+**ilk tam kabulü**:
+
+| tur | hata | düzeltme |
+|---|---|---|
+| 14 | akış yok, koşulamadı | — |
+| 15 | `Invalid length 513` @ `recordExtensions` | `ManagementExtension ::= SET {}` → `31 00` (16. tur ile doğrulandı) |
+| 16 | `Invalid length 2065` @ `list-of-Call-Transfer-Info` | iç içe koleksiyonun orta katmanı → `30` sarmalayıcı (17. tur ile doğrulandı) |
+| 17 | — | **PASS** |
+
+İki ayrı kod değişikliği, iki ayrı EMM turunda, ikisi de tek-değişken disipliniyle
+doğrulandı: her turda önceki turun kabul edilen baytları elde tutuldu, yalnızca
+tartışmalı düğüm yamalandı, ve SHA gönderimden önce yazıldı. Bu, `IMSCDRS` ve
+`CHF`'in altı-yedi tur süren eleme sürecine göre çok daha hızlı kapandı — çünkü
+her iki bulgu da (boş `SET` gövdesi, iç içe koleksiyonun kayıp katmanı) tahmine
+değil doğrudan X.690'ın ilgili maddesine dayanıyordu.
+
+**Kapsam güncellendi:**
+
+| | 18.08 (15. tur sonrası) | 19.08 (17. tur sonrası) |
+|---|---|---|
+| Kanıtlı davranış sınıfı | 21 / 32 | **23 / 32** |
+| EMM'den geçen yapı | 25 | **26** |
+
+**Bu turda bilerek çözülmeyen:** düzeltmeden sonra self-check `[428]` altında
+4 uyarı veriyor (`duplicate-tag`, `set-ordering`, 2× `walker`). `BerVerifier`
+yeni orta `30` düğümünü şemasız geziyor ve iki `31` elemanını "aynı tag iki kez"
+sanıyor. `DuplicateTagRule` UNIVERSAL sınıf tekrarını zaten **her zaman WARNING**
+sayıyor (120 modüllük "ALLOPTIONAL" emsali), `errors=0` kaldı ve STRICT modda
+dosya üretilmeye devam ediyor. Verifier'ın koleksiyon farkındalığı ayrı bir iş.
+
 
 ## 4. Açık sorular
 

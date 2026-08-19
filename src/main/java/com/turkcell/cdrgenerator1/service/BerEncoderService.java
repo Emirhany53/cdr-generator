@@ -199,7 +199,9 @@ public class BerEncoderService {
         ByteArrayOutputStream elementBuffer = new ByteArrayOutputStream();
         for (Object element : elements) {
             byte[] inner;
-            if (elementIsChoice) {
+            if (field.isNestedCollectionElement()) {
+                inner = encodeNestedCollectionElement(field, element);
+            } else if (elementIsChoice) {
                 inner = encodeConstructed(field, element);
             } else if (Objects.nonNull(elementTagCarrier)) {
                 inner = encodeField(elementTagCarrier, element);
@@ -218,6 +220,30 @@ public class BerEncoderService {
             elementBuffer.writeBytes(inner);
         }
         return wrapInTlv(field, elementBuffer.toByteArray());
+    }
+
+    /**
+     * One element of an {@link AsnField#isNestedCollectionElement()} field:
+     * {@code element} is the generated middle-layer instance (a list of the
+     * innermost type's values, e.g. the {@code Call-Transfer-Info} entries of
+     * one {@code Call-Transfer-Info-List}). Each of those gets the ordinary
+     * per-element wrapping {@code field.isSet()} already names correctly for
+     * the INNERMOST type, and the concatenation is wrapped once more in the
+     * MIDDLE collection's own universal tag - 17 for a {@code SET OF}, 16 for
+     * a {@code SEQUENCE OF} - which {@link AsnField#isNestedCollectionElementIsSet()}
+     * carries. See {@code AsnField#isNestedCollectionElement} for why this
+     * layer had nowhere to be written before.
+     */
+    private byte[] encodeNestedCollectionElement(AsnField field, Object element) {
+        List<?> innerElements = (element instanceof List<?> list) ? list : List.of(element);
+        ByteArrayOutputStream innerBuffer = new ByteArrayOutputStream();
+        for (Object innerElement : innerElements) {
+            innerBuffer.writeBytes(tlvWriter.buildTlv(BerTagClass.UNIVERSAL,
+                    elementUniversalTag(field), true, encodeConstructed(field, innerElement)));
+        }
+        int middleTag = (field.isNestedCollectionElementIsSet() ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE)
+                .getTagNumber();
+        return tlvWriter.buildTlv(BerTagClass.UNIVERSAL, middleTag, true, innerBuffer.toByteArray());
     }
 
     /** Constructed value: concatenation of the child fields' TLVs. */
