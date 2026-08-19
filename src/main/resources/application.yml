@@ -142,6 +142,24 @@ app:
           examples: [ "internet", "mms.turkcell.com.tr", "ims" ]
           octet-string-content: text
 
+        # Bilerek DESENSIZ. Round 10'da CGSN40ber'in qos ikilisi EMM'den PASS
+        # aldi ve EMM kendi decode'unda icerigi ASCII olarak geri verdi
+        # ('514F5350524F424531323334'H -> "QOSPROBE1234", 12 bayt). Bu, EMM'in
+        # bu alanda ASCII metni KABUL ETTIGINI kanitlar - gonderilen deger bizim
+        # kendi probe degerimiz oldugu icin gercek sebeke QoS profilinin metin
+        # tasidigini kanitlamaz. Bu yuzden yalnizca octet-string-content
+        # veriliyor: AI'in urettigi deger ASCII'ye cevrilip kabul edilsin, ama
+        # uydurulmus bir QoS deseni/ornegi dayatilmasin.
+        #
+        # Kural 'volume'dan SONRA duruyor: listOfTrafficVolumesQosRequestedDelay
+        # gibi 10 INTEGER alan "qosrequested"/"qosnegotiated" alt dizesini de
+        # tasiyor ve halen volume kuralina dusuyor; buraya alinsalardi kendi
+        # sayisal desenlerini kaybederlerdi.
+        - name: qosInformation
+          match: [ "qosrequested", "qosnegotiated" ]
+          description: "QoS profili; yazdirilabilir ASCII metin, en az 4 karakter"
+          octet-string-content: text
+
         - name: pdpType
           match: [ "pdptype" ]
           description: "PDP tipi kodu"

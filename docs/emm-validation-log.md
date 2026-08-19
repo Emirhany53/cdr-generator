@@ -811,6 +811,34 @@ dosya üretilmeye devam ediyor. Verifier'ın koleksiyon farkındalığı ayrı b
 
 ## 4. Açık sorular
 
+### 🔴 AÇIK — `PLMN-Id` kodlaması doğrulanmadı (19.08.2026)
+
+`servingNodePLMNIdentifier` ve `pGWPLMNIdentifier` (`PLMN-Id ::= OCTET STRING
+(SIZE (3))`, LTE-R10 ailesi + CHF) için **hiçbir bağımsız bayt kanıtı yok** ve
+kodda hiçbir kodlama yolu tanımlı değil. Aranan yerler:
+
+| kaynak | sonuç |
+|---|---|
+| MMTel referans yakalaması (29 MB, EMM-kabullü) | `MMTelChargingDataTypes` şemasında `PLMN-Id` tipi **yok** |
+| `P4_*_ASCII` / `P5_*_ASCII` etiketli decode'lar | yalnızca `vplmnId [308] UTF8String` — farklı alan, düz metin |
+| `target/emm-corpus-r15/` (SHA'lı kabul edilmiş dosyalar) | `PLMN-Id` taşıyan modül (LTE-R10, CHF) bu klasörde yok |
+
+⚠️ **Validator bu alanı yanlışlıkla geçirebilir.** `matchesOctetString`'in son
+adımı yalnızca "çift uzunlukta hex karakter mi" diye bakar. AI'ın ürettiği
+`"28601"` (5 hane, tek sayı) reddedilirken `"286010"` (6 hane, çift sayı)
+**geçiyor** — çünkü tüm karakterleri `[0-9]` olduğu için geçerli bir hex dökümü
+sanılıyor. Yani alan "temiz" görünse de içerik doğrulanmış değil; 3GPP TS 24.008
+10.5.1.13'ün MCC/MNC → 3 bayt paketlemesi **uygulanmıyor**.
+
+Ders kitabı bilgisiyle encoder yazmak bilerek reddedildi: bu günlüğün kendi
+tarihi (`IMSCDRS`, `CHF`, ve 8. bölümdeki "şema ile gerçeklik ayrışması")
+doğrulanmamış standart varsayımının bu ailede tekrar tekrar yanlış çıktığını
+gösteriyor.
+
+**Kapanması için gereken:** ya Yasin'den EMM'in decode ettiği bir `PLMN-Id`
+örneği, ya da A/B probe turu (paketli BCD vs. düz metin) — `IMSCDRS` ve `CHF`
+tam olarak böyle çözülmüştü.
+
 ### ✅ ÇÖZÜLDÜ — Tip-seviyesi `[APPLICATION n]` IMPLICIT'tir (9. tur)
 
 Anahtar kelimesiz bir modülde **tip** üzerine yazılan tag da IMPLICIT. İki
