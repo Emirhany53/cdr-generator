@@ -1443,7 +1443,28 @@ public class AsnFieldTreeResolver {
         }
         String inlineCode = readCodeText(rawTypeExpr);
 
-        String typeExpr = stripConstraint(rawTypeExpr).replace("OPTIONAL", "").trim();
+        // An ENUMERATED (or named-number INTEGER) body written INLINE on the
+        // field itself - "cdrIdType [4] ENUMERATED { threegpp(0), nin(1) }" -
+        // has nowhere else its "(0)"/"(1)" pairs could survive: stripConstraint
+        // treats every "(...)" as a SIZE/range annotation to erase, and this is
+        // the ONLY point in the whole pipeline that ever sees the raw text
+        // before that happens. resolveLeafBaseType already guards the equivalent
+        // case for an ALIAS pointing at a named-number body
+        // (containsNamedNumberList(aliasTarget) in the ENUMERATED/ALIAS branch);
+        // this mirrors that guard for the body written directly on the field,
+        // which had none. Losing the numbers here left the field's own
+        // AsnField.fieldType reading "ENUMERATED { threegpp, nin }" - still
+        // classified ENUMERATED by BerPrimitiveType, but with no named-number
+        // list for anything downstream to consult:
+        // FieldValueValidator.isDeclaredNumber found no "(n)" pairs despite the
+        // "{", read that as "not actually a named-number type after all" and
+        // stopped restricting the value entirely, CdrPromptBuilder never told
+        // the AI which numbers were valid, and EnumValueResolver could not map
+        // a name back to one. An AI-generated "29147" for a two-valued
+        // (0/1) ENUMERATED reached the wire this way.
+        String typeExpr = containsNamedNumberList(rawTypeExpr)
+                ? formatWithNamedNumbers(extractBaseTypeToken(rawTypeExpr), rawTypeExpr)
+                : stripConstraint(rawTypeExpr).replace("OPTIONAL", "").trim();
 
         boolean repeated = isRepeatedExpression(typeExpr);
         String fieldType = repeated ? extractRepeatedInnerType(typeExpr) : normalize(typeExpr);
@@ -1676,6 +1697,19 @@ public class AsnFieldTreeResolver {
                                     String innerType, List<AsnField> children) {
         if (!children.isEmpty()) {
             return innerType;
+        }
+        // 'innerType' went through stripConstraint a SECOND time on its way
+        // here (once already in parseFieldLine, again as the caller's own
+        // registry-lookup key) - harmless for that lookup, since an inline
+        // named-number body was never going to match a registry entry either
+        // way, but fatal for a "(0)"/"(1)" pair a leaf type carries: the second
+        // pass erases what the first pass had already preserved.
+        // 'declaredType' is the field's own, still-intact text (parseFieldLine
+        // now keeps a "{ name(number), ... }" body whole - see its own
+        // containsNamedNumberList guard), so it is read straight from there
+        // rather than through 'innerType'.
+        if (containsNamedNumberList(declaredType)) {
+            return formatWithNamedNumbers(extractBaseTypeToken(declaredType), declaredType);
         }
         String size = readSizeConstraintText(declaredType);
         String code = readCodeText(declaredType);
