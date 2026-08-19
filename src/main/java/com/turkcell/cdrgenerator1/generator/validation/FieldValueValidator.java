@@ -265,7 +265,7 @@ public class FieldValueValidator {
 
     private boolean matchesRule(AsnField field, String value) {
         Optional<AiConfigProperties.FieldRule> rule =
-                aiConfigProperties.findRuleFor(field.getFieldName());
+                aiConfigProperties.findRuleFor(field);
 
         if (rule.isEmpty() || Objects.isNull(rule.get().getPattern())) {
             return true;

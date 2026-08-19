@@ -1,5 +1,7 @@
 package com.turkcell.cdrgenerator1.config;
 
+import com.turkcell.cdrgenerator1.model.AsnField;
+import com.turkcell.cdrgenerator1.service.BerPrimitiveType;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -83,9 +85,31 @@ public class AiConfigProperties {
          */
         private String octetStringContent;
 
+        /**
+         * ASN.1 ilkel tipleri (INTEGER, STRING, OCTET_STRING, ...) - bu kural
+         * alan ADI eslesse bile bu listedeki bir tipe UYGULANMAZ.
+         *
+         * <p>Bir kural adı eslestirmesi hicbir zaman ASN.1 tipine bakmaz
+         * (bkz. {@link AiConfigProperties#findRuleFor(String)}), ve bazi alan
+         * adlari birden fazla anlam tasir: "sessionID" 12 modulde IA5String
+         * (gercek bir SIP oturum kimligi, bu kuralin hedefi), 6 modulde ise
+         * duz bir INTEGER (ChargingID (0..4294967295)) - AYNI ad, FARKLI
+         * kavram. Kural ismi tek basina bu ikisini ayiramaz; sadece alanin
+         * KENDI cozumlenmis tipi ayirabilir. Bos birakilirsa kural her tipe
+         * uygulanir - mevcut ~40 kuralin hicbiri bunu tasimiyor,
+         * geriye donuk olarak degismiyorlar.</p>
+         */
+        private List<String> notForTypes = new ArrayList<>();
+
         /** OCTET STRING icerigi ASCII metin mi? */
         public boolean isTextContent() {
             return TEXT_CONTENT.equalsIgnoreCase(octetStringContent);
+        }
+
+        /** True when this rule must not be applied to a field of the given type. */
+        public boolean excludesType(BerPrimitiveType type) {
+            return Objects.nonNull(type)
+                    && notForTypes.stream().anyMatch(t -> t.equalsIgnoreCase(type.name()));
         }
 
         /** OCTET STRING icerigi paketlenmis ikili veri (hex dokumu) mu? */
@@ -103,6 +127,21 @@ public class AiConfigProperties {
      * 'tac' harf dizisi gectigi icin cellId kuralina takilmaz.
      */
     public Optional<FieldRule> findRuleFor(String fieldName) {
+        return findRuleFor(fieldName, null);
+    }
+
+    /**
+     * Same as {@link #findRuleFor(String)}, but also skips a rule whose
+     * {@link FieldRule#excludesType(BerPrimitiveType)} rejects the field's own
+     * resolved type - the field itself, not just its name, decides. Continues
+     * to the NEXT matching rule rather than returning empty, so an excluded
+     * match never hides a later rule that would have applied cleanly.
+     */
+    public Optional<FieldRule> findRuleFor(AsnField field) {
+        return findRuleFor(field.getFieldName(), BerPrimitiveType.fromTypeExpression(field.getFieldType()));
+    }
+
+    private Optional<FieldRule> findRuleFor(String fieldName, BerPrimitiveType type) {
         if (Objects.isNull(fieldName)) {
             return Optional.empty();
         }
@@ -111,6 +150,7 @@ public class AiConfigProperties {
 
         return fieldRules.stream()
                 .filter(rule -> matches(rule, words, normalizedFieldName))
+                .filter(rule -> Objects.isNull(type) || !rule.excludesType(type))
                 .findFirst();
     }
 

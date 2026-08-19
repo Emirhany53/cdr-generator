@@ -184,7 +184,7 @@ public class FieldValueGenerator {
      * kural yok sayilir ve tipe uygun rastgele uretime dusulur.
      */
     private Optional<String> generateFromRuleExample(AsnField field) {
-        return aiConfigProperties.findRuleFor(field.getFieldName())
+        return aiConfigProperties.findRuleFor(field)
                 .map(AiConfigProperties.FieldRule::getExamples)
                 .filter(examples -> !examples.isEmpty())
                 .filter(examples -> isCompatibleWithFieldType(field, examples))
@@ -347,7 +347,7 @@ public class FieldValueGenerator {
 
         // Kural icerigi acikca soyluyorsa ona uyulur - AI yolu (AiValueSource)
         // ayni ayari okur, boylece iki yol ayni alani ayni bicimde doldurur.
-        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field);
         if (rule.isPresent() && rule.get().isBinaryContent()) {
             return isHexLiteral(example) ? Optional.of(padHexToFixedLength(field, example)) : Optional.empty();
         }

@@ -127,7 +127,7 @@ public class CdrPromptBuilder implements PromptBuilder {
             return;
         }
 
-        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+        Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field);
         if (rule.isPresent() && rule.get().isTextContent()) {
             return; // Text olarak konfigure edilmis alanlar ASCII-hex'e arka planda cevrilir
         }
@@ -160,7 +160,7 @@ public class CdrPromptBuilder implements PromptBuilder {
      * kodlamayi baslangictan uretmesini saglar.
      */
     private void appendTbcdGuidance(StringBuilder prompt, AsnField field) {
-        Optional<String> sampleDigits = aiConfigProperties.findRuleFor(field.getFieldName())
+        Optional<String> sampleDigits = aiConfigProperties.findRuleFor(field)
                 .map(AiConfigProperties.FieldRule::getExamples)
                 .filter(examples -> !examples.isEmpty())
                 .map(examples -> examples.get(0));
@@ -197,7 +197,7 @@ public class CdrPromptBuilder implements PromptBuilder {
      */
     private void appendRuleIfPresent(StringBuilder prompt, AsnField field, Integer maxLength) {
         Optional<AiConfigProperties.FieldRule> rule =
-                aiConfigProperties.findRuleFor(field.getFieldName());
+                aiConfigProperties.findRuleFor(field);
         if (rule.isEmpty()) {
             return;
         }

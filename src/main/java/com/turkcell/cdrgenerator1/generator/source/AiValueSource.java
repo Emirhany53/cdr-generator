@@ -127,7 +127,7 @@ public class AiValueSource implements ValueSource {
             return enumValueResolver.resolveBoolean(candidate);
         }
         if (type == BerPrimitiveType.OCTET_STRING) {
-            Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field.getFieldName());
+            Optional<AiConfigProperties.FieldRule> rule = aiConfigProperties.findRuleFor(field);
             if (rule.isPresent() && rule.get().isTextContent()) {
                 return Optional.of(encodeAsciiHex(candidate));
             }
