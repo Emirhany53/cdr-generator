@@ -220,6 +220,7 @@ app:
           pattern: "^3GPP-[A-Za-z0-9-]+;.*$"
           examples: [ "3GPP-E-UTRAN-FDD;utran-cell-id-3gpp=286011234567890;network-provided",
                       "3GPP-UTRAN-FDD;utran-cell-id-3gpp=28601abc1" ]
+          octet-string-content: text
 
         - name: nodeId
           match: [ "node-id" ]
@@ -229,10 +230,35 @@ app:
           octet-string-content: text
 
         - name: networkIdentifier
-          match: [ "visitednetworkidentifier", "originatingioi", "terminatingioi" ]
+          match: [ "visitednetworkidentifier", "originatingioi", "terminatingioi", "realmname" ]
           description: "IMS ag alan adi (3GPP realm)"
           pattern: "^[a-z0-9.]+$"
           examples: [ "ims.mnc001.mcc286.3gppnetwork.org" ]
+          octet-string-content: text
+
+        - name: contributionId
+          match: [ "contributionid" ]
+          description: "UAG katki/konferans kimligi"
+          pattern: "^[A-Za-z0-9_-]+$"
+          examples: [ "CONTRIB-9F3A2E7B", "conf-8d21ac04" ]
+          octet-string-content: text
+
+        - name: imsCommunicationServiceIdentifier
+          match: [ "communicationserviceidentifier" ]
+          description: "3GPP IMS Communication Service Identifier (ICSI URN)"
+          pattern: "^urn:urn-[0-9]+:.+$"
+          examples: [ "urn:urn-7:3gpp-service.ims.icsi.mmtel" ]
+          octet-string-content: text
+
+        # fromAddress her zaman "sip:kullanici@realm" tasir, ama Route basligi
+        # kullanici kismi olmadan da gelebilir ("sip:ibcf1.ims...") - bu yuzden
+        # '@' zorunlu kilan sipUri kuralindan ayri, daha gevsek bir desen.
+        - name: sipAddressHeader
+          match: [ "fromaddress", "routeheaderreceived" ]
+          description: "SIP adres/route basligi; kullanici kismi opsiyonel"
+          pattern: "^sips?:.+$"
+          examples: [ "sip:05321234567@ims.mnc001.mcc286.3gppnetwork.org",
+                      "sip:ibcf1.ims.mnc001.mcc286.3gppnetwork.org" ]
           octet-string-content: text
 
         - name: serviceContextId
