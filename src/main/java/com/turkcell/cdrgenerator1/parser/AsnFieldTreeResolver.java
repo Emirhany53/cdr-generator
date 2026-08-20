@@ -113,10 +113,15 @@ public class AsnFieldTreeResolver {
      * the same {@code walkField}. Null when the root type carries no tag, which
      * leaves every such module encoded exactly as before.</p>
      */
-    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields, AsnField rootTagCarrier) {
+    public record ResolvedRoot(AsnTypeKind kind, List<AsnField> fields, AsnField rootTagCarrier,
+                               boolean repeatedRoot, boolean repeatedRootIsSet) {
 
         public ResolvedRoot(AsnTypeKind kind, List<AsnField> fields) {
-            this(kind, fields, null);
+            this(kind, fields, null, false, false);
+        }
+
+        public ResolvedRoot(AsnTypeKind kind, List<AsnField> fields, AsnField rootTagCarrier) {
+            this(kind, fields, rootTagCarrier, false, false);
         }
     }
 
@@ -151,12 +156,23 @@ public class AsnFieldTreeResolver {
                                     Map<String, String> choiceSelections, AsnTaggingMode taggingMode) {
         Map<String, String> selections = choiceSelections == null ? Map.of() : choiceSelections;
 
-        // Follow alias chains down to the underlying structured type.
+        // Follow alias chains down to the underlying structured type. The
+        // first hop that is itself a repeated expression ("X ::= SEQUENCE OF
+        // Y") marks the root as a genuine collection - remembered by name
+        // rather than silently flattened to Y's own fields. Only reachable
+        // when a caller or an EMM binding names the wrapper explicitly: the
+        // heuristic (StructureParserService#selectRootTypeName) already
+        // resolves straight past a wrapper like this to Y itself, so it never
+        // sees this branch.
         String resolvedName = rootTypeName;
         AsnTypeDefinition current = registry.get(resolvedName);
+        String repeatedRootAliasName = null;
         Set<String> aliasGuard = new HashSet<>();
         while (current != null && current.getKind() == AsnTypeKind.ALIAS && aliasGuard.add(resolvedName)) {
             String target = normalizeAliasTarget(current.getAliasTarget());
+            if (repeatedRootAliasName == null && isRepeatedExpression(target)) {
+                repeatedRootAliasName = resolvedName;
+            }
             target = isRepeatedExpression(target) ? extractRepeatedInnerType(target) : target;
             resolvedName = target;
             current = registry.get(target);
@@ -176,6 +192,21 @@ public class AsnFieldTreeResolver {
 
         List<AsnField> fields = resolveByTypeName(registry, resolvedName, selections, new HashSet<>(), 0,
                 cache, taggingMode);
+
+        if (repeatedRootAliasName != null) {
+            // The wrapper alias's own tag, if it wrote one, is not read here:
+            // AsnTypeRegistryBuilder only fills tagPrefix for a STRUCTURED
+            // definition (a brace body right after the tag), never for an
+            // ALIAS - and "X ::= [n] SEQUENCE OF Y" has no brace, so it is
+            // always parsed as an ALIAS with the tag folded into aliasTarget's
+            // raw text instead. No module in this corpus has that shape (every
+            // measured wrapper, e.g. ABSSDPXML.SnapshotData, is untagged), so
+            // reading it back out is deferred until a real example exists to
+            // measure it against, rather than guessed at now.
+            return new ResolvedRoot(current.getKind(), fields, null,
+                    true, isAliasRepeatedAsSet(registry, repeatedRootAliasName));
+        }
+
         return new ResolvedRoot(current.getKind(), fields,
                 buildRootTagCarrier(current, resolvedName, fields, false, taggingMode));
     }

@@ -62,3 +62,17 @@ modules:
       Round 4 PASS. pGWRecord [79] is an alternative of the CallEventRecord
       CHOICE, not a type - so it is a selection, not a recordType. Rounds 1-3
       failed on the first alternative before this was pinned down.
+
+  ABSSDPXML:
+    recordType: SnapshotData
+    evidence: >-
+      Round 18. EMM named ABSSDPXML.SnapshotData as the expected structure and
+      refused our file with "Invalid length 54" - the whole file size, because
+      selectRootTypeName's unnamed-SEQUENCE-OF-wrapper heuristic had unwrapped
+      SnapshotData (SEQUENCE OF SnapshotRecord) and encoded a bare
+      SnapshotRecord instead, with no list wrapper at all. SnapshotRecord
+      carries no type-level tag of its own, unlike the NRTRDE*Lookup family
+      (MyResult ::= SEQUENCE OF Row, where Row is [0] IMPLICIT) that this same
+      heuristic gets right for - see docs/emm-validation-log.md, round 19
+      write-up (Bulgu 8), for why the fix is this narrow binding and not a
+      heuristic change. Awaiting an accepted file.

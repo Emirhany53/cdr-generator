@@ -190,6 +190,8 @@ public class StructureParserService {
                 .choiceTypeName(choiceInfo != null ? choiceInfo.choiceTypeName() : null)
                 .choiceAlternatives(choiceInfo != null ? choiceInfo.alternativeNames() : null)
                 .rootTagCarrier(root.rootTagCarrier())
+                .repeatedRoot(root.repeatedRoot())
+                .repeatedRootIsSet(root.repeatedRootIsSet())
                 .build();
     }
 

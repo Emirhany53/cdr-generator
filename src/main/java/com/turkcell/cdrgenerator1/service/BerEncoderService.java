@@ -83,6 +83,15 @@ public class BerEncoderService {
         Objects.requireNonNull(structure, "structure must not be null");
         Objects.requireNonNull(record, "record must not be null");
 
+        // A root reached through an explicitly named "X ::= SEQUENCE OF Y"
+        // wrapper (a caller's rootType or an emm-record-bindings.yml entry -
+        // never the root-selection heuristic, which already resolves past
+        // the wrapper to Y itself) is a genuine collection, not Y written
+        // bare. See AsnStructure#isRepeatedRoot.
+        if (structure.isRepeatedRoot()) {
+            return encodeRepeatedRoot(structure, record);
+        }
+
         // A root type that tags itself IS that tag's TLV. The carrier holds the
         // tag and the record's fields as its children, so the ordinary field
         // path writes it - IMPLICIT replaces the universal SEQUENCE/SET tag,
@@ -109,6 +118,25 @@ public class BerEncoderService {
         log.debug("Encoded CHOICE record ('{}') into {} BER bytes",
                 alternative.getFieldName(), encoded.length);
         return encoded;
+    }
+
+    /**
+     * A root type reached through an explicitly named {@code X ::= SEQUENCE
+     * OF Y} wrapper: {@code structure.getFields()} is Y's own fields,
+     * unchanged - so the element is written exactly as an ordinary
+     * non-repeated root already is, one self-delimiting SEQUENCE/SET TLV -
+     * then wrapped once more in a plain universal SEQUENCE OF / SET OF TLV
+     * for the collection itself.
+     *
+     * <p>A wrapper that tags itself ({@code X ::= [n] SEQUENCE OF Y}) is not
+     * handled specially here: no module in this corpus has that shape (every
+     * measured wrapper, e.g. ABSSDPXML.SnapshotData, is untagged) - see
+     * {@code AsnFieldTreeResolver#resolveRoot}.</p>
+     */
+    private byte[] encodeRepeatedRoot(AsnStructure structure, Map<String, Object> record) {
+        byte[] element = encodeRecord(structure.getFields(), record, structure.isSetRoot());
+        BerUniversalTag outerTag = structure.isRepeatedRootIsSet() ? BerUniversalTag.SET : BerUniversalTag.SEQUENCE;
+        return tlvWriter.buildTlv(BerTagClass.UNIVERSAL, outerTag.getTagNumber(), true, element);
     }
 
     /**

@@ -58,4 +58,28 @@ public class AsnStructure {
      * is where it leaves the encoding untouched.</p>
      */
     private AsnField rootTagCarrier;
+
+    /**
+     * True when the root type is itself a repeated collection -
+     * {@code SnapshotData ::= SEQUENCE OF SnapshotRecord} - because a caller
+     * or an EMM binding (emm-record-bindings.yml) named the wrapper
+     * explicitly. {@link #fields} still holds the ELEMENT type's own fields
+     * unchanged; the encoder wraps the one generated element in an extra
+     * outer SEQUENCE OF / SET OF TLV instead of writing it bare.
+     *
+     * <p>Never set by the root-selection heuristic itself: it already
+     * resolves straight past a wrapper like this to the element type (see
+     * {@code StructureParserService#selectRootTypeName}), so this is only
+     * ever true for a name a caller asked for by hand. Meaningless when
+     * {@link #choiceRoot} is true.</p>
+     */
+    private boolean repeatedRoot;
+
+    /**
+     * True when {@link #repeatedRoot} is a {@code SET OF} rather than a
+     * {@code SEQUENCE OF} - selects universal tag 17 over 16 for the outer
+     * wrapper, the same distinction {@link #setRoot} makes for a
+     * non-repeated root.
+     */
+    private boolean repeatedRootIsSet;
 }
