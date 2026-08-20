@@ -206,6 +206,7 @@ public class AsnFieldTreeResolver {
                 .tagDeclaredOnType(tag.fromType())
                 .moduleNamesNoTaggingMode(taggingMode == AsnTaggingMode.UNSPECIFIED)
                 .choice(choice)
+                .choiceTagImplicit(choiceTagImplicit(tag, false, choice, taggingMode))
                 .set(definition.getKind() == AsnTypeKind.SET)
                 .children(fields)
                 .build();
