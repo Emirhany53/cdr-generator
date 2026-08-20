@@ -153,16 +153,46 @@ class AsnImportResolutionTest {
 
     /**
      * The imported subtree is read under ITS module's header, not the importing
-     * one's. The two differ in exactly one place: a tag with no written keyword
-     * on a CHOICE-typed field, which is IMPLICIT under a mode-less header
-     * (round 13) and EXPLICIT under a declared one (X.680 8.3). {@code Lib} says
-     * {@code IMPLICIT TAGS}, so {@code bare [2] Choices} keeps its wrapper even
-     * though {@code App} names no mode.
+     * one's.
+     *
+     * <p>The distinguishing case is a tag with no written keyword on a
+     * CHOICE-typed field. Round 19 widened that rule from "mode-less header"
+     * to "any header that does not say EXPLICIT TAGS", which is why the pair
+     * here is {@code EXPLICIT TAGS} against a mode-less importer rather than
+     * the {@code IMPLICIT TAGS} one it used to be - those two now agree, and a
+     * pair that agrees cannot catch a leak. {@code ScopedLib} says
+     * {@code EXPLICIT TAGS}, so {@code bare [2] Choices} keeps X.680 8.3's
+     * wrapper; if the importer's silence reached in, it would not.</p>
      */
     @Test
     void theImportedSubtreeKeepsItsOwnModulesTaggingMode() {
-        AsnStructure structure = parserOver(Map.of("Lib", EXPORTING_MODULE, "App", IMPORTING_MODULE))
-                .getStructureByName("App");
+        String scopedLib = """
+                ScopedLib DEFINITIONS EXPLICIT TAGS ::=
+                BEGIN
+                EXPORTS Payload;
+                Payload ::= SET {
+                    plain    [0] IA5String OPTIONAL,
+                    wrapped  [1] EXPLICIT Choices OPTIONAL,
+                    bare     [2] Choices OPTIONAL
+                }
+                Choices ::= CHOICE { alpha [0] IA5String, beta [1] IA5String }
+                END
+                """;
+        String scopedApp = """
+                ScopedApp DEFINITIONS ::=
+                BEGIN
+                IMPORTS
+                Payload
+                FROM ScopedLib { itu-t (0) identified-organization (4) etsi (0) };
+                Record ::= SEQUENCE {
+                    id      [0] IA5String OPTIONAL,
+                    carried [2] Payload OPTIONAL
+                }
+                END
+                """;
+
+        AsnStructure structure = parserOver(Map.of("ScopedLib", scopedLib, "ScopedApp", scopedApp))
+                .getStructureByName("ScopedApp");
         List<AsnField> payload = structure.getFields().get(1).getChildren();
 
         AsnField wrapped = payload.get(1);
@@ -172,9 +202,9 @@ class AsnImportResolutionTest {
         AsnField bare = payload.get(2);
         assertEquals("bare", bare.getFieldName());
         assertFalse(bare.isChoiceTagImplicit(),
-                "Lib declares IMPLICIT TAGS, so X.680 8.3 holds for its keyword-less tag on a "
-                        + "CHOICE - the importing module naming no mode must not reach in and "
-                        + "change how Lib's own types are read");
+                "ScopedLib declares EXPLICIT TAGS, so X.680 8.3 holds for its keyword-less tag "
+                        + "on a CHOICE - the importing module naming no mode must not reach in "
+                        + "and change how ScopedLib's own types are read");
     }
 
     /**

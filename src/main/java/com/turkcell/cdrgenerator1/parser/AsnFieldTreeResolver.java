@@ -662,8 +662,35 @@ public class AsnFieldTreeResolver {
      * collection rather than an alternative. The tag must carry no written
      * keyword, because EMM honours one ({@code CHFChargingDataTypes16}'s
      * {@code [2] EXPLICIT IPAddress} passed in round 12). And the header must
-     * name no mode: an {@code IMPLICIT TAGS} module keeps 8.3, because MMTel's
-     * accepted files and its reference capture both depend on it.</p>
+     * not say {@code EXPLICIT TAGS}.</p>
+     *
+     * <p>The header condition used to be "names no mode at all", on the
+     * grounds that an {@code IMPLICIT TAGS} module keeps 8.3 because MMTel
+     * depends on it. Round 19 measured that and it is not what MMTel shows:
+     * its nine keyword-less CHOICE fields are never written at all - the
+     * generator skips them (see {@code CdrRecordBuilder.shouldSkipImplicitChoice}),
+     * a workaround adopted because EMM "hoists" the alternative's tag out of
+     * them, which is this same rule seen from the decoder's side. What did
+     * measure it is {@code SDPCCR}, an {@code IMPLICIT TAGS} module that put
+     * both readings in one file: {@code ContextParameter.parameterValue [1]
+     * EXPLICIT ContextParameterValueType} and {@code TreeDefinedField
+     * .parameterValue [1] EXPLICIT TreeDefinedFieldType} were accepted with
+     * their wrappers, while the keyword-less {@code UsageThreshold
+     * .usageThresholdValueBefore [2] UsageCounterType} (round 18) and
+     * {@code ServiceOutputField.parameterValue [1] ServiceOutputFieldType}
+     * (round 19) were each refused in turn, EMM walking further into the file
+     * as the one ahead of it was removed. Same module, same header, same
+     * CHOICE-typed shape - the written keyword is the only thing separating
+     * the accepted from the refused.</p>
+     *
+     * <p>The tag must also be written on the FIELD, not inherited from the
+     * TYPE. Both measurements above are field tags. The one type-level
+     * reading EMM has ruled on went the other way: round 19 encoded
+     * {@code NRTRDEINFMSInput_Intermediate}'s {@code CallEvent ::=
+     * [APPLICATION 1] CHOICE} with the tag retagged implicitly and EMM
+     * refused it in exactly the words it had used for the EXPLICIT form a
+     * round earlier - so neither reading is right there, and a type tag is
+     * left on X.680 8.3 until something measures what it actually wants.
      *
      * @see AsnField#isChoiceTagImplicit()
      */
@@ -672,8 +699,10 @@ public class AsnFieldTreeResolver {
         return choiceElement
                 && !repeated
                 && !tag.explicit()
+                && !tag.fromType()
                 && Objects.nonNull(tag.tagNumber())
-                && taggingMode == AsnTaggingMode.UNSPECIFIED;
+                && taggingMode != AsnTaggingMode.EXPLICIT
+                && taggingMode != AsnTaggingMode.AUTOMATIC;
     }
 
     private boolean effectiveExplicit(EffectiveTag tag, boolean repeated, boolean choiceElement,
