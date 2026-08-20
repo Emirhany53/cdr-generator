@@ -243,6 +243,47 @@ BARE-INNER grubundaki 71 modül 8 aile halinde kümeleniyor (aynı şema, çok k
 
 Üçü de STRICT self-check'ten 0 hata ile geçti (NRTRDE ve ABSSDPXML birer bilinen/belgelenmiş walker uyarısı taşıyor, SDPCCR 0/0). Sorumluya gönderilmeye hazır.
 
+#### Gönderim öncesi bağımsız doğrulama — korpus geneli bayt karşılaştırması
+
+"Hiçbir çalışan dosyayı bozmadık" iddiası akıl yürütmeyle değil **ölçümle** kanıtlandı. Yöntem: `329bfbe` (round 19 öncesi taban) için bir `git worktree` açıldı, aynı probe iki ağaçta da koşuldu ve 805 modülün çıktısı karşılaştırıldı. Üretimin rastgeleliği iki yerden nötrleştirildi — her yaprağa sabit bir değer veren bir `ValueSource`, ve `CdrRecordBuilder.random`'ın reflection ile tohumlanmış bir `Random(20260820)` ile değiştirilmesi (tekrar sayıları `random.nextInt` ile çekiliyor). Böylece iki taraf da **gerçek** `CdrRecordBuilder` + **gerçek** `BerEncoderService` kullandı, ama çıktı deterministik oldu.
+
+| ölçüm | sonuç |
+|---|---|
+| taranan modül | **805** |
+| gerçek bayt üretebilen | **799** (kalan 6'sı OBJECT IDENTIFIER sabitini reddetti — **iki tarafta da birebir aynı hata**, karşılaştırma bozulmuyor) |
+| **bayt-bayt aynı kalan** | **802** |
+| değişen | **3** — `ABSSDPXML`, `NRTRDEINFMSInput`, `NRTRDEINFMSInput_Intermediate` |
+
+Değişen üçü de hedeflenen modüller; korpusta başka **tek bir bayt** değişmedi.
+
+**Commit bazında atıf** (aynı probe `79bce2c` ve HEAD'de koşuldu):
+
+| modül | `329bfbe` taban | `79bce2c` (Bulgu 6) | HEAD (+ `ed488a9`, Bulgu 8) |
+|---|---|---|---|
+| `NRTRDEINFMSInput_Intermediate` | 221 bayt | **218** ✓ | 218 (değişmedi) |
+| `NRTRDEINFMSInput` | 169 bayt | **166** ✓ | 166 (değişmedi) |
+| `ABSSDPXML` | 76 bayt | 76 (değişmedi) | **78** ✓ |
+| `SDPCCR` | 8599 bayt | 8599 | 8599 (hiç dokunulmadı) |
+
+NRTRDE'de **−3 bayt** = silinen iç `63 81 C8` sarmalayıcısı (tag + 2 baytlık uzun-form uzunluk). ABSSDPXML'de **+2 bayt** = eklenen dış `30 <len>`. İkisi de teşhiste öngörülen rakamla birebir. Ayrıca `ed488a9`'un NRTRDE dosyasını değiştirmediği kanıtlandı — yani `79bce2c`'de üretilip diske yazılan dosya hâlâ HEAD'in ürettiğiyle aynı, yeniden üretilmesi gerekmiyor.
+
+**EMM'den geçmiş 36 modülün tamamı ayrı ayrı isimle teyit edildi** — `MMTelChargingDataTypes` (1725 bayt), `GGSNTurkcellCdrR7` (490), `LTE-R10` (1072), `IMSCDRS` (348), `TAP-0309` (2254), `EnrichedVerazCdr` (29537), `IMS-R8-2009-03` (2109) ve round 18'in 12 PASS'inin hepsi dahil: **hepsi bayt-bayt identik**. (`CHFChargingDataTypes16` o 6 OID modülünden biri; onun için ağaç imzası identik, bayt karşılaştırması yapılamadı.)
+
+Buna ek olarak `ReferenceCaptureConformanceTest` **atlanmadan** koştu (`Skipped: 0`) — yani üretilen MMTel kodlaması, gerçek bir üretim ağının yazdığı ve EMM'in kabul ettiği yakalamaya karşı hâlâ uyumlu. Tam paket: **519 test, 0 hata**.
+
+**Gönderilecek üç dosyanın TLV denetimi:**
+
+```
+NRTRDEINFMSInput_Intermediate.ber (201)  61 A-[1] len=198
+                                           └─ 5F A-[34], 5F A-[33], 55 A-[21] ...   ← iç 63 YOK ✓
+SDPCCR-no-usageThresholds.ber   (12420)  A0 C-[0] len=12416
+                                           └─ creditControlRecord tag'leri [1..28] TAM
+                                              bonusAdjustment[12] içi: [0..9]        ← [10] çıktı ✓
+ABSSDPXML.ber                     (100)  30 U-[16] len=98
+                                           └─ 30 U-[16] len=96                       ← dış sarmalayıcı VAR ✓
+                                                └─ A0 C-[0], A1 C-[1]
+```
+
 ### 7. turda gönderilen dosyalar
 
 Sorumluya 12.08.2026'da gönderildi. Dosyalar `target/emm-round7/` altında üretildi
