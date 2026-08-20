@@ -51,12 +51,15 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 3. `[n] EXPLICIT <BOOLEAN>` → **IMPLICIT** (`AB 03 01 01 FF` reddedildi, `8B 01 FF` istendi)
 4. Başlığı `IMPLICIT TAGS` demeyen modülde **alan** tag'i → **IMPLICIT**
 5. Başlığı `IMPLICIT TAGS` demeyen modülde **tip** tag'i de → **IMPLICIT** (9. tur, commit `f5ce531`)
-6. Başlığı `IMPLICIT TAGS` demeyen modülde, **yazılı keyword taşımayan** bir tag CHOICE tipli alandaysa → **IMPLICIT** (13. tur, commit `e940f0c`). X.680 8.3'ün istisnası.
+6. **Yazılı keyword taşımayan** bir tag CHOICE tipli **alandaysa** → **IMPLICIT** (13. tur, commit `e940f0c`; 19. turda `IMPLICIT TAGS` başlıklı modülleri de kapsayacak şekilde genişletildi). X.680 8.3'ün istisnası.
 7. **Yazılı `EXPLICIT` keyword'ü yalnızca CHOICE tipli alanda sarmalayıcı üretir.** SEQUENCE / SET / primitive hedeflerde bağlam tag'i universal tag'in yerine geçer — modülün soyundan bağımsız (14. tur, commit `2006841`). 2. ve 3. kural bunun iki özel hâliymiş.
+8. 6. kural **alan** tag'leri içindir; **tip** üzerine yazılmış bir CHOICE tag'i (`CallEvent ::= [APPLICATION 1] CHOICE`) X.680 8.3'te kalır — daha doğrusu, EMM onun için henüz **hiçbir okumayı kabul etmedi** (19. tur: EXPLICIT de IMPLICIT de aynı sözlerle reddedildi). 4./5. kuralın alan ve tip için birlikte gittiği yerde 6. kural ayrışıyor. Açık soru, bkz. Bulgu 10.
 
-Hepsini tek cümle açıklıyor: **CHOICE dışında her şey IMPLICIT — yazılı keyword
-dahil.** CHOICE'ta X.680 8.3 explicit'i zorunlu kılar, orada iki okuma zaten
-aynı baytı üretir.
+Hepsini tek cümle açıklıyor: **yazılı `EXPLICIT` dışında her şey IMPLICIT.**
+19. tura kadar bu cümlenin sonunda "CHOICE hariç" vardı; `SDPCCR` onu da
+kaldırdı — bir CHOICE alanı da, üzerinde keyword yazmıyorsa, IMPLICIT
+kodlanıyor. Geriye tek istisna kaldı: tip üzerine yazılmış CHOICE tag'i
+(8. kural), ki orada henüz doğru cevabı bilmiyoruz.
 
 ## 3. Tur tur kronoloji
 
@@ -80,6 +83,7 @@ aynı baytı üretir.
 | 16 | `IMS-R8-2009-03-A` (boş SET kodlaması 31 00, tek değişken) | **red — ama `[25]` doğrulandı** (19.08.2026): `recordExtensions` hatası kalktı, EMM 513 → **2065**'e ilerledi, yeni hata `list-of-Call-Transfer-Info` |
 | 17 | `IMS-R8-2009-03-A-round17` (iç içe koleksiyonun orta katmanı, tek değişken) | **PASS** (19.08.2026) — `IMS-R8-2009-03` bu sınıfın ilk tam kabulü |
 | 18 | Geniş korpus taraması — 15 dosya, EMM'den hiç geçmemiş/kardeş-olmayan yapılar (19.08.2026) | **12 PASS · 3 red** (19.08.2026) |
+| 19 | 18. turun 3 reddi: `NRTRDEINFMSInput_Intermediate` (kök CHOICE tag'i IMPLICIT), `SDPCCR` (usageThresholds sökülmüş izolasyon), `ABSSDPXML` (kök tipi YAML'dan bağlandı) — 20.08.2026 | **1 PASS · 2 red** (20.08.2026): `ABSSDPXML` **PASS**; `SDPCCR` **ilerledi** 7411 → **9980** (yeni alan `chargingContextOutputFields`); `NRTRDE` **aynı hata**, kök CHOICE tag'i için IMPLICIT okuması da çürüdü |
 
 ### 18. turda gönderilen dosyalar — geniş korpus taraması
 
@@ -242,6 +246,77 @@ BARE-INNER grubundaki 71 modül 8 aile halinde kümeleniyor (aynı şema, çok k
 | `ABSSDPXML.ber` | 100 | `1bef124dd1b61502685dca639e4888bc8040f65f333613beb5b298f6295ba1ce` | `scratchpad/round19/ABSSDPXML.ber` |
 
 Üçü de STRICT self-check'ten 0 hata ile geçti (NRTRDE ve ABSSDPXML birer bilinen/belgelenmiş walker uyarısı taşıyor, SDPCCR 0/0). Sorumluya gönderilmeye hazır.
+
+### 19. turun yanıtı — 1 PASS, 2 red (20.08.2026)
+
+```
+ABSSDPXML  ->  başarılı.
+
+'NRTRDEINFMSInput_Intermediate.ber' -> Failed to decode received data.
+A block of 'NRTRDEINFMSInput_Intermediate.ber', originating from
+  NRTRDEINFMSInput_Intermediate, was corrupt (this would have been record #0).
+The type: NRTRDEINFMSInput_Intermediate.CallEvent was probably not set
+and is not optional
+
+SDPCCR -> Failed to decode received data.
+A block of 'SDPCCR-no-usageThresholds.ber', originating from SDPCCR,
+  was corrupt (this would have been record #0).
+Invalid length 9980 of field
+  "SDPCCR.SDPCreditControlRecord.creditControlRecord.chargingContextOutputFields.[0]"
+```
+
+##### ✅ `ABSSDPXML` PASS — Bulgu 8 kapandı
+
+Kök tip bağlaması + `repeatedRoot` kodlaması doğrulandı. Bu, **`SEQUENCE OF` sarmalayıcısının kök seviyesinde de yazılması gerektiğinin ilk EMM kanıtı**. Kalan 70 BARE-INNER modül için Seçenek 2 (heuristiğin ayırıcıya göre bölünmesi) artık kanıtlı bir temele oturuyor — ayrı bir tech-debt turu olarak açılabilir.
+
+##### 🟢 Bulgu 9 — `SDPCCR`: izolasyon işe yaradı, kök neden bulundu
+
+`usageThresholds` çıkarılınca o hata **kayboldu** ve EMM 7411'den **9980'e ilerledi** — yani sökülen alan gerçek suçluydu ve arada kalan ~2.5 KB temiz. `IMS-R8-2009-03`'ün 16. turdaki 513 → 2065 ilerlemesiyle aynı desen.
+
+Yeni hata noktası `chargingContextOutputFields.[0]` ile birlikte **iki taraflı bir kontrast** ortaya çıktı — hepsi tek modülde, tek başlık altında (`DEFINITIONS IMPLICIT TAGS`), hepsi CHOICE tipli tag'li alan:
+
+| alan | tip | yazılı keyword | EMM |
+|---|---|---|---|
+| `ContextParameter.parameterValue [1] EXPLICIT ContextParameterValueType` | CHOICE | **EXPLICIT** | ✅ geçti (alan `[10]`) |
+| `TreeDefinedField.parameterValue [1] EXPLICIT TreeDefinedFieldType` | CHOICE | **EXPLICIT** | ✅ geçti (alan `[11]`) |
+| `UsageThreshold.usageThresholdValueBefore [2] UsageCounterType` | CHOICE | **yok** | ❌ red (18. tur) |
+| `ServiceOutputField.parameterValue [1] ServiceOutputFieldType` | CHOICE | **yok** | ❌ red (19. tur) |
+
+Tek değişken **yazılı keyword**. Yani 6. kural yalnızca başlıksız modüllerde değil, `IMPLICIT TAGS` diyen modüllerde de geçerli.
+
+Eski gerekçe — *"`IMPLICIT TAGS` modülü 8.3'ü korur, çünkü MMTel'in kabul edilmiş dosyaları ve referans yakalaması buna dayanır"* — ölçüldüğünde tutmadı: MMTel'in 9 keyword'süz CHOICE alanı **hiç yazılmıyor**, `CdrRecordBuilder.shouldSkipImplicitChoice` onları atlıyor. O workaround'un gerekçesi de zaten "EMM'in implicit-CHOICE **hoisting**'i" — yani aynı kuralın çözücü tarafından görünüşü. Workaround yerinde bırakıldı (ayrı bir tur konusu), ama artık kök nedeni biliyoruz.
+
+**Düzeltme** (`45a364a`): `choiceTagImplicit` artık `EXPLICIT`/`AUTOMATIC` demeyen her başlıkta çalışıyor.
+
+**Ölçülen etki** (deterministik probe, 805 modül, taban `329bfbe`): **7 modül** bayt değiştirdi — `SDPCCR` ve ikizi `CreditControlDataTypes_EC22` (−56 bayt = 28 sarmalayıcı), `ATS_ONDER`, `LTE-R10-TURKCELL-SYNVRS`, `NEWDS`, `TurkcellCDRCCNCS40` (−2 bayt), artı 19. turun `ABSSDPXML`'i (+2). Her değişim 2'nin negatif katı — kalkan sarmalayıcının tag+uzunluk baytları. **36 EMM-kanıtlı modülün hiçbiri değişmedi**; `ReferenceCaptureConformanceTest` gerçek MMTel yakalamasına karşı atlanmadan geçti. 519 test, 0 hata.
+
+Bayt seviyesinde, `usageThresholds`'un ilk elemanında:
+
+```
+ESKI (reddedildi):   80 [0]  81 [1]  A2 [2] len=10 constructed { 80 <8> }   <- EXPLICIT sarmalayici
+YENI (round 20):     80 [0]  81 [1]  82 [2] len=8  primitive                <- IMPLICIT retag
+```
+
+##### 🔴 Bulgu 10 — `NRTRDE`: tip-seviyesi CHOICE tag'i için iki okumanın ikisi de reddedildi
+
+18. tur EXPLICIT (`61 { 63 {...} }`) gönderdi → red. 19. tur IMPLICIT retag (`61 {...}`) gönderdi → **birebir aynı hata mesajı**. Yani 19. turun Bulgu 6 düzeltmesi **çürütüldü**, ve geriye üçüncü bir okuma kalıyor: **`CallEvent`'in `[APPLICATION 1]` tag'i tel üzerinde hiç yok**, kayıt doğrudan seçilen alternatifin kendi tag'i (`63`/`64`/`65`) ile başlıyor.
+
+Bu okumayı destekleyen iki şey var. (a) EMM'in mesajı, `IMSCDRS`'in ilk turlarındaki "dış tag hiç eşleşmedi" imzasının aynısı. (b) Gerçek NRTRDE/TAP standardında (GSMA TD.35) çağrı-olayı CHOICE'u **tagsız**, `[APPLICATION 3/4/5]` alternatiflerin üzerinde — vendörlenen metindeki `[APPLICATION 1]` yerel bir aktarım artefaktı olabilir.
+
+`45a364a` bu yüzden 6. kuralı **alan** tag'leriyle sınırladı (`!tag.fromType()`): NRTRDE'nin iki modülü 18. turdaki kodlamalarına geri döndü, ve kod artık ölçülmemiş bir okumayı ölçülmüş gibi taşımıyor.
+
+### 20. turda gönderilen dosyalar (20.08.2026)
+
+| # | dosya | bayt | ne soruyor | SHA-256 |
+|---|---|---|---|---|
+| 1 | `SDPCCR.ber` | 12427 | Bulgu 9'un düzeltmesi doğru mu — 18. ve 19. turun **iki** hata noktası da artık IMPLICIT retag ile kodlanıyor | `cbbc44dd1e4a21beb6524a83c0f2789e1e1a5cf1e08b60221ff15bbae51a49ef` |
+| 2 | `NRTRDEINFMSInput_Intermediate-A-moc.ber` | 201 | `CallEvent` tag'i **hiç yazılmazsa** — çıplak `63 …` (moc) | `964e03afb0249c9043e621a26ef1355854e720223945e9ad1b7a21a9d425618e` |
+| 3 | `NRTRDEINFMSInput_Intermediate-B-mtc.ber` | 173 | aynı soru, çıplak `64 …` (mtc) | `39bc98d6f40d5ac143b0272b21a8f294c69a142f1f3f107770b9e2f97a82e949` |
+| 4 | `NRTRDEINFMSInput_Intermediate-C-gprs.ber` | 214 | aynı soru, çıplak `65 …` (gprs) | `298b3f9db146e8e64e0fce63a642d945e580ccd4675f617a0a95792a5666fd38` |
+
+2-4 aynı anda **iki** boyutu ayırıyor. Üçü de geçerse: kural "tip-seviyesi CHOICE tag'i tel üzerinde yok". Yalnızca biri geçerse: EMM'in akışı o alternatife bağlı (`LTE-R10`'un `pGWRecord`'u gibi) ve bağlama `emm-record-bindings.yml`'e yazılır. Hiçbiri geçmezse: dış tag hipotezi de yanlış, hata `Moc`'un içinde ve aramaya alan seviyesinden başlanır.
+
+Üçü de kod değişikliği gerektirmedi — mevcut `rootType` parametresiyle üretildi (`Moc`/`Mtc`/`Gprs`), yani 20. tur NRTRDE tarafında **kodda hiçbir varsayım taşımıyor**. Dördü de STRICT self-check'te 0 hata (NRTRDE üçü 0 uyarı; `SDPCCR`'ın 35 uyarısı, walker'ın IMPLICIT-retag'lenmiş CHOICE alt-ağaçlarını doğrulayamaması — bilinen sınır, ve tam olarak yeni kuralın devreye girdiği 35 noktayı işaretliyor).
 
 #### Gönderim öncesi bağımsız doğrulama — korpus geneli bayt karşılaştırması
 
