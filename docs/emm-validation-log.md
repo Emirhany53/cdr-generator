@@ -79,6 +79,136 @@ aynı baytı üretir.
 | 15 | 14. turun 6 reddi + koşulamayan `IMS-R8-2009-03` (17.08.2026) | **6 PASS · 1 red** (18.08.2026) — üç düzeltmenin üçü de doğrulandı |
 | 16 | `IMS-R8-2009-03-A` (boş SET kodlaması 31 00, tek değişken) | **red — ama `[25]` doğrulandı** (19.08.2026): `recordExtensions` hatası kalktı, EMM 513 → **2065**'e ilerledi, yeni hata `list-of-Call-Transfer-Info` |
 | 17 | `IMS-R8-2009-03-A-round17` (iç içe koleksiyonun orta katmanı, tek değişken) | **PASS** (19.08.2026) — `IMS-R8-2009-03` bu sınıfın ilk tam kabulü |
+| 18 | Geniş korpus taraması — 15 dosya, EMM'den hiç geçmemiş/kardeş-olmayan yapılar (19.08.2026) | **12 PASS · 3 red** (19.08.2026) |
+
+### 18. turda gönderilen dosyalar — geniş korpus taraması
+
+Rastgele değil: 805 modül otomatik profillendi (kök şekli, tagging modu,
+CHOICE/koleksiyon/SET varlığı, çok-baytlı tag, uzun-form uzunluk, self-check
+err/warn), EMM'den geçmiş 25 yapı + 19 bilinen şema-bozuk modül + 16 aynı
+davranış sınıfının kardeşi elendi, kalan 742 aday 38 farklı davranış imzasına
+ayrılıp en nadir/zengin temsilciler seçildi. Ayrıntılı seçim gerekçesi
+sohbet geçmişinde; SHA'lar gönderimden önce yazıldı ve self-check ile
+(STRICT mod) ayrıca yeniden doğrulandı — 15/15 dosyada `errors=0`.
+
+| # | dosya | bayt | self-check | EMM sonucu | SHA-256 |
+|---|---|---|---|---|---|
+| 1 | `EMM-Context-Specific` | 31 | 0/0 | ✅ PASS | `676af89d51254c95…` |
+| 2 | `GPRS-Charging-Extensions` | 769 | 0/0 | ✅ PASS | `4fbaebb65b6e5ec9…` |
+| 3 | `NRTRDEINFMSInput_Intermediate` | 206 | 0/0 | ❌ **red** | `5b2023e3a1d30ac8…` |
+| 4 | `Poc` | 280 | 0/0 | ✅ PASS | `821aba227394e06c…` |
+| 5 | `NRTRDEInOperatorLookup` | 142 | 0/2 | ✅ PASS | `0980303f2fe297a0…` |
+| 6 | `SDPCCR` | 12480 | 0/0 | ❌ **red** | `3809005bbc0c38fc…` |
+| 7 | `CCN_EC22` | 519 | 0/0 | ✅ PASS | `ee2af76b75ce55a2…` |
+| 8 | `UAGRecordsBer` | 3248 | 0/0 | ✅ PASS | `8fd1f68731dca29c…` |
+| 9 | `HuaweiGSN50` | 1418 | 0/0 | ✅ PASS | `4b318046637394ae…` |
+| 10 | `CDRDatamartSDPColl` | 2647 | 0/2 | ✅ PASS | `4ebb792636ca559e…` |
+| 11 | `CDRDatamartAIR` | 1700 | 0/0 | ✅ PASS | `5c3e65c862ec89cd…` |
+| 12 | `ABSSDPXML` | 54 | 0/2 | ❌ **red** | `3b3c9f7b42504…` |
+| 13 | `BalanceUpdateMatched` | 92 | 0/0 | ✅ PASS | `884d0fe860064c11…` |
+| 14 | `BgwAuditTrail_Output` | 116 | 0/2 | ✅ PASS | `6daa8297453a7a58…` |
+| 15 | `BroadSoft` | 4383 | 0/0 | ✅ PASS | `7d7b5da6020cb934…` |
+
+**EMM'in birebir mesajları:**
+
+```
+Beklenen structure: SDPCCR.SDPCreditControlRecord
+Failed to decode received data.
+A block of 'SDPCCR.ber', originating from SDPCCR, was corrupt (record #0).
+Invalid length 7411 of field
+  "SDPCCR.SDPCreditControlRecord.creditControlRecord.bonusAdjustment.usageThresholds.[0]"
+
+Beklenen structure: NRTRDEINFMSInput_Intermediate.CallEvent
+Failed to decode received data.
+A block of 'NRTRDEINFMSInput_Intermediate.ber', originating from
+  NRTRDEINFMSInput_Intermediate, was corrupt (record #0).
+The type: NRTRDEINFMSInput_Intermediate.CallEvent was probably not set
+and is not optional
+
+Beklenen structure: ABSSDPXML.SnapshotData
+Failed to decode received data.
+A block of 'ABSSDPXML.ber', originating from ABSSDPXML, was corrupt (record #0).
+Invalid length 54 of field ""
+```
+
+**Kapsam:** 12/15 PASS ilk denemede — hiçbiri daha önce EMM'e gönderilmemiş
+yeni yapılardı. 3 red, üçü de farklı sınıftan; aşağıda teker teker teşhis
+ediliyor.
+
+##### 🔴 Bulgu 6 — kök-seviyeli CHOICE tag'i, `buildRootTagCarrier`'da `choiceTagImplicit` hiç hesaplanmıyor
+
+`NRTRDEINFMSInput_Intermediate`: `CallEvent ::= [APPLICATION 1] CHOICE { moc Moc OPTIONAL, mtc Mtc OPTIONAL, gprs Gprs OPTIONAL }` — modül başlığı keyword'süz (`DEFINITIONS ::=`), tag'in kendisi de `EXPLICIT`/`IMPLICIT` yazmıyor. Bu tam olarak 13. turda kanıtlanan **6. kuralın** (keyword'süz CHOICE tag'i → IMPLICIT) senaryosu — ama orada tag bir **alana** yazılıydı, burada **tipin kendisine** yazılı.
+
+Alan-seviyesi kod (`attachChildren`/`parseFieldLines`) `choiceTagImplicit(tag, repeated, choiceElement, taggingMode)`'u çağırıp sonucu `AsnField.choiceTagImplicit`'e yazıyor. **`buildRootTagCarrier` bu çağrıyı hiç yapmıyor** — Lombok builder'da alan atlanınca `boolean` varsayılan olarak `false` kalıyor. Sonuç: `BerEncoderService.wrapInTlv`'deki `if (choice && field.isChoiceTagImplicit())` dalı asla tetiklenmiyor, kod hep EXPLICIT çift-sarmalamaya düşüyor.
+
+Gönderilen bayt: `61 81 CB  63 81 C8 ...` (dış `[APPLICATION 1]` EXPLICIT sarıyor, iç `[APPLICATION 3]` = Moc alternatifinin kendi tipi tag'i). Olması gereken (rule 6 uygulanırsa): dış `[APPLICATION 1]` **IMPLICIT** olarak Moc'un kendi `[APPLICATION 3]` tag'inin YERİNE geçmeli, yani tek bir `61 ...` — iç `63 ...` hiç yazılmamalı.
+
+**Kapsam ölçüldü:** korpusta yalnızca **2 site**, ikisi de bu ailenin kardeşi — `NRTRDEINFMSInput` ve `NRTRDEINFMSInput_Intermediate`. Başka hiçbir modülde kök CHOICE'un kendisi tag taşımıyor. 26 PASS'in hiçbiri bu koşulu tetiklemiyor (regresyon riski yok).
+
+##### 🟡 Bulgu 7 — `SDPCCR`: alan-alan doğrulandı, kesin neden bulunamadı
+
+`SDPCCR.SDPCreditControlRecord.creditControlRecord.bonusAdjustment.usageThresholds.[0]`, offset 7411'de (düğümün bitiş ofseti, 11. tur kuralı). `BonusAdjustment`'ın 11 alanı (`[0]`-`[10]`), `UsageThreshold`'un 6 alanı (`[0]`-`[5]`), `UsageCounterType` CHOICE'unun EXPLICIT sarmalaması — hepsi şema metniyle VE bu projenin kanıtlanmış tüm kurallarıyla (4,5,6,7) birebir tutarlı çıktı. `UsageThreshold` bir SET değil SEQUENCE (sıralama sorunu yok), IMPORTS yok (mod-sınırı sorunu yok), iç içe koleksiyon yok (bugünkü düzeltmenin kapsamı dışında).
+
+Bayt-seviyesinde hiçbir tutarsızlık bulunamadı — self-check de (STRICT) 0 hata veriyor. Bu, `IMSCDRS`/`CHF`'in yaşadığı "şema ile gerçeklik ayrışması" sınıfına benziyor olabilir (vendörlenen metin EMM'in gerçek şemasıyla birebir örtüşmüyor) ama kanıtlanmadı. **Önerilen sonraki adım:** `tools/dropBerField.py` ile `usageThresholds [10]`'u dosyadan çıkarıp geri kalan ~12.4 KB'ın bağımsız olarak doğru olduğunu kanıtlamak — `IMSCDRS`/`CHF`'te işe yarayan izolasyon tekniği.
+
+##### 🔴 Bulgu 8 — kök seçim sezgiseli: adsız `SEQUENCE OF` sarmalayıcısını atlıyor
+
+`ABSSDPXML`: `SnapshotData ::= SEQUENCE OF SnapshotRecord` — EMM `SnapshotData`'yı (dış sarmalayıcı) bekliyor, ama `StructureParserService.selectRootTypeName` **bilinçli bir tasarım kararıyla** iç eleman tipini (`SnapshotRecord`) kök seçiyor:
+
+> *"'SEQUENCE OF X' şeklindeki referanssız bir alias... X'in kendisini de geçerli bir kök adayı yapar... asıl veri kaydı X'tir."*
+
+Bu varsayım artık EMM tarafından **yanlışlığı kanıtlandı**: EMM dış `SEQUENCE OF` sarmalayıcısını (`30 <len>` — SnapshotRecord'ların bir listesi) bekliyor, biz tek bir çıplak `SnapshotRecord` gönderdik. `Invalid length 54` = tüm dosya boyutu — EMM daha ilk tag'de takıldı (IMSCDRS'in ilk turlarındaki "N = tam dosya boyutu" deseniyle aynı).
+
+Bu heuristik hiçbir EMM turunda daha önce bağımsız doğrulanmamıştı (kod yorumunda round numarası yok, sadece "DBDataRecord" örnek olarak anılıyor). Korpusta bu şekle (`X ::= SEQUENCE OF Y`, adsız/referanssız) uyan **çok sayıda DB lookup tablosu modülü** var (`DbLookupTable_NUM`, `SOLSMSLookup`, `CCRMissingLookup`, `OMMFcmsServiceVariant`, `TwoVariable`, `CUSTOMERIDMSGIDMAP_Table`, `STypeTableIMSI_LATETAPIN` ve benzerleri) — tam kapsam ölçülmedi, ama bu tek örnek zaten heuristiğin **yanlış olduğunu** kanıtlamaya yetiyor.
+
+### 19. tur için hazırlanan dosyalar (20.08.2026, henüz gönderilmedi)
+
+#### Bulgu 6 düzeltildi — kod, ayrı commit
+
+`AsnFieldTreeResolver.buildRootTagCarrier`'a eksik olan `.choiceTagImplicit(choiceTagImplicit(tag, false, choice, taggingMode))` çağrısı eklendi ([AsnFieldTreeResolver.java:209](../src/main/java/com/turkcell/cdrgenerator1/parser/AsnFieldTreeResolver.java)). Tam test paketi (`mvn clean test`, 514 test) 0 hata ile geçti.
+
+`NRTRDEINFMSInput_Intermediate` yeniden üretildi ve bayt-seviyesinde doğrulandı:
+
+| | eski (round 18, reddedildi) | yeni (düzeltme sonrası) |
+|---|---|---|
+| baş baytlar | `61 81 CB 63 81 C8 …` (çift EXPLICIT sarmalama) | `61 81 C6 5F 22 …` (tek IMPLICIT tag, iç `63 …` yok) |
+| bayt | 206 | 201 |
+| SHA-256 | `5b2023e3a1d30ac8f4f5a55f70db904a4d91c9012fcef451d96fcd69db6a1447` | `639408999d01c5c4ae2d8e378ab74be8099da73fe692f10bf94b33023094b9f5` |
+| self-check (STRICT) | — | 0 hata / 1 uyarı (`CHOICE carries A-[1] but resolved tree holds 'moc'` — walker'ın IMPLICIT-retag'li CHOICE kökünü derin doğrulayamaması, zaten bilinen bir sınır, bkz. 6. kural) |
+
+İçerik baytları rastgele üretildiği için eski dosyayla birebir aynı değil (uzunluk farkı da bundan), ama yapısal iddia doğrulandı: iç `63 81 C8` EXPLICIT sarmalayıcısı tamamen kayboldu, dış tag tek başına `moc` alternatifinin kendi `[APPLICATION 3]` tag'inin yerine geçti — 6. kuralın tam öngördüğü şekil. **Gönderilmeye hazır**, SHA yukarıda kayıtlı.
+
+#### Bulgu 7 — SDPCCR izolasyon dosyası hazır
+
+`tools/dropBerField.py scratchpad/round18/SDPCCR.ber out.ber 10 --under 0.12` ile `bonusAdjustment.usageThresholds` (tek TLV, 58 bayt içerik) çıkarıldı:
+
+| | değer |
+|---|---|
+| bayt | 12480 → **12420** |
+| SHA-256 (izolasyon dosyası) | `1d0aea3dc65a005b7d82de0626c38ca481caa7f97db7247f95a3ee26a5d565ca` |
+| self-check (STRICT), gerçek `SDPCCR` şemasına karşı | **0 hata / 0 uyarı** |
+
+`usageThresholds` OPTIONAL olduğu için eksikliği şema ihlali değil. Bu dosya EMM'e gönderilirse: **PASS** gelirse suçlu kesinleşir (`usageThresholds`/`UsageThreshold`/`UsageCounterType` üçlüsünden biri — vendörlenen şema metninin EMM'in gerçek şemasıyla ayrıştığı, IMSCDRS/CHF sınıfı bir sorun); yine **red** gelirse (ve mesaj artık `usageThresholds` alanını göstermiyorsa) hata dosyanın başka bir yerinde demektir ve aramaya sıfırdan başlanır. **Gönderilmeye hazır**, SHA yukarıda kayıtlı.
+
+#### Bulgu 8 — kapsam tam ölçüldü: 84 modül, ama tek tip değil
+
+Reflection ile gerçek `selectRootTypeName` doğrudan çağrılıp (mock değil, üretimdeki kod) 805 modülün tamamı tarandı: **84 modül** "adsız `SEQUENCE OF X`" sarmalayıcısını atlayıp `X`'i kök seçiyor. Ama bu 84'ün EMM açısından aynı riski taşımadığı ortaya çıktı — ayırıcı, seçilen iç tipin **kendi tip-seviyesi tag'i olup olmadığı**:
+
+| grup | modül sayısı | örnek | EMM kanıtı |
+|---|---|---|---|
+| **TAGGED-INNER** — iç tip kendi `[n]` tag'ini taşıyor | 13 | `NRTRDEInValidationLookup` (`Row ::= [0] IMPLICIT SEQUENCE {...}`) | **PASS** — round 14/15'te doğrudan doğrulandı (`MyResult` sarmalayıcısı hiç aranmadı, EMM'in kendi akışı `Row`'u bekliyor) |
+| **BARE-INNER** — iç tip çıplak, kendi tag'i yok | 71 | `ABSSDPXML` (`SnapshotRecord ::= SEQUENCE {...}`, tag yok) | **RED** — round 18, `ABSSDPXML.SnapshotData` bekleniyor |
+
+`ABSSDPXML`'in gönderilen baytı (`30 34 A0 18 …`) incelendiğinde: kök `SnapshotRecord`'un kendi alanları doğrudan `30 <len>` ile açılmış — dışında `SEQUENCE OF` listesinin `30 <len>` katmanı hiç yok. EMM tam ilk tag'de "Invalid length 54" (=dosyanın tamamı) diyor çünkü tek elemanlı bir listeyi bile saran o ekstra `30 <len>` katmanını bekliyor.
+
+BARE-INNER grubundaki 71 modül 8 aile halinde kümeleniyor (aynı şema, çok kopya): `SnapshotData ::= SEQUENCE OF SnapshotRecord` ailesi (8 modül: `ABSSDPXML`, `SnapshotDataDS`, `XMLCagkan`, `XMLCagkanOutput`, `XMLDENEME`, `XMLOMERO`, `XMLSnapshotDataABS`, `XMLSnapshotDataDS`), `DBDataRecord ::= SEQUENCE OF DBRecord` ailesi (26 modül, `DBLookupTable_*`/`DbLookupTable_*`), `STypeDataModule ::= SEQUENCE OF STypeRecord` (3), `MerRadiusRecord`/`MerRecord ::= SEQUENCE OF ...` (6, MMSR ailesi), kalan ~28 modül tekil varyant.
+
+**Tasarım sorusu artık netleşti — heuristiği değiştirmek YANLIŞ olur:** BARE-INNER'ı düzeltmek için heuristiği "her zaman sarmalayıcıyı seç" şeklinde tersine çevirmek, halihazırda EMM'in kabul ettiği 13 TAGGED-INNER modülü (round 14/15 kanıtı) kırar. İki seçenek kaldı:
+
+1. **Yalnızca `ABSSDPXML`'i `emm-record-bindings.yml`'e bağla** (`ABSSDPXML → SnapshotData`) — dar, kanıtlanmış, sıfır regresyon riski, ama diğer 70 modül kanıtsız kalır.
+2. **Heuristiği ayırıcıya göre böl**: `selectRootTypeName`'in alias-unwrap dalında, iç tip kendi tag'ini taşımıyorsa (BARE-INNER) sarmalayıcıyı (X değil, alias'ın kendisini) tercih et; taşıyorsa (TAGGED-INNER) mevcut davranışı koru. Bu, tek bir kod değişikliğiyle 71 modülün tamamını (yalnızca 1'i EMM-kanıtlı) aynı yöne çeviriyor — 70'i hâlâ ekstrapolasyon.
+
+Önerim 2: ayırıcı (kendi tag'i var/yok) zaten EMM'in iki farklı yanıtıyla birebir örtüşüyor, rastgele değil. Ama karar kullanıcıya ait; hangisi seçilirse seçilsin, `ABSSDPXML`'in kendisi round 19'da tekrar gönderilip düzeltmenin ilk bağımsız kanıtı olmalı.
 
 ### 7. turda gönderilen dosyalar
 
