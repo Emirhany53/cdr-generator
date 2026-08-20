@@ -210,6 +210,39 @@ BARE-INNER grubundaki 71 modül 8 aile halinde kümeleniyor (aynı şema, çok k
 
 Önerim 2: ayırıcı (kendi tag'i var/yok) zaten EMM'in iki farklı yanıtıyla birebir örtüşüyor, rastgele değil. Ama karar kullanıcıya ait; hangisi seçilirse seçilsin, `ABSSDPXML`'in kendisi round 19'da tekrar gönderilip düzeltmenin ilk bağımsız kanıtı olmalı.
 
+**Karar: Seçenek 1, sıfır blast radius ile.** `emm-record-bindings.yml`'e `ABSSDPXML → SnapshotData` bağlandı. Kalan 70 BARE-INNER modül ve Seçenek 2 (heuristiğin ayırıcıya göre bölünmesi), bu dosya EMM'den PASS aldıktan sonra ayrı bir tech-debt/cleanup turu olarak ele alınacak.
+
+**Bağlama tek başına yetmedi — ikinci bir bulgu.** `recordType` yalnızca `resolveRootTypeName`'in hangi ismi seçtiğini değiştiriyor; `AsnFieldTreeResolver.resolveRoot`'un alias-zinciri takip döngüsü ise seçilen isim ne olursa olsun `ALIAS ::= SEQUENCE OF X` biçimindeki her tipi `X`'e kadar açıyordu — heuristiğin kendi yolu bu döngüye hiç girmiyor (zaten `X`'i doğrudan döndürüyor), ama binding üzerinden gelen "SnapshotData" adı tam bu döngüye giriyor ve anında geri açılıyordu. Bağlamadan hemen sonra yeniden üretilen dosya, öncekiyle **birebir aynı çıplak şekli** veriyordu (`30 34 A0 18 …` → `30 4A A0 2E …`, sadece rastgele değerler farklı) — mimaride "kök tipin kendisi bir liste" durumunu temsil edecek hiçbir yapı yoktu.
+
+**Düzeltme (kullanıcı onayıyla, tek entegre commit):**
+- `AsnFieldTreeResolver.resolveRoot`: alias-zinciri takibi artık zincirdeki İLK tekrarlı (`SEQUENCE OF`/`SET OF`) adımı `repeatedRootAliasName` olarak hatırlıyor, hâlâ açıp `X`'in alanlarını çözüyor ama artık bunu **kaybetmiyor**. `ResolvedRoot` yeni `repeatedRoot`/`repeatedRootIsSet` alanları taşıyor.
+- `AsnStructure`: aynı iki alan eklendi.
+- `BerEncoderService.encodeRecord`: `structure.isRepeatedRoot()` true ise yeni `encodeRepeatedRoot` yolu — `X`'in kendi alanları ÖNCEDEN OLDUĞU GİBİ tek bir kendiliğinden-sınırlı SEQUENCE/SET TLV'ye kodlanıyor, sonra bu TLV bir kez daha düz universal `SEQUENCE OF`/`SET OF` (0x30/0x31) içine sarılıyor.
+- **Kasıtlı olarak kapsam dışı bırakıldı:** sarmalayıcı alias'ın kendi tag'i olduğu durum (`X ::= [n] SEQUENCE OF Y`) — `AsnTypeRegistryBuilder`, `tagPrefix`'i yalnızca gövdesi `{` ile başlayan YAPISAL tanımlar için dolduruyor; bir ALIAS (parantezsiz `SEQUENCE OF`) için bu alan hep boş kalıyor, tag ham `aliasTarget` metninin içinde gömülü kalıyor. Korpusta bu şekle uyan (kendi tag'i olan bir SEQUENCE OF sarmalayıcı) hiçbir modül yok, bu yüzden okunması EMM'e karşı ölçülene kadar ertelendi — tahmin yürütülmedi. `RepeatedRootEncodingTest#aTaggedWrapperIsStillARepeatedRootButItsOwnTagIsNotReadBack` bu kasıtlı boşluğu kilitliyor.
+- Yeni test: `src/test/java/com/turkcell/cdrgenerator1/service/RepeatedRootEncodingTest.java` (5 test) — heuristiğin kendi yolunun (84 modülün 83'ü artı gelecekteki Seçenek 2) etkilenmediğini de doğruluyor.
+- Tam paket (`mvn clean test`): önce **514**, değişiklik sonrası **519** test (5 yeni), **0 hata**.
+
+**`ABSSDPXML` yeniden üretildi, düzeltme sonrası:**
+
+| | binding öncesi (round 18) | binding sonrası, kod düzeltmesi ÖNCESİ | kod düzeltmesi SONRASI |
+|---|---|---|---|
+| baş baytlar | `30 34 A0 18 …` | `30 4A A0 2E …` (aynı çıplak şekil) | `30 62 30 60 A0 2E …` (dış `SEQUENCE OF` katmanı geri geldi) |
+| bayt | 54 | 76 | **100** |
+| SHA-256 | `3b3c9f7b425040ef394576924cba16cd585764108202044cd2a822d383e96cf6` | `dbe1de01548333bc8f52aa436d0214199263f63f01b74ec591cc49b70e859a29` | **`1bef124dd1b61502685dca639e4888bc8040f65f333613beb5b298f6295ba1ce`** |
+| self-check (STRICT) | — | — | 0 hata / 1 uyarı (`No field of this body carries tag U-[16]` — walker'ın yeni dış sarmalayıcıyı henüz tanımaması, zaten bilinen bir sınır, Bulgu 6'daki CHOICE uyarısıyla aynı sınıf) |
+
+**Gönderilmeye hazır**, SHA yukarıda kayıtlı.
+
+### Round 19 — üç dosya da hazır
+
+| dosya | bayt | SHA-256 | dosya yolu |
+|---|---|---|---|
+| `NRTRDEINFMSInput_Intermediate.ber` | 201 | `639408999d01c5c4ae2d8e378ab74be8099da73fe692f10bf94b33023094b9f5` | `scratchpad/round19/NRTRDEINFMSInput_Intermediate.ber` |
+| `SDPCCR-no-usageThresholds.ber` | 12420 | `1d0aea3dc65a005b7d82de0626c38ca481caa7f97db7247f95a3ee26a5d565ca` | `scratchpad/round19/SDPCCR-no-usageThresholds.ber` |
+| `ABSSDPXML.ber` | 100 | `1bef124dd1b61502685dca639e4888bc8040f65f333613beb5b298f6295ba1ce` | `scratchpad/round19/ABSSDPXML.ber` |
+
+Üçü de STRICT self-check'ten 0 hata ile geçti (NRTRDE ve ABSSDPXML birer bilinen/belgelenmiş walker uyarısı taşıyor, SDPCCR 0/0). Sorumluya gönderilmeye hazır.
+
 ### 7. turda gönderilen dosyalar
 
 Sorumluya 12.08.2026'da gönderildi. Dosyalar `target/emm-round7/` altında üretildi
