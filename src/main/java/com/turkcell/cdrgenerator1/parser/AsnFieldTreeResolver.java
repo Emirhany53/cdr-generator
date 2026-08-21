@@ -226,6 +226,27 @@ public class AsnFieldTreeResolver {
         if (tag == null || fields.isEmpty()) {
             return null;
         }
+        // A keyword-less tag on a CHOICE root in a module naming no tagging
+        // mode: round 19 tried both readings X.680 8.3 allows on
+        // NRTRDEINFMSInput_Intermediate's keyword-less "CallEvent ::=
+        // [APPLICATION 1] CHOICE" under its keyword-less "DEFINITIONS ::="
+        // header - EXPLICIT-wrapped (round 18's original) and IMPLICIT-retagged
+        // (round 19's finding-6 fix) - and EMM refused both with the identical
+        // "was probably not set" message. Round 20 sent the same record with no
+        // CallEvent tag at all, bare selected-alternative first: PASS, on all
+        // three alternatives (Moc/Mtc/Gprs), so the tag is not a per-flow
+        // binding either - it is simply never written.
+        //
+        // Scoped to UNSPECIFIED on purpose, narrower than the corpus would
+        // require (only these two NRTRDE modules have a keyword-less
+        // type-tagged CHOICE root at all, under either header): a header that
+        // DECLARES a mode is a different, unmeasured combination, and X.680
+        // 8.3's EXPLICIT is what every other CHOICE root in this corpus
+        // already gets there.
+        if (choice && tag.declared() == AsnDeclaredTagging.NONE
+                && taggingMode == AsnTaggingMode.UNSPECIFIED) {
+            return null;
+        }
 
         return AsnField.builder()
                 .fieldName(typeName)
