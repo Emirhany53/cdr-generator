@@ -318,6 +318,46 @@ Bu okumayı destekleyen iki şey var. (a) EMM'in mesajı, `IMSCDRS`'in ilk turla
 
 Üçü de kod değişikliği gerektirmedi — mevcut `rootType` parametresiyle üretildi (`Moc`/`Mtc`/`Gprs`), yani 20. tur NRTRDE tarafında **kodda hiçbir varsayım taşımıyor**. Dördü de STRICT self-check'te 0 hata (NRTRDE üçü 0 uyarı; `SDPCCR`'ın 35 uyarısı, walker'ın IMPLICIT-retag'lenmiş CHOICE alt-ağaçlarını doğrulayamaması — bilinen sınır, ve tam olarak yeni kuralın devreye girdiği 35 noktayı işaretliyor).
 
+### 20. turun yanıtı — NRTRDE 3/3 PASS, SDPCCR aynı düğümde farklı offset'te tekrar red (20.08.2026)
+
+```
+NRTRDE (3 dosya) -> hepsi başarılı.
+
+SDPCCR.ber -> Failed to decode received data.
+A block of 'SDPCCR.ber', originating from SDPCCR, was corrupt (this would
+  have been record #0).
+Invalid length 6087 of field
+  "SDPCCR.SDPCreditControlRecord.creditControlRecord.bonusAdjustment.usageThresholds.[0]"
+```
+
+##### ✅ NRTRDE 3/3 PASS — Bulgu 10 kapandı, üçüncü okuma doğrulandı
+
+`Moc`/`Mtc`/`Gprs` üçü de geçti — yani `CallEvent`'in `[APPLICATION 1]` tag'i **belirli bir alternatife bağlı bir EMM akış konfigürasyonu değil** (LTE-R10'un `pGWRecord`'u gibi); tag tel üzerinde **hiç yok**. Kalıcı düzeltme (`e3062cc`): `buildRootTagCarrier`, keyword'süz tag'e sahip kök CHOICE için (yalnızca modül başlığı `UNSPECIFIED` iken — ölçülen tam koşul) artık `null` dönüyor, kod `encodeRecord`'un zaten var olan "seçili alternatifi çıplak yaz" yoluna düşüyor. Korpus taraması: bu şekle (`X ::= [n] CHOICE` keyword'süz) uyan başka **hiçbir modül yok** — değişiklik yalnızca bu iki NRTRDE modülünü etkiliyor, 36 kanıtlı modülün hiçbiri kıpırdamadı (deterministik probe ile doğrulandı).
+
+##### 🟡 Bulgu 11 — `SDPCCR`: aynı hata, farklı offset — kusur CHOICE etiketlemesiyle ilgisiz çıktı
+
+Rakam değişti (7411 → 6087) ama bu sadece dosya boyutunun küçülmesinden (round 9'un 28 sarmalayıcıyı kaldırması) — TLV analizi ikisinin de **aynı düğümün kendi bitiş ofseti** olduğunu doğruluyor (round 18: `usageThresholds[0]` 56 bayt, biter @7411; round 20: aynı alan 52 bayt, biter @6087). Yani **rule 9 düzeltmesi bu alanı hiç etkilemedi** — EMM tıpkı öncekiyle aynı düğümde, aynı şekilde takılıyor.
+
+Bu, önceki hipotezi (kusur CHOICE alan etiketlemesinde) çürütüyor: iki farklı kodlama (round 18'in EXPLICIT sarmalaması, round 20'nin IMPLICIT retag'ı) **aynı reddi** üretti. Değişmeyen tek şey `usageThresholds`'un CHOICE-DIŞI alanları: `usageThresholdID [0]`, `action [1]`, `associatedPartyID [4]`, `forAllSubscribersOnAccount [5]`.
+
+Ayrıca dikkat çekici bir iç-tutarlılık: `UsageCounter` (bonusAdjustment'ın komşu koleksiyonu, `usageCounters [9]`) aynı `UsageCounterType` CHOICE'unu **yazılı `EXPLICIT`** keyword'üyle taşıyor ve açıkça geçiyor (hata `usageThresholds`'ta, yani `usageCounters` önce başarıyla çözülmüş olmalı) — `UsageThreshold`'un keyword'süz aynı CHOICE'u ise iki kodlamada da reddediliyor. Bu, Bulgu 9'un genel kuralını **zayıflatmıyor** (ContextParameter/TreeDefinedField/ServiceOutputField üçlüsü hâlâ geçerli bir örüntü), ama `usageThresholds`'un kendi başına **ayrı, henüz teşhis edilmemiş** bir sorunu olduğunu gösteriyor.
+
+**Sonraki bisection adımı**, round 20'nin baytları üzerinde `dropBerField.py` ile hazırlandı: `usageThresholdValueBefore [2]` ve `usageThresholdValueAfter [3]` (CHOICE alanların ikisi de) çıkarıldı, `usageThresholdID`/`action`/`associatedPartyID`/`forAllSubscribersOnAccount` dokunulmadan bırakıldı. STRICT self-check 0 hata / 31 uyarı (kalan uyarılar başka alanların bilinen CHOICE-retag sınırları, `usageThresholds` ile ilgisi yok).
+
+- **Geçerse:** kusur kesinlikle CHOICE alanlarında (belki `UsageCounterType`'ın seçilen alternatifiyle ilgili bir şey, ya da CHOICE alanlarının ikisinin birlikte varlığıyla ilgili), sıradaki bisection CHOICE alanlarını teker teker izole eder.
+- **Geçmezse (aynı `usageThresholds` hatası, farklı offset):** kusur `usageThresholdID`/`action`/`associatedPartyID`/`forAllSubscribersOnAccount`'tan birinde — muhtemelen `UsageThresholdID`'nin kısıtı (`INTEGER (1..2147483647)`) ya da `associatedPartyID`'nin `NumberString` boyut kısıtıyla ilgili bir üretim hatası.
+- **Hiç `usageThresholds` hatası vermezse (ilerlerse):** dört alanın hiçbiri suçlu değil, sorun muhtemelen koleksiyonun kendisinde (eleman sayısı, sıralama) — IMSCDRS/CHF sınıfı bir şema-gerçeklik ayrışması ihtimali güçlenir.
+
+### 21. turda gönderilen dosyalar (20.08.2026)
+
+| # | dosya | bayt | ne soruyor | SHA-256 |
+|---|---|---|---|---|
+| 1 | `NRTRDEINFMSInput_Intermediate.ber` | 201 | kalıcı düzeltmenin varsayılan üretim yolunda (rootType override'sız) doğru çalıştığı — `moc` seçili, dış tag yok | `785e4b95165fca1decb139a1700f9208bc027efc952dc737f34d2c8a4503d975` |
+| 2 | `NRTRDEINFMSInput.ber` | 156 | aynı düzeltme, kardeş modül | `71a8182aa53d141186da1df14b9d387379e7e23e2b63d429098e3d598d96f8ab` |
+| 3 | `SDPCCR-choiceFieldsOnlyDropped.ber` | 12387 | Bulgu 11 bisection'ı — `usageThresholds`'un CHOICE alanları çıkarılmış, gerisi dokunulmamış | `3440948d82918055d5f3e4e2cdafbcd208d5eedfc72e81f33238fccd8e6acbb5` |
+
+1-2 artık **gerçek varsayılan üretim yoludur** (round 20'deki gibi elle seçilmiş `rootType` değil) — API'nin/UI'nin bu modüller için üreteceği dosyayla birebir aynı. Üçü de STRICT self-check'te 0 hata; tam paket 519 test, 0 hata.
+
 #### Gönderim öncesi bağımsız doğrulama — korpus geneli bayt karşılaştırması
 
 "Hiçbir çalışan dosyayı bozmadık" iddiası akıl yürütmeyle değil **ölçümle** kanıtlandı. Yöntem: `329bfbe` (round 19 öncesi taban) için bir `git worktree` açıldı, aynı probe iki ağaçta da koşuldu ve 805 modülün çıktısı karşılaştırıldı. Üretimin rastgeleliği iki yerden nötrleştirildi — her yaprağa sabit bir değer veren bir `ValueSource`, ve `CdrRecordBuilder.random`'ın reflection ile tohumlanmış bir `Random(20260820)` ile değiştirilmesi (tekrar sayıları `random.nextInt` ile çekiliyor). Böylece iki taraf da **gerçek** `CdrRecordBuilder` + **gerçek** `BerEncoderService` kullandı, ama çıktı deterministik oldu.
