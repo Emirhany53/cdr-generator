@@ -358,6 +358,43 @@ Ayrıca dikkat çekici bir iç-tutarlılık: `UsageCounter` (bonusAdjustment'ın
 
 1-2 artık **gerçek varsayılan üretim yoludur** (round 20'deki gibi elle seçilmiş `rootType` değil) — API'nin/UI'nin bu modüller için üreteceği dosyayla birebir aynı. Üçü de STRICT self-check'te 0 hata; tam paket 519 test, 0 hata.
 
+### 21. turun yanıtı — NRTRDE tamamen kapandı, SDPCCR çok daha derine ilerledi (21.08.2026)
+
+```
+NRTRDE (2 dosya) -> hepsi başarılı.
+
+SDPCCR-choiceFieldsOnlyDropped.ber -> Failed to decode received data.
+Invalid length 9437 of field
+  "SDPCCR.SDPCreditControlRecord.creditControlRecord.appliedProductFees.[0]
+   .productFeeUsageCounters.[0].usageCounterChange.usageCounterMoney"
+```
+
+##### ✅ NRTRDE — gerçek varsayılan üretim yolu da doğrulandı
+
+`NRTRDEINFMSInput_Intermediate` ve `NRTRDEINFMSInput`, artık hiçbir `rootType` zorlaması olmadan, API'nin/UI'nin üreteceği gerçek dosyalarla geçti. Bulgu 10 artık yalnızca "doğru" değil, **üretimde kullanılan haliyle doğrulanmış**.
+
+##### 🟢 Bulgu 12 — bisection'ın "geçerse" dalı gerçekleşti: kusur gerçekten CHOICE alanlarındaydı, ama nedeni beklenenden farklı
+
+`usageThresholds`'un iki CHOICE alanını (`[2]`/`[3]`) çıkarmak hatayı tamamen ortadan kaldırdı — EMM çok daha derine, `appliedProductFees[0].productFeeUsageCounters[0].usageCounterChange` alanına kadar ilerledi. Ama bu kez hata mesajı **seçilen CHOICE alternatifinin adını** veriyor: `usageCounterMoney`.
+
+TLV analizi kök nedeni kesinleştirdi. `ProductFeeUsageCounter.usageCounterChange [1] UsageCounterType` (yazılı keyword yok). `UsageCounterType ::= CHOICE { usageCounterUnit [0] Integer64, usageCounterMoney [1] MonetaryUnits OPTIONAL }`. Resolver, alan-seviyesi bir CHOICE için **her zaman ilk alternatifi** çözüyor (`usageCounterUnit`), rootType seçimlerinin aksine burada bir override mekanizması işletilmiyordu. `choiceTagImplicit` devreye girip `usageCounterUnit`'in içeriğini alanın kendi tag'i `[1]`'e retag edince, tel üzerindeki bayt `81 <8 bayt integer>` oldu — ama `[1]`, `UsageCounterType`'ın **kendi** şemasında `usageCounterMoney`'in tag'i! EMM tag `[1]`'i görüp "bu usageCounterMoney" diye okudu, sonra ham bir INTEGER'ı `MonetaryUnits` SEQUENCE'i gibi ayrıştırmaya çalışıp çöktü.
+
+Bu, round 12/13'te "kanıtlanan" 6. kuralın kendisinde **hiç fark edilmemiş bir belirsizlik** ortaya çıkardı — kodun kendi yorumu bunu zaten önceden yazmıştı: *"the two readings diverge wherever the numbers differ, and no site like that has been measured."* CHF'nin kanıtı (`iPAddress [0]` → `iPBinaryAddress [0]`) alan numarası ile alternatifin kendi numarasının **tesadüfen** ikisinin de `0` olmasına dayanıyordu; retag-to-field-number ile "alternatifi hiç değiştirmeden geçir" ayırt edilemiyordu. SDPCCR bunları ilk kez ayırdı.
+
+**Denendi ve GERİ ALINDI:** "alan tag'ini hiç yazma, alternatifi olduğu gibi geçir" — kod değişikliği yapıldı, ama `ShippedFieldRulesRoundTripTest` gerçek ve daha ciddi bir hata yakaladı: `ProductFeeUsageCounter`'ın **iki** keyword'süz CHOICE alanı (`usageCounterChange[1]`, `usageCounterValueAfter[2]`) ikisi de aynı ilk alternatife (`usageCounterUnit[0]`) çözüldüğü için, tag'i atlayınca **ikisi de aynı `[0]` tag'ini** taşıyor — aynı SEQUENCE gövdesinde gerçek, self-check'in doğru yakaladığı bir duplicate-tag ihlali. Retag'in kendisi (kardeşleri ayrı tutan mekanizma) gerekliydi; asıl kusur **hangi alternatifin seçildiğiydi**.
+
+**Uygulanan düzeltme** (`f4b6e9a`): resolver'da zaten var olan `choiceAlternatives` mekanizması (LTE-R10'un `pGWRecord` bağlaması için kullanılan aynı yapı) kullanılarak, `SDPCCR` modülünde `UsageCounterType → usageCounterMoney` bağlandı. Artık `usageCounterChange[1]`'in çözülen alternatifi (`usageCounterMoney`, kendi tag'i `[1]`) alanın kendi tag'iyle **örtüşüyor** — çakışma kalktı. `usageCounterValueAfter[2]` ve `UsageThreshold`'un `[2]`/`[3]` çifti hâlâ HİÇBİR alternatifin kendi numarasıyla örtüşmüyor — bu düzeltmeyle çözülmedi ama **kötüleşmedi** de (retag her zaman kardeşleri kendi numaralarında tutar, içindeki alternatif ne olursa olsun).
+
+**Ölçüm:** STRICT self-check 0 hata / 13 uyarı (hepsi walker'ın retag'lenmiş CHOICE alt-ağaçlarını doğrulayamaması, artık `[2]`/`[3]` noktalarında da bekleniyor). 519 test, 0 hata. Korpus geneli deterministik fark: **yalnızca `SDPCCR`** değişti (8543 → 9182 bayt); `Array`/`LteReturnTypes`/`SMSCLookupStructures` farkı biçimsel, gerçek değil.
+
+### 22. turda gönderilen dosya (21.08.2026)
+
+| dosya | bayt | ne soruyor | SHA-256 |
+|---|---|---|---|
+| `SDPCCR.ber` | 13194 | tam dosya (izolasyon değil) — `usageCounterChange[1]` çakışması düzeldi mi, `usageCounterValueAfter[2]`/`usageThresholds`'un `[2]`/`[3]`'ü hâlâ açık soru | `4a22a82cb13f8d2d2de92f2d8d9c647bfceee8a942a4d8a33b9806463500259a` |
+
+Bu artık **tam SDPCCR dosyası** (bisection değil) — `usageThresholds` geri eklendi (artık `usageCounterMoney`'e bağlı). Geçerse: `[n]` alternatifin kendi numarasıyla örtüşmediğinde bile EMM'in genel olarak tölere ettiği anlaşılır. Aynı hatayla (farklı offsette) tekrar reddedilirse: sorun kesinlikle `[n]`↔alternatif-numarası uyuşmazlığında, ve genel çözüm (alan tag'i alternatiflerden biriyle eşleşmiyorsa ne yapılmalı) yeni bir açık soru olur.
+
 #### Gönderim öncesi bağımsız doğrulama — korpus geneli bayt karşılaştırması
 
 "Hiçbir çalışan dosyayı bozmadık" iddiası akıl yürütmeyle değil **ölçümle** kanıtlandı. Yöntem: `329bfbe` (round 19 öncesi taban) için bir `git worktree` açıldı, aynı probe iki ağaçta da koşuldu ve 805 modülün çıktısı karşılaştırıldı. Üretimin rastgeleliği iki yerden nötrleştirildi — her yaprağa sabit bir değer veren bir `ValueSource`, ve `CdrRecordBuilder.random`'ın reflection ile tohumlanmış bir `Random(20260820)` ile değiştirilmesi (tekrar sayıları `random.nextInt` ile çekiliyor). Böylece iki taraf da **gerçek** `CdrRecordBuilder` + **gerçek** `BerEncoderService` kullandı, ama çıktı deterministik oldu.
