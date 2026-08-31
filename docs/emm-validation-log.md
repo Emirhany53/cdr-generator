@@ -84,6 +84,14 @@ kodlanıyor. Geriye tek istisna kaldı: tip üzerine yazılmış CHOICE tag'i
 | 17 | `IMS-R8-2009-03-A-round17` (iç içe koleksiyonun orta katmanı, tek değişken) | **PASS** (19.08.2026) — `IMS-R8-2009-03` bu sınıfın ilk tam kabulü |
 | 18 | Geniş korpus taraması — 15 dosya, EMM'den hiç geçmemiş/kardeş-olmayan yapılar (19.08.2026) | **12 PASS · 3 red** (19.08.2026) |
 | 19 | 18. turun 3 reddi: `NRTRDEINFMSInput_Intermediate` (kök CHOICE tag'i IMPLICIT), `SDPCCR` (usageThresholds sökülmüş izolasyon), `ABSSDPXML` (kök tipi YAML'dan bağlandı) — 20.08.2026 | **1 PASS · 2 red** (20.08.2026): `ABSSDPXML` **PASS**; `SDPCCR` **ilerledi** 7411 → **9980** (yeni alan `chargingContextOutputFields`); `NRTRDE` **aynı hata**, kök CHOICE tag'i için IMPLICIT okuması da çürüdü |
+| 20 | `SDPCCR` (rule 9 retag) + `NRTRDEINFMSInput_Intermediate` A/B/C (Moc/Mtc/Gprs, çıplak alternatif) — 20.08.2026 | **NRTRDE 3/3 PASS** — tip-seviyesi CHOICE tag'i tel üzerinde hiç yok (Bulgu 10 kapandı); `SDPCCR` aynı düğümde 6087, CHOICE etiketlemesi suçlu değil |
+| 21 | `NRTRDEINFMSInput`+`_Intermediate` (varsayılan üretim yolu) + `SDPCCR` (usageThresholds CHOICE alanları sökülmüş) — 21.08.2026 | **NRTRDE 2/2 PASS**; `SDPCCR` çok daha derine ilerledi → `appliedProductFees…usageCounterChange.usageCounterMoney` @9437 |
+| 22 | `SDPCCR` tam dosya (`UsageCounterType → usageCounterMoney` bağlaması) | **gönderilmedi** — bağlama type-global olduğu için EMM'in kabul ettiği `UsageCounter.*` yapısını da bozuyordu, geri alındı |
+| 23 | — | (numara kullanılmadı) |
+| 24 | `SDPCCR` (`productFeeUsageCounters` EXPLICIT wrapper formuna çevrildi, 28 site) | **yanıt bekleniyor** |
+| 25 | **Stress set — 18 dosya**, hiç sınanmamış 18 davranış imzası (21.08.2026) | **16 PASS · 2 red** — `DbLookupTable_IA5` (Bulgu 8 tekrar), `ATS_ONDER` (duplicate tag) |
+| 26 | `DbLookupTable_IA5` (kök tipi `DBDataRecord`'a bağlandı) | **PASS** — Bulgu 8'in ikinci bağımsız kanıtı |
+| 27 | `ATS_ONDER` (`dialedPartyAddress [203]` sökülmüş izolasyon) | **PASS** — C-sınıfının tek suçlu olduğu kanıtlandı |
 
 ### 18. turda gönderilen dosyalar — geniş korpus taraması
 
@@ -436,6 +444,89 @@ ABSSDPXML.ber                     (100)  30 U-[16] len=98
                                                 └─ A0 C-[0], A1 C-[1]
 ```
 
+
+### 22. tur gönderilmedi — bağlama geri alındı
+
+`UsageCounterType → usageCounterMoney` bağlaması **type-global** olduğu için yalnızca sorunlu alanı değil, EMM'in üç turdur kabul ettiği `UsageCounter.*` (yazılı `EXPLICIT`) yapısını da değiştiriyordu: `A1 0A { 80 08 … }` → `A1 18 { A1 16 { … } }`. Kanıtlanmış bir yapıyı kanıtsız bir gerekçeyle bozmak bu projenin kuralına aykırı; bağlama çalışma ağacında geri alındı ve `f4b6e9a` sonradan `git revert` ile tarihten de temizlendi.
+
+### 24. turda gönderilen dosya (21.08.2026, yanıt bekleniyor)
+
+`ProductFeeUsageCounter`'ın CHOICE alanları, EMM'in **aynı tip için zaten kabul ettiği** sarmalayıcı formuna çevrildi (`tools/wrapChoiceField.py`, 28 site, tüm ata uzunlukları yeniden yazıldı):
+
+```
+ÖNCE  (round 21, reddedildi):  81 08 357360fd4c5771a7        @9427
+SONRA (round 24)            :  A1 0A 80 08 357360fd4c5771a7  @9427
+```
+
+| dosya | bayt | SHA-256 |
+|---|---|---|
+| `SDPCCR-productFeeUsageCounters-wrapped.ber` | 12444 | `d897a8371fed91e9b6e955dcf0e92f1f446f73e9b81e8efdf58fd3ceae32a736` |
+
+Dokunulmayanlar doğrulandı: `usageCounters[9]` (kanıtlı EXPLICIT) bayt bayt aynı, `chargingContextOutputFields[19].parameterValue` (round 21'de geçti) aynı, `usageThresholds[10]` hâlâ `[2]`/`[3]`'süz.
+
+### 25. tur — stress set, 18 dosya (21.08.2026)
+
+805 modül 15 eksende imzalandı: **55 davranış imzası**, bunların **26'sı hiç sınanmamıştı** (476 modül). Her sınanmamış imzadan temsilci seçilerek 18 dosya üretildi; hepsi normal üretim hattından, elle patch yok.
+
+**Sonuç: 16 PASS · 2 red.** Tek turda kanıtlanan imza sayısı bu projenin rekoru.
+
+Öne çıkan kabuller:
+
+| dosya | ne kanıtladı |
+|---|---|
+| `Newchf` (3156 bayt, **555 TLV, 10 seviye**) | Korpusun en karmaşık yapısı — nested CHOICE + SEQ OF + DEFAULT + çok-baytlı tag birlikte |
+| `SDP2CSN` (193 TLV, 192 yaprak) | En geniş düz CHOICE + BCD/timestamp |
+| `CCNAniTest` (12 bayt) | Keyword'süz modülde **SET kökü** — korpusta tek örnek |
+| `CHARGINGCDR_4_12` | `IMPORTS` ikinci bağımsız soyda |
+| `NRTRDEAgreementActiveLookup`, `RevenueAssurance` | "0/2 uyarı" taşıyorlardı; **kod değiştirmeden** gönderildi ve geçtiler |
+
+##### Bulgu 13 — `duplicate-tag` kuralında false positive (EMM tarafından kanıtlandı)
+
+`NRTRDEErrorReport` self-check'ten **ERROR** ile geçmişti:
+
+```
+ERROR [duplicate-tag] NerFile.A-[4] appears 2 times
+```
+
+Sebebi vendored şemada: `Name ::= [APPLICATION 4]` ve `UTCCode ::= [APPLICATION 4]`, ikisi de `NerFile`'ın OPTIONAL alanı. "Şema kusuru, göndermeyelim" önerilmişti; yine de gönderildi ve **EMM kabul etti** — çünkü 10 alanın hepsi mevcut ve sırayla geldiği için pozisyonel çözüm mümkün.
+
+Kural **şemanın** belirsizliğine bakıyor, **dosyanın** belirsiz olup olmadığına bakmıyor. Sonuç: STRICT mod, EMM'in kabul ettiği bir dosyayı üretmeyi reddediyor. Aynı mantık `RevenueAssurance` (106 alanın 106'sı mevcut) ve `CDRDatamartSDPColl` (212/212, round 18 PASS) için de geçerli. Düzeltme henüz yapılmadı; kapsamı ölçülmeli.
+
+### 26. tur — `DbLookupTable_IA5` (21.08.2026)
+
+```
+Beklenen structure DbLookupTable_IA5.DBDataRecord
+Invalid length 12 of field ""          ← 12 = tüm dosya
+```
+
+Bulgu 8'in aynısı, `ABSSDPXML` ile birebir. Bağlama eklendi (`DbLookupTable_IA5 → DBDataRecord`), korpus etkisi **tek modül** (12 → 14 bayt), ve EMM **kabul etti**:
+
+```
+ESKI:  30 0A 16 08 …           ← sarmalayıcı yok
+YENI:  30 0C  30 0A  16 08 …   ← DBDataRecord → DBRecord → input_value
+```
+
+**Bulgu 8 artık iki bağımsız soyda kanıtlı** (XML ailesi + DB-lookup ailesi). Kalan ~70 BARE-INNER modül için genel temizlik turunun gerekçesi tamamlandı.
+
+##### Bulgu 14 — C-sınıfı, ikinci bağımsız soyda kanıtlandı (`ATS_ONDER`)
+
+25. turda `ATS_ONDER` şu hatayı verdi:
+
+```
+Duplicate Tag data found for ATS_ONDER.TASRecord.aTSRecord
+```
+
+İlk hipotez — "`listOfSubscriptionID [31] SET OF` koleksiyonu 2 eleman aldığı için `U-[17]` tekrarlıyor" — **çürütüldü**: `IMS-R8-2009-03` (round 17 **PASS**) tam olarak aynı şekli taşıyor (`[31]` içinde 2 × `U-[17]`, her biri `C-[0] C-[1]`). Eleman sayısını düşürmek boşuna olurdu.
+
+Dosyada kalan tek anormallik C-sınıfıydı: `dialedPartyAddress [203] CalledPartyAddress` — keyword'süz CHOICE, alternatifleri `sipURI [0]` / `telURI [1]`, biz `[203]`'e retag ediyoruz ve bu hiçbir alternatife karşılık gelmiyor. 27. turda yalnızca bu alan çıkarıldı (`dropBerField.py`, tek değişken) ve **EMM kabul etti**.
+
+| modül | alan | alternatifler | kapsayıcı | EMM |
+|---|---|---|---|---|
+| `SDPCCR` | `usageThresholdValueBefore [2]` | `{0,1}` | SEQUENCE | ❌ (20. tur) |
+| `ATS_ONDER` | `dialedPartyAddress [203]` | `{0,1}` | **SET** | ❌ (25. tur) |
+| `ATS_ONDER` | alan çıkarıldı | — | SET | ✅ **PASS** (27. tur) |
+
+C-sınıfı artık **iki bağımsız soyda ve iki farklı kapsayıcı türünde** bozuk olduğu kanıtlanmış durumda. Korpusta bu sınıfta **7 modül / 34 alan** var: `SDPCCR`, `CreditControlDataTypes_EC22`, `CDRF-R7`, `MAVENIRTEST`, `NEWDS`, `TurkcellCDRCCNCS40`, `ATS_ONDER`. Genel çözüm 24. turun yanıtına bağlı.
 ### 7. turda gönderilen dosyalar
 
 Sorumluya 12.08.2026'da gönderildi. Dosyalar `target/emm-round7/` altında üretildi
