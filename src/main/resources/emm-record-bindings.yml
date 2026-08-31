@@ -63,29 +63,6 @@ modules:
       CHOICE, not a type - so it is a selection, not a recordType. Rounds 1-3
       failed on the first alternative before this was pinned down.
 
-  SDPCCR:
-    choiceAlternatives:
-      UsageCounterType: usageCounterMoney
-    evidence: >-
-      Round 21. EMM refused ProductFeeUsageCounter.usageCounterChange [1]
-      UsageCounterType (no written keyword) at "...usageCounterChange
-      .usageCounterMoney" - naming usageCounterMoney specifically, the
-      alternative at UsageCounterType's OWN [1], while the resolver's default
-      (first-declared-alternative) rule had picked usageCounterUnit [0]
-      instead. IMPLICIT-retagging usageCounterUnit's content onto the field's
-      own [1] put content shaped like usageCounterUnit under a tag that, per
-      the CHOICE's own declaration, means usageCounterMoney - so EMM read [1]
-      as "this is usageCounterMoney" and choked trying to parse a raw INTEGER
-      as a MonetaryUnits SEQUENCE. Binding the type to the alternative whose
-      own tag the field's number actually matches removes that specific
-      collision; a second keyword-less field on the same type,
-      usageCounterValueAfter [2] (and UsageThreshold's pair, [2]/[3]), still
-      doesn't correspond to either of UsageCounterType's own alternative
-      numbers ([0]/[1]) and remains an open question - not fixed by this
-      binding, not made worse either, since a re-tag always keeps sibling
-      fields on their own distinct numbers regardless of which alternative's
-      content sits inside. Awaiting an accepted file.
-
   ABSSDPXML:
     recordType: SnapshotData
     evidence: >-
