@@ -86,6 +86,16 @@ class AllModulesRoundTripTest {
      * one body - the encoder has no other tag it could legally write.</p>
      */
     private static final Set<String> SCHEMA_LEVEL_DUPLICATE_TAG_MODULES = Set.of(
+            // SET-rooted records where a keyword-less CHOICE field's alternative
+            // tag collides with a sibling member. A SET carries no order, so
+            // position cannot tell them apart and EMM refuses the file -
+            // ATS_ONDER was rejected for exactly this in rounds 25 and 28, and
+            // no other tag is writable: CalledPartyAddress offers [0] and [1],
+            // and aTSRecord already declares both.
+            "ATS_ONDER",
+            "CDRF-R7",
+            "LTE-R10-TURKCELL-SYNVRS",
+            "MAVENIRTEST",
             "BDCevapsiz",
             "CDRDatamartTANGOmBalance",
             "CwinDataStr",

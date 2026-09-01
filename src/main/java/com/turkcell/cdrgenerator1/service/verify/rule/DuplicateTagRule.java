@@ -73,7 +73,9 @@ public class DuplicateTagRule implements VerificationRule {
                 return;
             }
             TlvNode first = occurrences.get(0);
-            boolean resolvable = bodyIsKnown && positionResolves(nodeContext.field(), tag);
+            boolean resolvable = bodyIsKnown
+                    && (positionResolves(nodeContext.field(), tag)
+                            || everyCarrierIsPresent(nodeContext.field(), tag, occurrences.size()));
             context.report(severityFor(tag, bodyIsKnown, resolvable), NAME,
                     context.pathTo(first.tagLabel()),
                     first.start(),
@@ -146,6 +148,46 @@ public class DuplicateTagRule implements VerificationRule {
     }
 
     /**
+     * True when a SEQUENCE declares exactly as many members carrying this tag
+     * as the wire actually holds, so none of them was omitted and a decoder
+     * consuming the components in order can never mistake one for another.
+     *
+     * <p>Counting the body's children instead would not do: a body declaring
+     * {@code [0]} and {@code [1]} and a wire carrying {@code [0]} twice have
+     * the same count, and that wire is genuinely corrupt - one declared member
+     * is missing and another appeared twice. Matching per TAG is what tells
+     * "both members are here" from "one member is here twice".</p>
+     *
+     * <p>{@link #positionResolves} asks X.680 25.6's question about the SCHEMA:
+     * could SOME legal encoding of this type be ambiguous? This asks it about
+     * the FILE: is THIS encoding ambiguous? A run of consecutive OPTIONALs
+     * sharing a tag is ambiguous only when one of them is actually left out,
+     * and this generator leaves none out.</p>
+     *
+     * <p>EMM settled which question matters. {@code NRTRDEErrorReport} declares
+     * {@code Name ::= [APPLICATION 4]} and {@code UTCCode ::= [APPLICATION 4]}
+     * and puts both in one SEQUENCE of eleven OPTIONALs - undecodable by 25.6,
+     * graded ERROR here, and STRICT would not have produced it. Round 25 sent
+     * it anyway and EMM accepted it, all ten members present and in order.
+     * Round 28 then sent SDPCCR encoded with the passthrough rule, whose
+     * sibling CHOICE fields resolve to one alternative and so repeat its tag in
+     * four different SEQUENCE bodies, and EMM accepted that too - 14 KB of it.</p>
+     *
+     * <p>A SET is excluded, and not by omission: its components may arrive in
+     * any order, so position carries nothing and no amount of completeness
+     * disambiguates them. {@code ATS_ONDER} proved it in the same round -
+     * {@code ATSRecord ::= SET} with two {@code [0]} members was refused with
+     * "Duplicate Tag data found", the one shape EMM does reject.</p>
+     */
+    private boolean everyCarrierIsPresent(AsnField body, TagKey tag, int occurrences) {
+        if (body.isSet() || Objects.isNull(body.getChildren())) {
+            return false;
+        }
+        long declared = body.getChildren().stream().filter(member -> carriesTag(member, tag)).count();
+        return declared >= MIN_CHILDREN_TO_COLLIDE && declared == occurrences;
+    }
+
+    /**
      * True when the earlier member, or something between the two, must be
      * present - which is what stops a decoder from mistaking one for the other.
      */
@@ -167,7 +209,13 @@ public class DuplicateTagRule implements VerificationRule {
      * alternative's, so its alternatives are asked instead.
      */
     private boolean carriesTag(AsnField member, TagKey tag) {
-        if (Objects.nonNull(member.getTagNumber())) {
+        // A keyword-less tag on a CHOICE is never written: the encoder passes
+        // the selected alternative's own TLV through untouched, so what shows
+        // up in this body is the ALTERNATIVE's tag, not the member's. Reading
+        // the member's own [n] here would count the wrong tag and miss the
+        // right one. See BerEncoderService#wrapInTlv.
+        boolean writesItsOwnTag = Objects.nonNull(member.getTagNumber()) && !member.isChoiceTagImplicit();
+        if (writesItsOwnTag) {
             BerTagClass tagClass = Objects.nonNull(member.getTagClass())
                     ? member.getTagClass()
                     : BerTagClass.CONTEXT;

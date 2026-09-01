@@ -171,24 +171,57 @@ class DuplicateTagRuleTest {
     /**
      * The SDPAdjLikya shape: {@code dedicatedAccount1Action [17] OPTIONAL} and
      * {@code dedicatedAccount6Action [17] OPTIONAL} with nothing but OPTIONALs
-     * between them. Every component here may be absent, so a decoder meeting a
-     * {@code [17]} cannot tell which member it belongs to - the file is not
-     * decodable and the severity must stay ERROR.
+     * between them. X.680 25.6 calls the TYPE ambiguous - some legal encoding
+     * of it could omit a member and leave a decoder guessing - but this FILE
+     * omits nothing: both [17] members are present and in order, so consuming
+     * the components positionally resolves them.
+     *
+     * <p>EMM decided which of those two questions the severity should answer.
+     * Round 25 sent {@code NRTRDEErrorReport}, whose SEQUENCE declares two
+     * members on {@code [APPLICATION 4]} among eleven OPTIONALs, and accepted
+     * it with all ten members present. Round 28 sent SDPCCR with the
+     * passthrough encoding, repeating an alternative's tag inside four
+     * SEQUENCE bodies, and accepted 14 KB of it. Grading this ERROR is what
+     * stopped STRICT from producing files EMM takes.</p>
      */
     @Test
-    void aRepeatBetweenTwoOmissibleMembersStaysAnError() {
+    void aCompleteBodyResolvesTheRepeatPositionally() {
         AsnField body = sequenceBody(
                 member("dedicatedAccount1Action", 17, true),
                 member("dedicatedAccount1Amount", 16, true),
                 member("dedicatedAccount6Action", 17, true));
-        // SEQUENCE { [17], [16], [17] }
+        // SEQUENCE { [17], [16], [17] } - every declared member is present
         byte[] data = hex("30 09 91 01 AA 90 01 BB 91 01 CC");
 
         List<BerFinding> findings = run(data, body, false);
 
         assertEquals(1, findings.size(), findings.toString());
+        assertEquals(FindingSeverity.WARNING, findings.get(0).severity(),
+                "both [17] members are on the wire, so position tells them apart");
+    }
+
+    /**
+     * The same shape with a member actually left out: the body declares one
+     * {@code [17]} carrier and one {@code [16]}, but the wire holds two
+     * {@code [17]}s and no {@code [16]}. Counting children alone would call
+     * that complete - three declared, three encoded - which is why the check
+     * matches per TAG. One member is missing and another appeared twice; that
+     * is corruption, and it stays an ERROR.
+     */
+    @Test
+    void aRepeatThatReplacesAMissingMemberStaysAnError() {
+        AsnField body = sequenceBody(
+                member("dedicatedAccount1Action", 17, true),
+                member("dedicatedAccount1Amount", 16, true),
+                member("somethingElse", 18, true));
+        // SEQUENCE { [17], [17], [18] } - [16] never arrived
+        byte[] data = hex("30 09 91 01 AA 91 01 BB 92 01 CC");
+
+        List<BerFinding> findings = run(data, body, false);
+
+        assertEquals(1, findings.size(), findings.toString());
         assertEquals(FindingSeverity.ERROR, findings.get(0).severity(),
-                "nothing mandatory separates the two [17]s, so position cannot resolve them");
+                "only one member declares [17] but two arrived, so one of them is not placeable");
     }
 
     /**
@@ -223,19 +256,23 @@ class DuplicateTagRuleTest {
     }
 
     /**
-     * The same members, but with the first one omissible. Now nothing forces the
-     * decoder's hand and the body is ambiguous again - this is what keeps the
-     * relaxation narrow rather than a blanket downgrade of every repeat.
+     * The same members with the separating one omissible too. X.680 25.6 makes
+     * the TYPE ambiguous, but the FILE still carries both {@code [10]} members
+     * and the {@code [2]} between them, so a positional decoder places all
+     * three - the same reading round 28 confirmed on SDPCCR. What keeps the
+     * relaxation narrow is not the mandatory separator any more; it is that
+     * every declared carrier of the repeated tag has to be on the wire, and a
+     * SET is excluded outright.
      */
     @Test
-    void theSameShapeIsAnErrorOnceTheSeparatingMemberBecomesOptional() {
+    void theSameShapeStaysDecodableWhenNothingIsOmitted() {
         AsnField body = sequenceBody(
                 member("recordType", 10, true),
                 member("aNumber", 2, true),
                 member("cellID", 10, true));
         byte[] data = hex("30 09 8A 01 AA 82 01 BB 8A 01 CC");
 
-        assertEquals(FindingSeverity.ERROR, run(data, body, false).get(0).severity());
+        assertEquals(FindingSeverity.WARNING, run(data, body, false).get(0).severity());
     }
 
     /**

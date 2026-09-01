@@ -64,6 +64,13 @@ class ShippedFieldRulesRoundTripTest {
      * Kurallarla ilgisi yok, uretilen degerden bagimsiz olarak olusur.
      */
     private static final java.util.Set<String> SCHEMA_LEVEL_DUPLICATE_TAG_MODULES = java.util.Set.of(
+            // SET kokleri: keyword'suz bir CHOICE alani, alternatifinin tag'ini
+            // yazdiginda kardes bir uyeyle CAKISIYOR. SET'te sira bilgi tasimadigi
+            // icin bu gercekten cozulemez ve EMM de reddediyor - ATS_ONDER 25. ve
+            // 28. turda tam bu sebeple dustu. Kodlayicinin yazabilecegi baska bir
+            // tag yok: CalledPartyAddress'in iki alternatifi [0] ve [1], ikisi de
+            // aTSRecord'da zaten dolu.
+            "ATS_ONDER", "CDRF-R7", "LTE-R10-TURKCELL-SYNVRS", "MAVENIRTEST",
             "BDCevapsiz", "CDRDatamartTANGOmBalance", "CwinDataStr", "DWHClearedDedicatedISO",
             "FCMSCCNGTP", "FCMSVM", "FciGgsn", "FDRInput", "HTSCevapsiz", "MSCCAP2Test",
             "NotifyIsoCdr", "NRTRDEErrorReport", "OTAGXS", "PSTNSMSMatching", "SDPAdjLikya",

@@ -59,13 +59,6 @@ public class BerEncoderService {
     private static final String BOOLEAN_TRUE_DIGIT = "1";
     private static final String BOOLEAN_FALSE_DIGIT = "0";
 
-    /** Identifier and length bits {@link #retagOutermost} has to read (X.690 8.1). */
-    private static final int CONSTRUCTED_BIT = 0x20;
-    private static final int HIGH_TAG_MARKER = 0x1F;
-    private static final int CONTINUATION_BIT = 0x80;
-    private static final int BYTE_MASK = 0xFF;
-    private static final int LONG_FORM_LENGTH_MARKER = 0x80;
-
     private final TlvWriter tlvWriter;
     private final FixedWidthTextFormatter fixedWidthTextFormatter;
 
@@ -440,11 +433,31 @@ public class BerEncoderService {
                 ? field.getTagClass()
                 : BerTagClass.CONTEXT;
 
-        // An IMPLICIT tag on a CHOICE replaces the tag of the alternative the
-        // content already carries instead of wrapping it. Only reachable where
-        // the resolver set the flag; see AsnField.isChoiceTagImplicit.
+        // A keyword-less tag on a CHOICE contributes NOTHING to the wire: the
+        // content already IS the selected alternative's complete, self-tagged
+        // TLV and it passes through untouched. Only reachable where the
+        // resolver set the flag; see AsnField.isChoiceTagImplicit.
+        //
+        // This used to re-tag the alternative onto the field's own [n]. Both
+        // readings produce identical bytes wherever the field's number equals
+        // the alternative's own - which is every site rounds 12/13 measured,
+        // so the evidence could not separate them and the code comment said
+        // so. SDPCCR separated them: EMM reads the tag at this position as the
+        // ALTERNATIVE SELECTOR, not as the field's identifier. Six observations
+        // fall out of that one rule, including two that re-tagging could not
+        // explain - round 21's usageCounterChange [1] carrying an Integer64
+        // was read as usageCounterMoney and refused, and round 24's
+        // usageCounterValueAfter [2] was refused because UsageCounterType has
+        // no alternative [2] at all. Round 28 sent the passthrough form and
+        // EMM accepted the whole 14 KB record.
+        //
+        // The sibling collision this creates - two CHOICE fields of one
+        // SEQUENCE both resolving to the same alternative, so both writing its
+        // tag - is decodable and EMM accepts it: a SEQUENCE is positional and
+        // every member is present. It is NOT decodable inside a SET, where
+        // order carries nothing; DuplicateTagRule keeps that an ERROR.
         if (choice && field.isChoiceTagImplicit()) {
-            return retagOutermost(content, tagClass, field.getTagNumber());
+            return content;
         }
 
         // X.680 8.3: a CHOICE can never carry an IMPLICIT tag, because the tag
@@ -464,42 +477,6 @@ public class BerEncoderService {
             return tlvWriter.buildTlv(tagClass, field.getTagNumber(), true, inner);
         }
         return tlvWriter.buildTlv(tagClass, field.getTagNumber(), constructed, content);
-    }
-
-    /**
-     * Rewrites the identifier octets of a TLV, keeping its constructed bit and
-     * its contents. This is what an IMPLICIT tag does to the value it tags.
-     *
-     * <p>What the measurement pinned down, and what it did not: round 13's
-     * accepted file carries {@code A5 06 80 04 ..} where the refused one carried
-     * {@code A5 08 A0 06 80 04 ..}. At that site the alternative's tag and the
-     * inner one are both {@code [0]}, so replacing the tag and dropping it
-     * outright produce identical bytes and the evidence cannot separate them.
-     * Replacing is what implicit tagging means, so that is what this does - but
-     * the two readings diverge wherever the numbers differ, and no site like
-     * that has been measured.</p>
-     */
-    private byte[] retagOutermost(byte[] content, BerTagClass tagClass, int tagNumber) {
-        if (content.length == 0) {
-            return content;
-        }
-        boolean constructed = (content[0] & CONSTRUCTED_BIT) != 0;
-        int cursor = 1;
-        if ((content[0] & HIGH_TAG_MARKER) == HIGH_TAG_MARKER) {
-            while (cursor < content.length && (content[cursor] & CONTINUATION_BIT) != 0) {
-                cursor++;
-            }
-            cursor++;
-        }
-        int firstLengthOctet = content[cursor++] & BYTE_MASK;
-        if (firstLengthOctet >= LONG_FORM_LENGTH_MARKER) {
-            cursor += firstLengthOctet - LONG_FORM_LENGTH_MARKER;
-        }
-        byte[] value = new byte[content.length - cursor];
-        System.arraycopy(content, cursor, value, 0, value.length);
-        log.debug("Re-tagged a CHOICE alternative onto {} [{}], {} content byte(s)",
-                tagClass, tagNumber, value.length);
-        return tlvWriter.buildTlv(tagClass, tagNumber, constructed, value);
     }
 
     /**
