@@ -94,6 +94,7 @@ kodlanıyor. Geriye tek istisna kaldı: tip üzerine yazılmış CHOICE tag'i
 | 27 | `ATS_ONDER` (`dialedPartyAddress [203]` sökülmüş izolasyon) | **PASS** — C-sınıfının tek suçlu olduğu kanıtlandı |
 | 28 | `SDPCCR` + `ATS_ONDER`, **passthrough** kodlamasıyla (alan tag'i hiç yazılmıyor) | **`SDPCCR` PASS · `ATS_ONDER` red** — 6. kural nihai hâlini aldı; `ATS_ONDER` SET kökünde çözülemez |
 | 29 | `NEWDS` (`CHARGINGCDR` ailesi, `SDPCCR`'la akraba değil), passthrough + Bulgu 13'ün nihai kodu | **PASS** — 6. ve 13. kural ikinci bağımsız soyda doğrulandı |
+| 30 | `SDPOutputCS50` (`SDPOutputCS40`'ın kardeşi, yazılı `EXPLICIT` + `SEQUENCE OF` ilk kez birlikte) | **PASS** — 0 hata / 0 uyarı ile üretilmiş, temiz geçti |
 
 ### 18. turda gönderilen dosyalar — geniş korpus taraması
 
@@ -2063,3 +2064,9 @@ Aynı sebeple 4 SET köklü modül (`ATS_ONDER`, `CDRF-R7`, `LTE-R10-TURKCELL-SY
 `NEWDS` (`CHARGINGCDR` ailesi — `ChargingDataOutputRecord ::= CHOICE {...}`, `SCFPDPRecord`'un içinde keyword'süz bir CHOICE alanı) artık kalıcı koddan (`84e341e`), scratch hack olmadan üretildi ve **PASS** aldı. Kök `SCFPDPRecord ::= SEQUENCE`; passthrough kardeş `[0]` çakışması yarattı (`sgsnPDPRecord` benzeri), self-check WARNING verdi, EMM kabul etti.
 
 `SDPCCR` `CreditControlDataTypes` soyundan, `NEWDS` `CHARGINGCDR` soyundan — akraba değiller. Bulgu 15 (passthrough) ve Bulgu 13 (`duplicate-tag` dosya-tamlığı kuralı) artık **iki bağımsız aile** ve **iki bağımsız modülde** kanıtlı; tek-modüllük bir tesadüf olmadığı kesinleşti.
+
+### 30. turun yanıtı — kanıtsız 5 imzadan biri kapandı (22.08.2026)
+
+`SDPOutputCS50` — `SDPOutputCS40`'ın (round 25 PASS) kardeşi, ama yazılı `EXPLICIT` + `SEQUENCE OF` kombinasyonunu ilk kez taşıyordu. Kalıcı koddan, hiç uyarı taşımadan (`0/0`) üretildi ve **PASS** aldı.
+
+Kanıtsız kalan davranış sınıfı 5'ten **4'e** indi (`MIEP` ailesi, `NRTRDEFdrFile` ailesi, `MAVENIRTEST` — bilinen SET-çözülemez sınıf, `BroadSoftBroadWorks16`).
