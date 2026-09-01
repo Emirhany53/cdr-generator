@@ -51,7 +51,7 @@ yorumundan gelir. Yorum yanlışsa iki taraf da aynı şekilde yanlış olur ve
 3. `[n] EXPLICIT <BOOLEAN>` → **IMPLICIT** (`AB 03 01 01 FF` reddedildi, `8B 01 FF` istendi)
 4. Başlığı `IMPLICIT TAGS` demeyen modülde **alan** tag'i → **IMPLICIT**
 5. Başlığı `IMPLICIT TAGS` demeyen modülde **tip** tag'i de → **IMPLICIT** (9. tur, commit `f5ce531`)
-6. **Yazılı keyword taşımayan** bir tag CHOICE tipli **alandaysa** → **IMPLICIT** (13. tur, commit `e940f0c`; 19. turda `IMPLICIT TAGS` başlıklı modülleri de kapsayacak şekilde genişletildi). X.680 8.3'ün istisnası.
+6. **Yazılı keyword taşımayan** bir tag CHOICE tipli **alandaysa** → alanın tag'i **tele hiç yazılmaz**; o konumdaki tag, seçilen **alternatifin kendi tag'idir** (13. tur `e940f0c`; 19. turda `IMPLICIT TAGS`'e genişletildi; **28. turda nihai hâlini aldı**, commit `84e341e`). X.680 8.3'ün istisnası. 13. turun ölçtüğü sitelerde alan numarası ile alternatif numarası çakıştığı için "retag" ile "passthrough" ayırt edilemiyordu; `SDPCCR` ayırdı.
 7. **Yazılı `EXPLICIT` keyword'ü yalnızca CHOICE tipli alanda sarmalayıcı üretir.** SEQUENCE / SET / primitive hedeflerde bağlam tag'i universal tag'in yerine geçer — modülün soyundan bağımsız (14. tur, commit `2006841`). 2. ve 3. kural bunun iki özel hâliymiş.
 8. 6. kural **alan** tag'leri içindir; **tip** üzerine yazılmış bir CHOICE tag'i (`CallEvent ::= [APPLICATION 1] CHOICE`) X.680 8.3'te kalır — daha doğrusu, EMM onun için henüz **hiçbir okumayı kabul etmedi** (19. tur: EXPLICIT de IMPLICIT de aynı sözlerle reddedildi). 4./5. kuralın alan ve tip için birlikte gittiği yerde 6. kural ayrışıyor. Açık soru, bkz. Bulgu 10.
 
@@ -92,6 +92,7 @@ kodlanıyor. Geriye tek istisna kaldı: tip üzerine yazılmış CHOICE tag'i
 | 25 | **Stress set — 18 dosya**, hiç sınanmamış 18 davranış imzası (21.08.2026) | **16 PASS · 2 red** — `DbLookupTable_IA5` (Bulgu 8 tekrar), `ATS_ONDER` (duplicate tag) |
 | 26 | `DbLookupTable_IA5` (kök tipi `DBDataRecord`'a bağlandı) | **PASS** — Bulgu 8'in ikinci bağımsız kanıtı |
 | 27 | `ATS_ONDER` (`dialedPartyAddress [203]` sökülmüş izolasyon) | **PASS** — C-sınıfının tek suçlu olduğu kanıtlandı |
+| 28 | `SDPCCR` + `ATS_ONDER`, **passthrough** kodlamasıyla (alan tag'i hiç yazılmıyor) | **`SDPCCR` PASS · `ATS_ONDER` red** — 6. kural nihai hâlini aldı; `ATS_ONDER` SET kökünde çözülemez |
 
 ### 18. turda gönderilen dosyalar — geniş korpus taraması
 
@@ -2008,3 +2009,50 @@ Değer ürettiği yer dar ama gerçek:
 Ölçüm betikleri kalıcı değil (scratchpad'de). Tekrar gerekirse: şemaları
 `datastructure.json`'dan dışa aktar, izole venv'de `asn1tools` ile derle,
 `manifest.tsv`'deki kök tiple decode et, **re-encode karşılaştırmasıyla** notla.
+
+---
+
+### 28. turun yanıtı — 6. kural kapandı (22.08.2026)
+
+```
+SDPCCR başarılı.
+
+ATS_ONDER-passthrough.ber -> Duplicate Tag data found for ATS_ONDER.TASRecord.aTSRecord.
+```
+
+##### ✅ Bulgu 15 — passthrough: keyword'süz CHOICE alanının tag'i tele hiç yazılmıyor
+
+Beş turdur reddedilen `SDPCCR`, 14 KB'ıyla **tamamen kabul edildi**. Altı gözlemin altısı tek kuralla açıklanıyor:
+
+| tur | alan | telde | EMM'in okuduğu | sonuç |
+|---|---|---|---|---|
+| 18 | `usageThresholdValueBefore [2]` | `A2 { 80 08 }` | `[2]` diye alternatif yok | ❌ |
+| 19 | `parameterValue [1]` | `A1 { 80 08 }` | `[1]`=string ama constructed | ❌ |
+| 20 | `usageThresholdValueBefore [2]` | `82 08` | `[2]` diye alternatif yok | ❌ |
+| 21 | `usageCounterChange [1]` | `81 08 <int>` | `[1]`=money, içi ham integer | ❌ |
+| 21 | `parameterValue [1]` | `81 08 <8 oktet>` | `[1]`=string, 8 oktet uyuyor | ✅ *(anlamca yanlış)* |
+| 24 | `usageCounterChange [1]` | `A1 { 80 08 }` | `[1]`=money, içi geçerli | ✅ |
+| 24 | `usageCounterValueAfter [2]` | `A2 { 80 08 }` | `[2]` diye alternatif yok | ❌ |
+| **28** | hepsi | alternatifin kendi TLV'si | doğru alternatif | ✅ **PASS** |
+
+Kodun kendi yorumu bu boşluğu 13. turda yazmıştı: *"the two readings diverge wherever the numbers differ, and no site like that has been measured."* `SDPCCR` o site oldu. `retagOutermost` ve beş sabiti silindi.
+
+##### ✅ Bulgu 13 kapandı — `duplicate-tag` artık dosyaya bakıyor
+
+Passthrough, aynı alternatife çözülen kardeş CHOICE alanlarının aynı tag'i yazmasına yol açıyor. Kural bunu ERROR sayıyordu; X.680 25.6'nın **şemaya** dair sorusunu soruyordu. EMM hangi sorunun önemli olduğunu gösterdi:
+
+- 25. tur `NRTRDEErrorReport` — SEQUENCE'inde iki üye `[APPLICATION 4]`'te, on üyenin hepsi mevcut → **kabul**
+- 28. tur `SDPCCR` — dört SEQUENCE gövdesinde alternatif tag'i tekrarlanıyor → **kabul**
+- 25./28. tur `ATS_ONDER` — **SET** kökünde iki `[0]` → **red**
+
+Yeni kural: bir tekrar, telde o tag'i taşıyan **bildirilen üye sayısı kadar** örnek varsa çözülebilir sayılır. Tag **bazında** eşleştiriliyor — çocuk sayısını saymak *"iki üye de burada"* ile *"bir üye iki kez geldi"* arasını ayırt edemez ve `BerVerifierTest` bunu yakaladı. SET'ler kapsam dışı.
+
+##### 🔴 `ATS_ONDER` — kodlamayla çözülemez
+
+`ATSRecord ::= SET`, `dialedPartyAddress [203] CalledPartyAddress` (keyword'süz), `CalledPartyAddress ::= CHOICE { sipURI [0], telURI [1] }` — ve `aTSRecord` zaten hem `[0]` hem `[1]` alanına sahip. Passthrough modelinde bu alan için **yazılabilir hiçbir alternatif yok**; wrapper da 24. turda çürüdü. Tek çalışan hâl alanın hiç yazılmaması (27. tur PASS).
+
+Aynı sebeple 4 SET köklü modül (`ATS_ONDER`, `CDRF-R7`, `LTE-R10-TURKCELL-SYNVRS`, `MAVENIRTEST`) şema-seviyesi duplicate listesine eklendi. **Yasin'e sorulacak:** EMM'in derlenmiş `ATS_ONDER` tanımında `dialedPartyAddress [203]` gerçekten keyword'süz mü?
+
+##### Ölçüm
+
+805 modül, deterministik probe: **6 modül** bayt değiştirdi (`SDPCCR`, `CreditControlDataTypes_EC22`, `ATS_ONDER`, `NEWDS`, `TurkcellCDRCCNCS40`, `LTE-R10-TURKCELL-SYNVRS`), **EMM-kanıtlı 57 modülün hiçbiri değişmedi**. 520 test, 0 hata.
