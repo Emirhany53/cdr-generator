@@ -93,6 +93,7 @@ kodlanıyor. Geriye tek istisna kaldı: tip üzerine yazılmış CHOICE tag'i
 | 26 | `DbLookupTable_IA5` (kök tipi `DBDataRecord`'a bağlandı) | **PASS** — Bulgu 8'in ikinci bağımsız kanıtı |
 | 27 | `ATS_ONDER` (`dialedPartyAddress [203]` sökülmüş izolasyon) | **PASS** — C-sınıfının tek suçlu olduğu kanıtlandı |
 | 28 | `SDPCCR` + `ATS_ONDER`, **passthrough** kodlamasıyla (alan tag'i hiç yazılmıyor) | **`SDPCCR` PASS · `ATS_ONDER` red** — 6. kural nihai hâlini aldı; `ATS_ONDER` SET kökünde çözülemez |
+| 29 | `NEWDS` (`CHARGINGCDR` ailesi, `SDPCCR`'la akraba değil), passthrough + Bulgu 13'ün nihai kodu | **PASS** — 6. ve 13. kural ikinci bağımsız soyda doğrulandı |
 
 ### 18. turda gönderilen dosyalar — geniş korpus taraması
 
@@ -2056,3 +2057,9 @@ Aynı sebeple 4 SET köklü modül (`ATS_ONDER`, `CDRF-R7`, `LTE-R10-TURKCELL-SY
 ##### Ölçüm
 
 805 modül, deterministik probe: **6 modül** bayt değiştirdi (`SDPCCR`, `CreditControlDataTypes_EC22`, `ATS_ONDER`, `NEWDS`, `TurkcellCDRCCNCS40`, `LTE-R10-TURKCELL-SYNVRS`), **EMM-kanıtlı 57 modülün hiçbiri değişmedi**. 520 test, 0 hata.
+
+### 29. turun yanıtı — ikinci bağımsız soy (22.08.2026)
+
+`NEWDS` (`CHARGINGCDR` ailesi — `ChargingDataOutputRecord ::= CHOICE {...}`, `SCFPDPRecord`'un içinde keyword'süz bir CHOICE alanı) artık kalıcı koddan (`84e341e`), scratch hack olmadan üretildi ve **PASS** aldı. Kök `SCFPDPRecord ::= SEQUENCE`; passthrough kardeş `[0]` çakışması yarattı (`sgsnPDPRecord` benzeri), self-check WARNING verdi, EMM kabul etti.
+
+`SDPCCR` `CreditControlDataTypes` soyundan, `NEWDS` `CHARGINGCDR` soyundan — akraba değiller. Bulgu 15 (passthrough) ve Bulgu 13 (`duplicate-tag` dosya-tamlığı kuralı) artık **iki bağımsız aile** ve **iki bağımsız modülde** kanıtlı; tek-modüllük bir tesadüf olmadığı kesinleşti.
