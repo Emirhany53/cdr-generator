@@ -234,6 +234,12 @@ public class CdrRecordBuilder {
     }
 
     private List<String> buildRepeatedLeaf(AsnField field, ValueSourceContext context, String fieldPath) {
+        List<String> indexed = indexedUserValues(context, fieldPath, field.getFieldName());
+        if (!indexed.isEmpty()) {
+            return indexed.stream()
+                    .map(value -> formatAsnLiteral(value, field.getFieldType()))
+                    .toList();
+        }
         Optional<String> resolved = resolveThroughChain(field, context, fieldPath);
         if (resolved.isPresent()) {
             return List.of(formatAsnLiteral(resolved.get(), field.getFieldType()));
@@ -244,6 +250,57 @@ public class CdrRecordBuilder {
             values.add(formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType()));
         }
         return values;
+    }
+
+    /**
+     * Values a caller supplied for the INDIVIDUAL elements of a repeated leaf,
+     * keyed {@code path[0]}, {@code path[1]}, ... - the same index form
+     * {@link #buildRepeatedGroup} already writes for a repeated SEQUENCE/SET,
+     * so one path syntax addresses both kinds of collection.
+     *
+     * <p>Why this exists: a repeated LEAF (a {@code SEQUENCE OF IA5String} such
+     * as MMTel's {@code sDP-Media-Descriptions}, which carries 26 lines in the
+     * reference capture) could previously hold only ONE caller value. The chain
+     * resolves a single string for the field and the whole collection collapses
+     * to that one element, so 26 lines of a real record arrived as 1. Indexing
+     * the key is what lets a caller name each element apart.</p>
+     *
+     * <p>Read straight from the user map instead of through the value-source
+     * chain, and deliberately so: {@code RandomValueSource} answers EVERY
+     * request, so probing the chain for {@code path[1]} would always succeed and
+     * the loop below would never terminate. Only explicitly supplied values take
+     * part here; when none are indexed this returns empty and the caller falls
+     * through to the unchanged chain-then-random path.</p>
+     *
+     * <p>The full path is tried first and the bare field name second - the same
+     * order {@code UserProvidedValueSource} uses - but a series is taken from one
+     * key space or the other, never mixed, so a partially indexed bare name
+     * cannot splice itself into a path-keyed collection.</p>
+     */
+    private List<String> indexedUserValues(ValueSourceContext context, String fieldPath, String fieldName) {
+        Map<String, String> userValues = context.getUserProvidedValues();
+        if (Objects.isNull(userValues) || userValues.isEmpty()) {
+            return List.of();
+        }
+        List<String> byPath = indexedSeries(userValues, fieldPath);
+        return byPath.isEmpty() ? indexedSeries(userValues, fieldName) : byPath;
+    }
+
+    /**
+     * Reads {@code key[0]}, {@code key[1]}, ... until the first index that is
+     * absent or blank. Indices must run contiguously from zero: a gap ends the
+     * collection rather than silently skipping an element, so the caller's
+     * numbering and the emitted element order always agree.
+     */
+    private List<String> indexedSeries(Map<String, String> userValues, String key) {
+        List<String> values = new ArrayList<>();
+        for (int index = 0; ; index++) {
+            String value = userValues.get(key + INDEX_OPEN + index + INDEX_CLOSE);
+            if (Objects.isNull(value) || value.isBlank()) {
+                return values;
+            }
+            values.add(value);
+        }
     }
 
     private String resolveLeafValue(AsnField field, ValueSourceContext context, String fieldPath) {
