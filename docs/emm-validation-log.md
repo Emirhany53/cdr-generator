@@ -2091,8 +2091,22 @@ istendi; geldiğinde üretilecek.
 
 #### Birebir kopyanın önündeki üç yapısal sınır
 
-Decode'daki 81 değerin **80'i** üretilen baytlarda birebir yer alıyor. Kalan
-fark ve sebepleri — üçü de üretecin bugünkü sözleşmesinden, hiçbiri bayt
+**Bu dosya Yasin'in kaydının kopyası DEĞİL.** İlk ölçüm "81 değerin 80'i
+birebir" diyordu; o sayı yanıltıcı — kurulan `fieldValues` haritası zaten her
+tekrarlı listeden tek değer alıyordu, yani ölçüm kendi eksikliğini ölçemiyordu.
+Kaydın tamamı karşılaştırılınca:
+
+| ölçüm | referans | üretilen |
+|---|---|---|
+| kök alan sayısı | 34 | 40 |
+| referansta olmayan, rastgele doldurulmuş alan | — | 7 (`additionalAccessNetworkInformation`, `iMSEmergencyIndicator`, `recordSequenceNumber`, `routeHeaderReceived`, `servedPartyIPAddress`, `sessionPriority`, `userLocationInformation`) |
+| referansta olup üretilmeyen | — | 1 (`list-Of-Calling-Party-Address`) |
+| benzersiz SDP satırı | 40 | 4 |
+
+`list-Of-Calling-Party-Address` hiç yazılmıyor çünkü `skip-implicit-choice-fields`
+onu üretime katmıyor (IMPLICIT + OPTIONAL + CHOICE). Yani **arayan taraf kayıtta yok.**
+
+Farkın sebepleri — üçü de üretecin bugünkü sözleşmesinden, hiçbiri bayt
 kodlamasından değil:
 
 1. **Tekrarlı yaprak listeler tek değere düşüyor.** `CdrRecordBuilder.buildRepeatedLeaf`
