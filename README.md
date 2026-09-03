@@ -282,7 +282,7 @@ kurucu) tutar; HTTP çağrısı, istek/yanıt şeması ve sağlayıcıya özgü 
 
 ## Doğrulama ve testler
 
-521 test. Öne çıkanlar:
+520 test. Öne çıkanlar:
 
 | test | ne yapar |
 |---|---|
