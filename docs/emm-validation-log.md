@@ -2070,3 +2070,46 @@ Aynı sebeple 4 SET köklü modül (`ATS_ONDER`, `CDRF-R7`, `LTE-R10-TURKCELL-SY
 `SDPOutputCS50` — `SDPOutputCS40`'ın (round 25 PASS) kardeşi, ama yazılı `EXPLICIT` + `SEQUENCE OF` kombinasyonunu ilk kez taşıyordu. Kalıcı koddan, hiç uyarı taşımadan (`0/0`) üretildi ve **PASS** aldı.
 
 Kanıtsız kalan davranış sınıfı 5'ten **4'e** indi (`MIEP` ailesi, `NRTRDEFdrFile` ailesi, `MAVENIRTEST` — bilinen SET-çözülemez sınıf, `BroadSoftBroadWorks16`).
+
+### 31. tur — Yasin'in iki referans decode'undan yeniden üretim (04.09.2026)
+
+Yasin iki EMM decode dökümü gönderdi (`Başarılı_…txt`, `Başarısız_…txt`) ve
+"bu kayıtları `MMTelChargingDataTypes.MMTelServiceRecord` tipinde BER olarak
+üret, değerler dosyalardaki gibi olsun" dedi.
+
+**Gönderilen bayt:** `MMTelChargingDataTypes_MMTelServiceRecord_Basarisiz.ber`
+SHA-256 `5ad34133bc22e75c77aaa121a365ec245a03078d7638501796fdcf3cc94cdb45`,
+3258 bayt, 1 kayıt. Üretim: `POST /generate-ber`, `recordCount=1`,
+`choiceSelections = {MMTelServiceRecord: mMTelRecord, NodeAddress: domainName,
+InvolvedParty: sIP-URI}`, 81 `fieldValues` girdisi. Self-check `0 hata / 0 uyarı`,
+`verify-ber` `clean: true`. Üreteç tohumsuz — **bu baytlar yeniden üretilemez**,
+kayıt bu SHA'dır.
+
+**Başarılı dosyası işlenemedi:** dosyanın kendisi kesik (36 `{` / 34 `}`,
+`sIP-URI : "sip:+905056764990@ims.mnc001.mcc` içinde bitiyor). Tam hâli
+istendi; geldiğinde üretilecek.
+
+#### Birebir kopyanın önündeki üç yapısal sınır
+
+Decode'daki 81 değerin **80'i** üretilen baytlarda birebir yer alıyor. Kalan
+fark ve sebepleri — üçü de üretecin bugünkü sözleşmesinden, hiçbiri bayt
+kodlamasından değil:
+
+1. **Tekrarlı yaprak listeler tek değere düşüyor.** `CdrRecordBuilder.buildRepeatedLeaf`
+   bir kullanıcı değeri bulunca `List.of(tek)` döndürüyor; bulamazsa `repeatCountFor`
+   rastgele 1..2 veriyor. Referansta `sDP-Media-Descriptions` **26** satır,
+   `sDP-Session-Description` **6** satır. İkisi de üretilemiyor.
+2. **CHOICE koleksiyonları tam 1 eleman alıyor** (`CHOICE_ELEMENT_COUNT = 1`).
+   `list-Of-Calling-Party-Address` referansta hem `sIP-URI` hem `tEL-URI`
+   taşıyor; biri yazılabiliyor.
+3. **CHOICE alternatifi tip başına global.** `AsnFieldTreeResolver.resolveChoiceAlternative`
+   seçimi `choiceSelections.get(choiceTypeName)` ile okuyor, çağrı yerine göre
+   değil. `called-Party-Address` (`sIP-URI`) ile `requested-Party-Address`
+   (`tEL-URI`) aynı `InvolvedParty` tipini farklı alternatiflerle istiyor;
+   ikisi aynı anda karşılanamıyor. Eksik kalan tek değer bu: `tEL-URI`.
+
+Alan adı çakışmaları (`sIP-URI`, `sDP-Media-Name`, `sDP-Type`,
+`subscriptionIDType/Data`, `accessNetworkInformation`) tam yol anahtarıyla
+çözüldü — `UserProvidedValueSource` önce yolu, sonra çıplak adı deniyor, ve
+tekrarlı grup yolları `alan[i].altAlan` biçiminde. Çıplak ad kullanıldığında
+`called-Party-Address` arayan tarafın URI'sini alıyordu.
