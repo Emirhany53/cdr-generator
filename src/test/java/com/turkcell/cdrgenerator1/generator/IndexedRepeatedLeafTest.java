@@ -9,6 +9,7 @@ import com.turkcell.cdrgenerator1.service.TlvWriter;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -460,15 +461,48 @@ class IndexedRepeatedLeafTest {
 
         // encodeRepeated writes ONE outer TLV for the collection and puts each
         // element inside it as its own universal SEQUENCE - so the instance
-        // count is read from the elements within [3], not from repeats of [3].
+        // count is read from the elements WITHIN [3], never from repeats of the
+        // [3] tag itself. Counting 0xA3 bytes would also be wrong for a second
+        // reason: any content octet can happen to be 0xA3.
         byte[] recordBody = contentOf(encoded, 0);          // universal SEQUENCE
-        byte[] components = contentOf(recordBody, 0);       // [3] collection
-        assertThat((recordBody[0] & 0xFF))
+        assertThat(recordBody[0] & 0xFF)
                 .as("the collection is written once, context-tagged [3] constructed")
                 .isEqualTo(0xA3);
-        assertThat(countTopLevelTlvs(components))
+
+        byte[] components = contentOf(recordBody, 0);       // inside [3]
+        List<byte[]> instances = topLevelTlvContents(components);
+        assertThat(instances)
                 .as("two described instances means two element TLVs inside [3]")
-                .isEqualTo(2);
+                .hasSize(2);
+
+        // Each instance holds the repeated leaf as its own [1] TLV, and THAT
+        // TLV's children are the leaf elements. Measuring here is what proves
+        // the indexed leaves survived inside the second group instance - the
+        // exact combination that was unreachable before.
+        List<Integer> linesPerInstance = new ArrayList<>();
+        for (byte[] instance : instances) {
+            // encodeRepeated wraps each element of a collection whose element
+            // type tags nothing in a universal SEQUENCE, so the instance body
+            // sits one layer inside that wrapper.
+            assertThat(instance[0] & 0xFF)
+                    .as("each element is wrapped in a universal SEQUENCE")
+                    .isEqualTo(0x30);
+            byte[] instanceBody = contentOf(instance, 0);
+            assertThat(instanceBody[0] & 0xFF)
+                    .as("the repeated leaf is context-tagged [1] constructed")
+                    .isEqualTo(0xA1);
+            linesPerInstance.add(topLevelTlvContents(contentOf(instanceBody, 0)).size());
+        }
+        assertThat(linesPerInstance)
+                .as("instance [0] carries two lines, instance [1] carries one")
+                .containsExactly(2, 1);
+
+        // ...and the values sit in the instance the caller addressed, not
+        // wherever the encoder happened to put them.
+        assertThat(new String(instances.get(1), StandardCharsets.ISO_8859_1))
+                .as("CCCC was addressed at components[1] and must be there")
+                .contains("CCCC")
+                .doesNotContain("AAAA");
     }
 
     /** Content octets of the TLV that starts at {@code offset}. */
@@ -487,9 +521,14 @@ class IndexedRepeatedLeafTest {
         return content;
     }
 
-    /** How many TLVs sit side by side in {@code buffer}. */
-    private int countTopLevelTlvs(byte[] buffer) {
-        int count = 0;
+    /**
+     * The TLVs sitting side by side in {@code buffer}, each returned as its own
+     * complete encoding. Walking the length octets is the only honest way to
+     * count elements - scanning for a tag byte would also match content that
+     * happens to carry that value.
+     */
+    private List<byte[]> topLevelTlvContents(byte[] buffer) {
+        List<byte[]> tlvs = new ArrayList<>();
         int cursor = 0;
         while (cursor < buffer.length) {
             int start = cursor;
@@ -503,11 +542,13 @@ class IndexedRepeatedLeafTest {
                 }
             }
             cursor += length;
-            if (cursor <= start) {
+            if (cursor <= start || cursor > buffer.length) {
                 break;
             }
-            count++;
+            byte[] tlv = new byte[cursor - start];
+            System.arraycopy(buffer, start, tlv, 0, tlv.length);
+            tlvs.add(tlv);
         }
-        return count;
+        return tlvs;
     }
 }
