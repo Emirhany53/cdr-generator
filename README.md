@@ -200,6 +200,10 @@ app:
         tag-shape: true
         named-number: true
         integer-range: true
+        primitive-length: true
+        type-tag-implicit: true
+        field-tag-implicit: true
+        collection-wrapper: true
 
     ai:
       enabled: true
@@ -216,9 +220,16 @@ app:
 ```
 
 **`self-check.mode`** — `strict`: ERROR bulgusu varsa dosya döndürülmez;
-`warn`: loglanır, dosya döner; `off`: kapalı. Şu an 808 modülün **17'si**
-`strict` modda dosya üretemiyor; çoğunda sebep şemanın kendisinin çözülemez
-olması (aynı gövdede iki OPTIONAL alan aynı tag'i taşıyor).
+`warn`: loglanır, dosya döner; `off`: kapalı. Şu an 808 modülün **11'i**
+`strict` modda dosya üretemiyor (`target/audit/audit.tsv`, `vErrors>0`).
+4'ünde sebep SET kökünde şemanın kendisinin X.680 25.6'ya göre çözülemez
+olması (`ATS_ONDER`, `CDRF-R7`, `LTE-R10-TURKCELL-SYNVRS`, `MAVENIRTEST`).
+Kalan 7'sinde — **MMTel ailesinin 6 varyantı ve `CHFChargingDataTypes16`** —
+`recordExtensions` altında yeni bir `duplicate-tag` bulgusu var; bu, round
+28'in passthrough değişikliğinden (`84e341e`) sonra ortaya çıkmış görünüyor
+ve henüz `docs/emm-validation-log.md`'ye işlenmedi — `ReferenceCaptureConformanceTest`
+gerçek MMTel yakalamasına karşı hâlâ geçiyor, yani sorun üretimin varsayılan/
+rastgele yolunda, bilinen iyi değerlerde değil. Araştırılması gerekiyor.
 
 **`skip-implicit-choice-fields`** — IMPLICIT etiketli OPTIONAL CHOICE alanlarını
 üretime katmaz. EMM'in bir çözücü kusuru için konmuş bir geçici çözümdür ve
@@ -245,7 +256,7 @@ Controller ── StructureParserService ──┬── AsnTypeRegistryBuilder 
                                        └── RandomValueSource + FieldValueGenerator
            ── BerEncoderService ───────── TlvWriter                 (alan ağacı + değer → bayt)
            ── CdrFileWriterService ─────  (.txt: duzlestir, kolon birlestir, yaz)
-           ── BerVerifier ─────────────── TlvReader + 5 kural       (bayt → bulgu)
+           ── BerVerifier ─────────────── TlvReader + 9 kural       (bayt → bulgu)
 ```
 
 ```
@@ -271,7 +282,7 @@ kurucu) tutar; HTTP çağrısı, istek/yanıt şeması ve sağlayıcıya özgü 
 
 ## Doğrulama ve testler
 
-497 test. Öne çıkanlar:
+521 test. Öne çıkanlar:
 
 | test | ne yapar |
 |---|---|
@@ -302,8 +313,10 @@ konulamaz; test yalnızca tag ve uzunluk baytlarını okur.
   ile doğrulandı. Güncel durum için `docs/emm-validation-log.md` esastır.
 - **6 modül sıfır alan üretir.** Üçü yalnızca tip takma adı tanımlar
   (`SMSCLookupStructures`, `LteReturnTypes`, `Array`), üçü hiç tip beyan etmez.
-- **17 modül `strict` modda dosya üretemez.** Çoğunda sebep şemanın X.680
-  25.6'ya göre çözülemez olması.
+- **11 modül `strict` modda dosya üretemez** (16.08'de bu sayı 17'ydi). 4'ü
+  gerçekten şemanın X.680 25.6'ya göre çözülemez olmasından; **MMTel'in 6
+  varyantı + `CHFChargingDataTypes16` yeni ve henüz teşhis edilmemiş bir
+  bulgu** — ayrıntı için yukarıdaki `self-check.mode` notuna bakın.
 - **`.txt` yolunun tek dış kanıtı `Multicloud`.** İç doğrulama 802 modülü
   kapsıyor (`AsciiOutputConformanceTest`) ama EMM'in bu biçim hakkında verdiği
   tek verdict hâlâ o dosyadır.

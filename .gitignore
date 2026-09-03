@@ -48,3 +48,9 @@ __pycache__/
 /*.pid
 /*.log
 /*.bin
+
+### Yerel calisma alani (teslimatin parcasi degil) ###
+# EMM dogrulama turlarinin kanit dosyalari ve elle calistirilan probe ciktilari.
+# Yerelde durur, repoya girmez.
+scratchpad/
+probes/
