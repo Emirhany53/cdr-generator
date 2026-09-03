@@ -133,8 +133,22 @@ public class CdrRecordBuilder {
                                                      int recordIndex,
                                                      Map<String, String> userValues,
                                                      List<Map<String, String>> aiGeneratedRecords) {
+        return buildRecordFromFields(fields, recordIndex, userValues, aiGeneratedRecords, false);
+    }
+
+    /**
+     * As above, but able to run in reference mode: when {@code referenceMode} is
+     * true an OPTIONAL field the caller never described is left out of the
+     * record entirely. False reproduces the four-argument behaviour exactly.
+     */
+    public Map<String, Object> buildRecordFromFields(List<AsnField> fields,
+                                                     int recordIndex,
+                                                     Map<String, String> userValues,
+                                                     List<Map<String, String>> aiGeneratedRecords,
+                                                     boolean referenceMode) {
         ValueSourceContext context = new ValueSourceContext(
-                null, recordIndex, userValues, aiGeneratedRecords, bcdTimestampFactory.newRecordAnchor());
+                null, recordIndex, userValues, aiGeneratedRecords,
+                bcdTimestampFactory.newRecordAnchor(), null, referenceMode);
         return buildFields(fields, context, EMPTY_PATH, false);
     }
 
@@ -171,6 +185,15 @@ public class CdrRecordBuilder {
             // The PATH stays name-based: it addresses user-supplied and
             // AI-supplied values, which are keyed by the schema's own names.
             String fieldPath = buildPath(pathPrefix, field.getFieldName());
+
+            // Reference-driven generation: an OPTIONAL field the caller never
+            // described is left out entirely, the same way an unfilled OPTIONAL
+            // already leaves the record - the key is absent, so the encoder's
+            // null branch omits it. Mandatory fields are untouched: dropping one
+            // would make the record invalid, not merely quieter.
+            if (shouldOmitUndescribedOptional(field, context, fieldPath)) {
+                continue;
+            }
 
             if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
                 record.put(recordKey, field.isNestedCollectionElement()
@@ -256,6 +279,97 @@ public class CdrRecordBuilder {
             values.add(formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType()));
         }
         return values;
+    }
+
+    /**
+     * Reference mode's single rule: an OPTIONAL field nobody described is not
+     * generated at all.
+     *
+     * <p>Ordinary generation fills every leaf in the resolved tree, because
+     * {@code isOptional()} is read nowhere except the implicit-CHOICE skip and
+     * {@code RandomValueSource} answers every request. Against Yasin's MMTel
+     * reference that produced 144 leaf values the real record does not have -
+     * whole subtrees such as {@code recordExtensions.iN-AMA-Extension} invented
+     * from nothing. For a record meant to reproduce a reference, silence is the
+     * correct output for a field the reference does not carry.</p>
+     *
+     * <p>Off by default and short-circuited first, so a normal generation run
+     * does not even scan the key set: with {@code referenceMode} false this
+     * method returns immediately and the walk behaves exactly as before.</p>
+     *
+     * <p>Mandatory fields are never dropped. A record missing a required
+     * component is invalid rather than merely smaller, and no reference can
+     * make that the right answer.</p>
+     */
+    private boolean shouldOmitUndescribedOptional(AsnField field, ValueSourceContext context,
+                                                   String fieldPath) {
+        return context.isReferenceMode()
+                && field.isOptional()
+                && !describedByCaller(context, field, fieldPath);
+    }
+
+    /**
+     * Did the caller say anything about this field or anything beneath it?
+     *
+     * <p>A path-keyed reference describes a container implicitly: nothing names
+     * {@code recordExtensions}, only its leaves are named, so the container has
+     * to survive on the strength of {@code recordExtensions.node-id}. The prefix
+     * tests cover that - {@code path.} for a child, {@code path[} for a
+     * collection element - alongside the exact match for a leaf.</p>
+     *
+     * <p>The bare field name is accepted too, mirroring
+     * {@code UserProvidedValueSource}'s own fallback. That is why the subtree is
+     * walked rather than only prefix-matched: a bare {@code inner} names a
+     * descendant without naming any ancestor, so a container whose child was
+     * addressed that way is invisible from the container's own path. Dropping it
+     * would silently discard a value the caller explicitly set - the one outcome
+     * reference mode must never produce. The cost of the walk is paid only in
+     * reference mode; {@link #shouldOmitUndescribedOptional} short-circuits on
+     * the flag before reaching here.</p>
+     *
+     * <p>A bare name that matches a field in an unrelated branch keeps that
+     * branch alive as well. That ambiguity is inherent to bare names and already
+     * governs which field receives the VALUE; reference mode inherits it rather
+     * than inventing a second, conflicting rule.</p>
+     */
+    private boolean describedByCaller(ValueSourceContext context, AsnField field, String fieldPath) {
+        Map<String, String> userValues = context.getUserProvidedValues();
+        if (Objects.isNull(userValues) || userValues.isEmpty()) {
+            return false;
+        }
+        return describesFieldOrDescendant(userValues, field, fieldPath);
+    }
+
+    private boolean describesFieldOrDescendant(Map<String, String> userValues, AsnField field,
+                                               String fieldPath) {
+        for (String key : userValues.keySet()) {
+            if (describes(key, fieldPath) || describes(key, field.getFieldName())) {
+                return true;
+            }
+        }
+        List<AsnField> children = field.getChildren();
+        if (Objects.isNull(children)) {
+            return false;
+        }
+        for (AsnField child : children) {
+            if (describesFieldOrDescendant(userValues, child,
+                    buildPath(fieldPath, child.getFieldName()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True when {@code key} names {@code target} itself, a child of it, or one of its elements. */
+    private boolean describes(String key, String target) {
+        if (!key.startsWith(target)) {
+            return false;
+        }
+        if (key.length() == target.length()) {
+            return true;
+        }
+        char next = key.charAt(target.length());
+        return next == PATH_SEPARATOR.charAt(0) || next == INDEX_OPEN.charAt(0);
     }
 
     /**

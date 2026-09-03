@@ -36,6 +36,18 @@ public class GenerateBerRequest {
     private String extension;
 
     /**
+     * Reference-driven generation. When true, an OPTIONAL field that
+     * {@code fieldValues} never mentions - by full path, by index, or by bare
+     * name - is not generated at all, so the record carries what the reference
+     * carries instead of a random value for every optional field the schema
+     * allows. Mandatory fields are unaffected.
+     *
+     * <p>Defaults to false, which is the behaviour every existing caller
+     * already gets.</p>
+     */
+    private boolean referenceMode;
+
+    /**
      * Convenience alias so a request body using the JSON key {@code "content"}
      * (singular) still populates {@code contents}. Jackson binds the "content"
      * property to this setter.

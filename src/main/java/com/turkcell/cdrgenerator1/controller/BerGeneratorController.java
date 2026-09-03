@@ -109,7 +109,8 @@ public class BerGeneratorController {
         ByteArrayOutputStream fileBuffer = new ByteArrayOutputStream();
         for (int i = 0; i < effectiveRecordCount; i++) {
             Map<String, Object> record = cdrRecordBuilder.buildRecordFromFields(
-                    structure.getFields(), i, request.getFieldValues(), aiRecords);
+                    structure.getFields(), i, request.getFieldValues(), aiRecords,
+                    request.isReferenceMode());
             fileBuffer.writeBytes(berEncoderService.encodeRecord(structure, record));
         }
 
