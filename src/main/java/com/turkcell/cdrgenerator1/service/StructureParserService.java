@@ -1,6 +1,7 @@
 package com.turkcell.cdrgenerator1.service;
 
 import com.turkcell.cdrgenerator1.config.EmmRecordBindings;
+import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.AsnStructure;
 import com.turkcell.cdrgenerator1.model.CdrStructureDto;
 import com.turkcell.cdrgenerator1.parser.AsnFieldTreeResolver;
@@ -29,6 +30,9 @@ import java.util.regex.Matcher;
 @RequiredArgsConstructor
 @Slf4j
 public class StructureParserService {
+
+    /** Field-path separator; an ASN.1 type reference can never contain it. */
+    private static final String PATH_SEPARATOR = ".";
 
     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
     /**
@@ -178,6 +182,7 @@ public class StructureParserService {
                 resolveRootTypeName(registry, selections, taggingMode, rootType, moduleName);
         AsnFieldTreeResolver.ResolvedRoot root =
                 fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
+        applyPathScopedChoiceSelections(registry, root.fields(), selections, taggingMode);
         AsnFieldTreeResolver.ChoiceAlternatives choiceInfo =
                 fieldTreeResolver.listRootChoiceAlternatives(registry, rootTypeName);
 
@@ -193,6 +198,101 @@ public class StructureParserService {
                 .repeatedRoot(root.repeatedRoot())
                 .repeatedRootIsSet(root.repeatedRootIsSet())
                 .build();
+    }
+
+    /**
+     * Re-picks a CHOICE alternative for ONE call site, after the tree is built.
+     *
+     * <h4>The problem</h4>
+     *
+     * <p>{@code AsnFieldTreeResolver.resolveChoiceAlternative} reads the wanted
+     * alternative as {@code choiceSelections.get(choiceTypeName)} - by TYPE, so
+     * every site sharing a type gets the same answer. MMTel's reference record
+     * needs {@code called-Party-Address} to be {@code sIP-URI} and
+     * {@code requested-Party-Address} to be {@code tEL-URI} in the same record,
+     * and both are {@code InvolvedParty}. One global answer cannot satisfy
+     * both.</p>
+     *
+     * <h4>Why the fix lives here and not in the resolver</h4>
+     *
+     * <p>The resolver has no notion of a field path at all, and its cache is
+     * keyed {@code typeName::choiceSelections}. Threading a path through it
+     * would touch every one of the 28 places {@code choiceSelections} is passed
+     * AND make the cache per-site instead of per-type - for a startup that
+     * resolves 802 modules, that is a cost paid by every module to serve the
+     * handful that need it, and a wide change to the code whose output EMM has
+     * already accepted.</p>
+     *
+     * <p>So the resolver keeps its global, type-keyed behaviour untouched and
+     * this runs afterwards: walk the finished tree, and where a path override
+     * names a CHOICE field, resolve that field's own type again with the wanted
+     * alternative and swap in the result. The module's own tagging mode is
+     * passed through, so the replacement alternative is built exactly as the
+     * resolver would have built it had the selection been global.</p>
+     *
+     * <h4>Which keys are paths</h4>
+     *
+     * <p>No key is classified up front. A key acts as a path override exactly
+     * where it equals the path of a CHOICE field in this tree, and does nothing
+     * anywhere else - so a type name, which matches no field path, keeps working
+     * as the resolver already handled it, and a caller passing only type names
+     * sees no change at all. Classifying by "contains a dot" was tried and is
+     * wrong: a CHOICE at the root of a record has a path with no dot in it, and
+     * such a site could never be addressed.</p>
+     *
+     * <p>Where a string is both a type name and a field path, the path reading
+     * wins at that one site. That is the more specific of the two intents, and
+     * the type-keyed pick still stands everywhere else.</p>
+     */
+    private void applyPathScopedChoiceSelections(Map<String, AsnTypeDefinition> registry,
+                                                 List<AsnField> fields,
+                                                 Map<String, String> selections,
+                                                 AsnTaggingMode taggingMode) {
+        if (Objects.isNull(fields) || fields.isEmpty()
+                || Objects.isNull(selections) || selections.isEmpty()) {
+            return;
+        }
+        rewriteChoiceAlternatives(registry, fields, "", selections, taggingMode);
+    }
+
+    private void rewriteChoiceAlternatives(Map<String, AsnTypeDefinition> registry,
+                                           List<AsnField> fields, String prefix,
+                                           Map<String, String> selections,
+                                           AsnTaggingMode taggingMode) {
+        for (AsnField field : fields) {
+            String path = prefix.isEmpty()
+                    ? field.getFieldName()
+                    : prefix + PATH_SEPARATOR + field.getFieldName();
+            String wanted = selections.get(path);
+            if (Objects.nonNull(wanted) && field.isChoice() && Objects.nonNull(field.getFieldType())
+                    && !wanted.equals(currentAlternativeName(field))) {
+                Map<String, String> forThisSite = new LinkedHashMap<>(selections);
+                forThisSite.put(field.getFieldType(), wanted);
+                List<AsnField> alternative = fieldTreeResolver.resolveRootFields(
+                        registry, field.getFieldType(), forThisSite, taggingMode);
+                // resolveChoiceAlternative falls back to the FIRST alternative when
+                // the wanted name is not declared, so an unknown override would
+                // silently rewrite the site to something nobody asked for. Only a
+                // resolution that actually produced the requested branch is applied.
+                if (!alternative.isEmpty() && wanted.equals(alternative.get(0).getFieldName())) {
+                    field.setChildren(alternative);
+                    log.debug("Path-scoped CHOICE at '{}': {} now uses alternative '{}'",
+                            path, field.getFieldType(), wanted);
+                } else {
+                    log.warn("Path-scoped CHOICE '{}' -> '{}' does not name an alternative of {}; "
+                            + "keeping the global pick", path, wanted, field.getFieldType());
+                }
+            }
+            if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
+                rewriteChoiceAlternatives(registry, field.getChildren(), path, selections, taggingMode);
+            }
+        }
+    }
+
+    /** The alternative a resolved CHOICE field currently carries, or null. */
+    private String currentAlternativeName(AsnField field) {
+        List<AsnField> children = field.getChildren();
+        return Objects.isNull(children) || children.isEmpty() ? null : children.get(0).getFieldName();
     }
 
     /**
