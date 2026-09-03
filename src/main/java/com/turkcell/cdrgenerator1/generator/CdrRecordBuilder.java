@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -20,6 +21,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Random;
+import java.util.Set;
 
 @Service
 @Slf4j
@@ -198,7 +200,11 @@ public class CdrRecordBuilder {
 
     private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
-        int repeatCount = repeatCountFor(field);
+        // A CHOICE collection keeps its capped count untouched - see
+        // CHOICE_ELEMENT_COUNT: two elements there mean the SAME alternative
+        // written twice, which is the duplicate tag EMM rejected.
+        int described = field.isChoice() ? 0 : indexedGroupCount(context, fieldPath);
+        int repeatCount = described > 0 ? described : repeatCountFor(field);
         List<Map<String, Object>> items = new ArrayList<>(repeatCount);
         for (int index = 0; index < repeatCount; index++) {
             String elementPath = fieldPath + INDEX_OPEN + index + INDEX_CLOSE;
@@ -250,6 +256,70 @@ public class CdrRecordBuilder {
             values.add(formatAsnLiteral(fallbackValue(field, context, fieldPath), field.getFieldType()));
         }
         return values;
+    }
+
+    /**
+     * How many elements of a repeated GROUP the caller actually described,
+     * counted from the {@code path[i].child} keys they supplied.
+     *
+     * <p>Without this the element count came from {@link #repeatCountFor}'s
+     * random 1..2 regardless of the input, so indexed values addressed at
+     * {@code path[1]} and beyond had nowhere to land: the instance holding them
+     * was never built. Indexed leaves alone therefore only reached the wire in
+     * whichever instance the dice happened to create - the reference record's
+     * {@code list-Of-SDP-Media-Components} needs two, and got one.</p>
+     *
+     * <h4>Contiguous, not max-index-plus-one</h4>
+     *
+     * <p>Counting to the highest index would invent instances for the gaps, and
+     * those would not be empty: {@code buildFields} fills every child of an
+     * instance from the chain, which ends at {@code RandomValueSource}. Given
+     * {@code path[0]} and {@code path[2]}, a max-index rule would emit a
+     * fully random {@code path[1]} in the middle of otherwise reference-exact
+     * data - fabricated content sitting between real records. Counting only the
+     * contiguous run from zero refuses to guess: the first gap ends the
+     * collection, matching the rule {@link #indexedSeries} already applies to
+     * leaves. A caller whose keys start at {@code path[3]} describes no element
+     * zero, so nothing is indexed and the random fallback runs unchanged.</p>
+     *
+     * <h4>Full path only</h4>
+     *
+     * <p>Unlike a leaf value this does not fall back to the bare field name. An
+     * instance count taken from a bare name would silently reshape a same-named
+     * collection in a different branch - changing how many records that branch
+     * emits, not merely what one of them says.</p>
+     *
+     * <p>Only keys that name something INSIDE an instance count: the index must
+     * be followed by {@code .}, so {@code path[0]} on its own (a repeated leaf
+     * element) never inflates a group's element count.</p>
+     */
+    private int indexedGroupCount(ValueSourceContext context, String fieldPath) {
+        Map<String, String> userValues = context.getUserProvidedValues();
+        if (Objects.isNull(userValues) || userValues.isEmpty()) {
+            return 0;
+        }
+        String prefix = fieldPath + INDEX_OPEN;
+        Set<Integer> described = new HashSet<>();
+        for (String key : userValues.keySet()) {
+            if (!key.startsWith(prefix)) {
+                continue;
+            }
+            int close = key.indexOf(INDEX_CLOSE, prefix.length());
+            if (close < 0 || close + 1 >= key.length()
+                    || key.charAt(close + 1) != PATH_SEPARATOR.charAt(0)) {
+                continue;
+            }
+            try {
+                described.add(Integer.parseInt(key.substring(prefix.length(), close)));
+            } catch (NumberFormatException notAnIndex) {
+                // A key such as "foo[bar].baz" addresses nothing this builder emits.
+            }
+        }
+        int count = 0;
+        while (described.contains(count)) {
+            count++;
+        }
+        return count;
     }
 
     /**

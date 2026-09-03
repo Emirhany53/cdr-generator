@@ -1,9 +1,14 @@
 package com.turkcell.cdrgenerator1.generator;
 
+import com.turkcell.cdrgenerator1.ai.util.AsnSizeExtractor;
 import com.turkcell.cdrgenerator1.model.AsnField;
 import com.turkcell.cdrgenerator1.model.BerTagClass;
+import com.turkcell.cdrgenerator1.service.BerEncoderService;
+import com.turkcell.cdrgenerator1.service.FixedWidthTextFormatter;
+import com.turkcell.cdrgenerator1.service.TlvWriter;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -237,5 +242,272 @@ class IndexedRepeatedLeafTest {
         Map<String, Object> record = builder.buildRecordFromFields(List.of(counters), user);
 
         assertThat(valuesOf(record, "counters")).containsExactly("'17'D", "'42'D");
+    }
+
+    // ================================================================
+    // Repeated GROUP element count
+    //
+    // Indexed leaves alone are not enough: a value addressed at path[1]
+    // has nowhere to land while the enclosing collection is built with a
+    // random 1..2 elements. The reference record's
+    // list-Of-SDP-Media-Components needs two instances and got one, which
+    // silently dropped everything indexed under [1].
+    // ================================================================
+
+    private AsnField repeatedGroup(String name, AsnField... children) {
+        return AsnField.builder().fieldName(name).fieldType("Group")
+                .repeated(true).children(List.of(children))
+                .tagNumber(3).tagClass(BerTagClass.CONTEXT).build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> groupsOf(Map<String, Object> record, String key) {
+        return (List<Map<String, Object>>) record.get(key);
+    }
+
+    private AsnField scalarLeaf(String name) {
+        return AsnField.builder().fieldName(name).fieldType("IA5String")
+                .tagNumber(1).tagClass(BerTagClass.CONTEXT).build();
+    }
+
+    @Test
+    void twoDescribedInstancesProduceTwoGroupElements() {
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("components[0].name", "offer");
+        user.put("components[1].name", "answer");
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", scalarLeaf("name"))), user);
+
+        List<Map<String, Object>> groups = groupsOf(record, "components");
+        assertThat(groups).hasSize(2);
+        assertThat(groups.get(0).get("name")).isEqualTo("\"offer\"");
+        assertThat(groups.get(1).get("name")).isEqualTo("\"answer\"");
+    }
+
+    @Test
+    void sixDescribedInstancesProduceSixGroupElements() {
+        Map<String, String> user = new LinkedHashMap<>();
+        for (int index = 0; index < 6; index++) {
+            user.put("components[" + index + "].name", "c" + index);
+        }
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", scalarLeaf("name"))), user);
+
+        List<Map<String, Object>> groups = groupsOf(record, "components");
+        assertThat(groups).hasSize(6);
+        assertThat(groups.get(5).get("name")).isEqualTo("\"c5\"");
+    }
+
+    /**
+     * The case the whole change exists for: a repeated leaf nested inside a
+     * repeated group. Both counts have to come from the caller or the inner
+     * values are unreachable.
+     */
+    @Test
+    void anIndexedLeafInsideEachIndexedGroupInstanceSurvives() {
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("components[0].lines[0]", "v=0");
+        user.put("components[0].lines[1]", "a=sendrecv");
+        user.put("components[1].lines[0]", "v=1");
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", repeatedLeaf("lines"))), user);
+
+        List<Map<String, Object>> groups = groupsOf(record, "components");
+        assertThat(groups).hasSize(2);
+        assertThat(valuesOf(groups.get(0), "lines")).containsExactly("\"v=0\"", "\"a=sendrecv\"");
+        assertThat(valuesOf(groups.get(1), "lines")).containsExactly("\"v=1\"");
+    }
+
+    @Test
+    void withoutIndexedInputTheGroupKeepsTheRandomFallbackCount() {
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", scalarLeaf("name"))),
+                Map.of("name", "same for every element"));
+
+        assertThat(groupsOf(record, "components"))
+                .as("random 1..2 must survive untouched when nothing is indexed")
+                .hasSizeBetween(1, 2);
+    }
+
+    /**
+     * A gap does NOT become an instance. Counting to the highest index would
+     * emit a fully random element for the missing one - {@code buildFields}
+     * fills every child from the chain - putting fabricated data between two
+     * reference-exact records.
+     */
+    @Test
+    void aGapLeavesTheLaterInstancesOutRatherThanFabricatingOne() {
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("components[0].name", "real");
+        user.put("components[2].name", "unreachable");
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", scalarLeaf("name"))), user);
+
+        List<Map<String, Object>> groups = groupsOf(record, "components");
+        assertThat(groups).hasSize(1);
+        assertThat(groups.get(0).get("name")).isEqualTo("\"real\"");
+    }
+
+    /**
+     * Keys that describe no element zero index nothing at all, so the field
+     * falls back to the random count instead of guessing what [3] meant.
+     */
+    @Test
+    void instancesThatDoNotStartAtZeroAreIgnored() {
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedGroup("components", scalarLeaf("name"))),
+                Map.of("components[3].name", "unreachable"));
+
+        assertThat(groupsOf(record, "components")).hasSizeBetween(1, 2);
+    }
+
+    /**
+     * A repeated LEAF element key ({@code path[0]}, nothing after the index)
+     * must not be mistaken for a group instance.
+     */
+    @Test
+    void aRepeatedLeafKeyDoesNotInflateAGroupCount() {
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("lines[0]", "first");
+        user.put("lines[1]", "second");
+        user.put("lines[2]", "third");
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(repeatedLeaf("lines")), user);
+
+        assertThat(valuesOf(record, "lines")).containsExactly("\"first\"", "\"second\"", "\"third\"");
+    }
+
+    /**
+     * Two collections sharing a field name in different branches are counted
+     * apart, because a group count is read from the full path only.
+     */
+    @Test
+    void sameNamedGroupsInDifferentBranchesAreCountedApart() {
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("early.components[0].name", "one");
+        user.put("early.components[1].name", "two");
+        user.put("late.components[0].name", "only");
+
+        Map<String, Object> record = builder.buildRecordFromFields(
+                List.of(group("early", repeatedGroup("components", scalarLeaf("name"))),
+                        group("late", repeatedGroup("components", scalarLeaf("name")))),
+                user);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> early = (Map<String, Object>) record.get("early");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> late = (Map<String, Object>) record.get("late");
+
+        assertThat(groupsOf(early, "components")).hasSize(2);
+        assertThat(groupsOf(late, "components")).hasSize(1);
+    }
+
+    /**
+     * CHOICE collections keep {@code CHOICE_ELEMENT_COUNT}. Two elements there
+     * are the SAME alternative written twice - the literal duplicate tag EMM
+     * rejected - so indexed input must not lift that cap.
+     */
+    @Test
+    void aChoiceCollectionKeepsItsSingleElementCapDespiteIndexedInput() {
+        AsnField choiceCollection = AsnField.builder()
+                .fieldName("parties").fieldType("ListOfInvolvedParties")
+                .repeated(true).choice(true)
+                .children(List.of(scalarLeaf("sIP-URI")))
+                .tagNumber(6).tagClass(BerTagClass.CONTEXT).build();
+
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("parties[0].sIP-URI", "sip:a@example.org");
+        user.put("parties[1].sIP-URI", "sip:b@example.org");
+
+        Map<String, Object> record = builder.buildRecordFromFields(List.of(choiceCollection), user);
+
+        assertThat(groupsOf(record, "parties"))
+                .as("CHOICE_ELEMENT_COUNT must hold regardless of indexed input")
+                .hasSize(1);
+    }
+
+    // ---------------------------------------------------------------- through the encoder
+
+    /**
+     * The whole flow rather than the builder alone: fieldValues in, real BER
+     * out, and the collection counted by reading the encoded TLVs back. This is
+     * what proves the second instance actually reaches the wire - the builder
+     * producing two maps would mean nothing if the encoder wrote one.
+     */
+    @Test
+    void bothGroupInstancesReachTheEncodedBytes() {
+        BerEncoderService encoder =
+                new BerEncoderService(new TlvWriter(), new FixedWidthTextFormatter(new AsnSizeExtractor()));
+
+        List<AsnField> fields = List.of(repeatedGroup("components", repeatedLeaf("lines")));
+        Map<String, String> user = new LinkedHashMap<>();
+        user.put("components[0].lines[0]", "AAAA");
+        user.put("components[0].lines[1]", "BBBB");
+        user.put("components[1].lines[0]", "CCCC");
+
+        Map<String, Object> record = builder.buildRecordFromFields(fields, user);
+        byte[] encoded = encoder.encodeRecord(fields, record);
+        String asText = new String(encoded, StandardCharsets.ISO_8859_1);
+
+        assertThat(asText)
+                .as("every indexed value must survive into the encoded record")
+                .contains("AAAA").contains("BBBB").contains("CCCC");
+
+        // encodeRepeated writes ONE outer TLV for the collection and puts each
+        // element inside it as its own universal SEQUENCE - so the instance
+        // count is read from the elements within [3], not from repeats of [3].
+        byte[] recordBody = contentOf(encoded, 0);          // universal SEQUENCE
+        byte[] components = contentOf(recordBody, 0);       // [3] collection
+        assertThat((recordBody[0] & 0xFF))
+                .as("the collection is written once, context-tagged [3] constructed")
+                .isEqualTo(0xA3);
+        assertThat(countTopLevelTlvs(components))
+                .as("two described instances means two element TLVs inside [3]")
+                .isEqualTo(2);
+    }
+
+    /** Content octets of the TLV that starts at {@code offset}. */
+    private byte[] contentOf(byte[] buffer, int offset) {
+        int cursor = offset + 1;
+        int length = buffer[cursor++] & 0xFF;
+        if ((length & 0x80) != 0) {
+            int lengthBytes = length & 0x7F;
+            length = 0;
+            for (int i = 0; i < lengthBytes; i++) {
+                length = (length << 8) | (buffer[cursor++] & 0xFF);
+            }
+        }
+        byte[] content = new byte[length];
+        System.arraycopy(buffer, cursor, content, 0, length);
+        return content;
+    }
+
+    /** How many TLVs sit side by side in {@code buffer}. */
+    private int countTopLevelTlvs(byte[] buffer) {
+        int count = 0;
+        int cursor = 0;
+        while (cursor < buffer.length) {
+            int start = cursor;
+            cursor++;                                        // single-byte tags only here
+            int length = buffer[cursor++] & 0xFF;
+            if ((length & 0x80) != 0) {
+                int lengthBytes = length & 0x7F;
+                length = 0;
+                for (int i = 0; i < lengthBytes; i++) {
+                    length = (length << 8) | (buffer[cursor++] & 0xFF);
+                }
+            }
+            cursor += length;
+            if (cursor <= start) {
+                break;
+            }
+            count++;
+        }
+        return count;
     }
 }
