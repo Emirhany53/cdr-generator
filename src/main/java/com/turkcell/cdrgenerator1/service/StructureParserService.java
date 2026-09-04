@@ -346,15 +346,43 @@ public class StructureParserService {
      * <h4>Which keys trigger this</h4>
      *
      * <p>A key shaped {@code <fieldPath>[<index>].<name>} names one instance's
-     * alternative. Expansion happens only when TWO OR MORE DISTINCT names are
-     * found for the SAME field's path - a single name (today's normal shape,
-     * or a caller who only ever describes one alternative, or the same
-     * alternative repeated at several indices) leaves the field exactly as the
-     * resolver already produced it. That last case is deliberate: it refuses
-     * to reproduce {@link CdrRecordBuilder#CHOICE_ELEMENT_COUNT}'s documented
-     * defect (two elements, the SAME alternative, is the literal duplicate tag
-     * EMM rejected) rather than trying to guess the caller meant something
-     * else.</p>
+     * alternative. Every distinct name found for one field's path becomes an
+     * alternative in that field's children, and the swap is applied whenever
+     * that differs from what the resolver already produced - two shapes, not
+     * one:</p>
+     *
+     * <ul>
+     *   <li><b>Several distinct names</b> widen the field to their union, so
+     *       each instance can carry its own alternative (the original P2
+     *       case).</li>
+     *   <li><b>One name that is not the resolver's default</b> swaps the single
+     *       alternative for the one the caller asked for. Without this,
+     *       {@code list-Of-Called-Asserted-Identity[0].tEL-URI} resolved to
+     *       {@code sIP-URI} and filled it from {@code RandomValueSource},
+     *       because no key matched the leaf actually in the tree - the caller's
+     *       value silently vanished. 26 of the 9827 records in the EMM-accepted
+     *       capture carry exactly that shape.</li>
+     * </ul>
+     *
+     * <p>How MANY instances get built is deliberately NOT decided here: that is
+     * {@code CdrRecordBuilder.buildRepeatedGroup}'s job, and it counts the
+     * caller's contiguous indices whether or not the alternatives differ. The
+     * earlier rule tied the two together - expansion only on 2+ distinct names,
+     * count only when expansion ran - so a caller indexing the SAME alternative
+     * twice silently got one instance. Separating them is what makes
+     * {@code [0].sIP-URI + [1].sIP-URI} produce two elements.</p>
+     *
+     * <p>The reference captures never show one collection carrying the same
+     * alternative twice (9827 records: 7958 {@code (sIP,tEL)}, 1869
+     * {@code (sIP)}, never {@code (sIP,sIP)}), so nothing here makes that a
+     * DEFAULT: {@link CdrRecordBuilder#CHOICE_ELEMENT_COUNT} still caps every
+     * collection nobody indexed. It is reachable only by a caller who names the
+     * indices explicitly, and X.690 8.10 makes it legal - a SEQUENCE OF's
+     * elements are delimited by position, not by tag. The "Duplicate Tag"
+     * rejection behind {@code adbe2cc} was reported at
+     * {@code enhancedPhoneFeatures1.[0]}, inside a SET body, where X.680 does
+     * require distinct member tags; round 28 later confirmed that repeats
+     * inside SEQUENCE bodies are accepted ({@code SDPCCR} PASS).</p>
      *
      * <h4>Why this can only run on a freshly-resolved tree</h4>
      *
@@ -425,7 +453,7 @@ public class StructureParserService {
                     : prefix + PATH_SEPARATOR + field.getFieldName();
             if (field.isRepeated() && field.isChoice() && Objects.nonNull(field.getFieldType())) {
                 List<String> wantedAlternatives = indexedAlternativeNames(fieldValues, path);
-                if (wantedAlternatives.size() > 1) {
+                if (!wantedAlternatives.isEmpty()) {
                     String choiceTypeName = choiceTypeNameFor(registry, field);
                     List<AsnField> union = new ArrayList<>();
                     for (String altName : wantedAlternatives) {
@@ -450,9 +478,24 @@ public class StructureParserService {
                                     + "generation time", path, altName, field.getFieldType());
                         }
                     }
-                    if (union.size() > 1) {
+                    // Applied whenever the caller's names differ from what the
+                    // resolver already produced - which covers TWO shapes, not
+                    // one. Several distinct names widen the field to their union
+                    // (the original P2 case). A SINGLE name that is not the
+                    // resolver's default swaps the one alternative for the one
+                    // the caller asked for: without this, indexing
+                    // "list-Of-Called-Asserted-Identity[0].tEL-URI" resolved to
+                    // sIP-URI and filled it from RandomValueSource, because no
+                    // key matched the leaf actually in the tree. That shape is
+                    // not hypothetical - it is 26 of the 9827 records in the
+                    // EMM-accepted capture.
+                    List<String> currentNames = Objects.isNull(field.getChildren())
+                            ? List.of()
+                            : field.getChildren().stream().map(AsnField::getFieldName).toList();
+                    List<String> unionNames = union.stream().map(AsnField::getFieldName).toList();
+                    if (!union.isEmpty() && !unionNames.equals(currentNames)) {
                         field.setChildren(union);
-                        log.debug("Indexed CHOICE expansion at '{}': {} now carries {} alternatives {}",
+                        log.debug("Indexed CHOICE expansion at '{}': {} now carries {} alternative(s) {}",
                                 path, field.getFieldType(), union.size(), wantedAlternatives);
                     }
                 }

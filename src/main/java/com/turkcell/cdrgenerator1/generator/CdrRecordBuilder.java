@@ -243,21 +243,26 @@ public class CdrRecordBuilder {
 
     private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
-        // A CHOICE collection keeps its capped count untouched by default - see
-        // CHOICE_ELEMENT_COUNT: two elements there mean the SAME alternative
-        // written twice, which is the duplicate tag EMM rejected. The single
-        // narrow exception (P2): reference mode, AND StructureParserService's
-        // applyIndexedChoiceExpansion already widened field.getChildren() to
-        // more than one alternative for THIS field - which itself only ever
-        // happens when the caller indexed two or more DISTINCT alternatives at
-        // this same path. Gating on children().size()>1 rather than
-        // re-deriving that condition here ties this branch structurally to
-        // whether expansion actually ran, so a CHOICE field nobody expanded -
-        // every field in every EMM-passed module today - takes the untouched
-        // path exactly as before; CHOICE_ELEMENT_COUNT itself never changes.
-        boolean expandedChoiceCollection = field.isChoice() && context.isReferenceMode()
-                && Objects.nonNull(field.getChildren()) && field.getChildren().size() > 1;
-        int described = (!field.isChoice() || expandedChoiceCollection)
+        // A CHOICE collection keeps its capped count untouched by DEFAULT - see
+        // CHOICE_ELEMENT_COUNT. The exception is reference mode: there the
+        // caller's own indexed keys are the authority on how many instances
+        // exist, exactly as they already are for a non-CHOICE collection.
+        //
+        // This used to additionally require that applyIndexedChoiceExpansion
+        // had widened field.getChildren() past one alternative, which made the
+        // count depend on whether the caller's alternatives happened to DIFFER:
+        // "[0].sIP-URI + [1].sIP-URI" described two instances but produced one,
+        // silently dropping the second value, and "[0].tEL-URI + [1].tEL-URI"
+        // produced one instance of the WRONG alternative filled at random. How
+        // many instances there are and which alternative each carries are two
+        // separate questions; only the second one belongs to expansion.
+        //
+        // referenceMode=false is untouched and short-circuits first, so every
+        // EMM-passed module keeps CHOICE_ELEMENT_COUNT's single element and the
+        // same-alternative repeat is reachable only by a caller who indexes it
+        // deliberately. X.690 8.10 makes that legal: a SEQUENCE OF's elements
+        // are delimited by position, not by tag.
+        int described = (!field.isChoice() || context.isReferenceMode())
                 ? indexedGroupCount(context, fieldPath) : 0;
         int repeatCount = described > 0 ? described : repeatCountFor(field);
         List<Map<String, Object>> items = new ArrayList<>(repeatCount);
