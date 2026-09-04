@@ -77,7 +77,44 @@ def decode_record(data, root_children):
             path = f"{prefix}.{name}" if prefix else name
             kids = children_of(field)
             if field and field.get('repeated'):
-                if constructed:
+                if field.get('choice'):
+                    # SEQUENCE OF <CHOICE>: BerEncoderService.encodeRepeated
+                    # writes NO per-element wrapper here - an element on the
+                    # wire already IS the chosen alternative's own self-tagged
+                    # TLV (the elementIsChoice branch applies encodeConstructed
+                    # directly, skipping the universal-SEQUENCE fallback used
+                    # for a repeated non-CHOICE type). So an element is
+                    # identified by its OWN tag against this field's declared
+                    # alternatives (`kids`), not opened one layer down first -
+                    # unlike the SEQUENCE OF <SEQUENCE> case below, where each
+                    # element genuinely is wrapped and `inner_con` decides
+                    # whether to descend.
+                    #
+                    # The old code treated every repeated field the same way:
+                    # it recorded a correctly-encoded elementIsChoice value
+                    # under a bare "field[i]" path with the OUTER collection's
+                    # type, never attaching the alternative's own name. Against
+                    # a decode dump that names the alternative
+                    # (e.g. "sIP-URI"), that same value then read as BOTH
+                    # missing (path[i].sIP-URI not found) and extra (path[i]
+                    # has no counterpart) - a measurement artifact, not a
+                    # wire-format bug (04.09.2026, P1 measurement).
+                    alt_table = by_tag(kids)
+                    j, index = 0, 0
+                    while j < len(content):
+                        inner_con, inner_num, inner_off, inner_len = read_tlv(content, j)
+                        element = content[inner_off:inner_off + inner_len]
+                        alternative = alt_table.get(inner_num)
+                        alt_name = alternative['fieldName'] if alternative else f"<tag{inner_num}>"
+                        element_path = f"{path}[{index}].{alt_name}"
+                        alt_kids = children_of(alternative)
+                        if inner_con and alt_kids:
+                            walk(element, alt_kids, element_path)
+                        else:
+                            leaves.append((element_path, element, (alternative or {}).get('fieldType')))
+                        j = inner_off + inner_len
+                        index += 1
+                elif constructed:
                     j, index = 0, 0
                     while j < len(content):
                         inner_con, _, inner_off, inner_len = read_tlv(content, j)
