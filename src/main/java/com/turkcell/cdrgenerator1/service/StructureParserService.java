@@ -33,6 +33,9 @@ public class StructureParserService {
 
     /** Field-path separator; an ASN.1 type reference can never contain it. */
     private static final String PATH_SEPARATOR = ".";
+    /** Indexed-repeated-field bracket, matching CdrRecordBuilder's own addressing. */
+    private static final String INDEX_OPEN = "[";
+    private static final String INDEX_CLOSE = "]";
 
     private static final long SLOW_MODULE_THRESHOLD_MS = 1000L;
     /**
@@ -161,6 +164,19 @@ public class StructureParserService {
         return buildStructure(structureName, contents, choiceSelections, rootType);
     }
 
+    /**
+     * As above, but also able to expand a repeated CHOICE field into every
+     * alternative the caller's INDEXED {@code fieldValues} keys name - P2. See
+     * {@link #applyIndexedChoiceExpansion} for what this does and why it is
+     * safe; {@code referenceMode=false} or empty {@code fieldValues} reproduces
+     * the four-argument overload exactly.
+     */
+    public AsnStructure parseFromContents(String structureName, String contents,
+                                          Map<String, String> choiceSelections, String rootType,
+                                          Map<String, String> fieldValues, boolean referenceMode) {
+        return buildStructure(structureName, contents, choiceSelections, rootType, fieldValues, referenceMode);
+    }
+
     private AsnStructure buildStructure(String suppliedName, String contents,
                                         Map<String, String> choiceSelections) {
         return buildStructure(suppliedName, contents, choiceSelections, null);
@@ -168,6 +184,12 @@ public class StructureParserService {
 
     private AsnStructure buildStructure(String suppliedName, String contents,
                                         Map<String, String> choiceSelections, String rootType) {
+        return buildStructure(suppliedName, contents, choiceSelections, rootType, null, false);
+    }
+
+    private AsnStructure buildStructure(String suppliedName, String contents,
+                                        Map<String, String> choiceSelections, String rootType,
+                                        Map<String, String> fieldValues, boolean referenceMode) {
         Map<String, AsnTypeDefinition> registry = registryBuilder.buildRegistry(contents);
         if (registry.isEmpty()) {
             return null;
@@ -183,6 +205,9 @@ public class StructureParserService {
         AsnFieldTreeResolver.ResolvedRoot root =
                 fieldTreeResolver.resolveRoot(registry, rootTypeName, selections, taggingMode);
         applyPathScopedChoiceSelections(registry, root.fields(), selections, taggingMode);
+        if (referenceMode) {
+            applyIndexedChoiceExpansion(registry, root.fields(), selections, fieldValues, taggingMode);
+        }
         AsnFieldTreeResolver.ChoiceAlternatives choiceInfo =
                 fieldTreeResolver.listRootChoiceAlternatives(registry, rootTypeName);
 
@@ -293,6 +318,178 @@ public class StructureParserService {
     private String currentAlternativeName(AsnField field) {
         List<AsnField> children = field.getChildren();
         return Objects.isNull(children) || children.isEmpty() ? null : children.get(0).getFieldName();
+    }
+
+    /**
+     * P2: expands a REPEATED CHOICE field's single resolved alternative into
+     * the UNION of every alternative the caller's INDEXED {@code fieldValues}
+     * keys name.
+     *
+     * <h4>The problem</h4>
+     *
+     * <p>{@code list-Of-Calling-Party-Address} - {@code InvolvedParty} CHOICE,
+     * repeated - resolves to exactly ONE alternative; the resolver always
+     * collapses a CHOICE to a single branch, same as {@link
+     * #rewriteChoiceAlternatives} above swaps that one branch for another. The
+     * EMM-accepted MMTel reference needs TWO instances of this collection, one
+     * carrying {@code sIP-URI} and the other {@code tEL-URI}. Reproducing that
+     * means {@code field.getChildren()} has to hold BOTH, because {@code
+     * BerEncoderService.encodeRepeated}'s {@code elementIsChoice} branch reads
+     * the SAME {@code field.getChildren()} for every element it writes - there
+     * is no per-element children list to vary, and {@code BerEncoderService}
+     * is untouched. {@code CdrRecordBuilder} then derives the element count
+     * from the caller's indices and, per element, keeps only the ONE
+     * alternative that element actually names - so with the union present,
+     * each instance's encoded content is exactly the one alternative it was
+     * given.</p>
+     *
+     * <h4>Which keys trigger this</h4>
+     *
+     * <p>A key shaped {@code <fieldPath>[<index>].<name>} names one instance's
+     * alternative. Expansion happens only when TWO OR MORE DISTINCT names are
+     * found for the SAME field's path - a single name (today's normal shape,
+     * or a caller who only ever describes one alternative, or the same
+     * alternative repeated at several indices) leaves the field exactly as the
+     * resolver already produced it. That last case is deliberate: it refuses
+     * to reproduce {@link CdrRecordBuilder#CHOICE_ELEMENT_COUNT}'s documented
+     * defect (two elements, the SAME alternative, is the literal duplicate tag
+     * EMM rejected) rather than trying to guess the caller meant something
+     * else.</p>
+     *
+     * <h4>Why this can only run on a freshly-resolved tree</h4>
+     *
+     * <p>{@code field.setChildren(...)} mutates the {@link AsnField} in place.
+     * This method is called from {@link #buildStructure} only when {@code
+     * referenceMode} is true, and {@link #getStructureByName(String, Map,
+     * String, Map, boolean)} widens its "narrowed" check so a reference-mode
+     * call carrying non-empty {@code fieldValues} never returns the {@code
+     * parsedStructures} entry built once at startup and shared by every other
+     * caller - every {@link AsnField} reached here belongs to this one call's
+     * own, newly-resolved tree.</p>
+     */
+    /**
+     * The CHOICE type name {@code resolveChoiceAlternative} actually keys an
+     * alternative selection on - which is NOT always {@code field.getFieldType()}.
+     *
+     * <p>{@code list-Of-Calling-Party-Address}'s own declared type is {@code
+     * ListOfInvolvedParties}, an alias for {@code SEQUENCE OF InvolvedParty} -
+     * {@code resolveRootFields(registry, "ListOfInvolvedParties", ...)}
+     * correctly unwraps that alias internally and ends up resolving {@code
+     * InvolvedParty}, but the SELECTION MAP it consults at that point is keyed
+     * "InvolvedParty", not "ListOfInvolvedParties". Passing {@code
+     * Map.of(field.getFieldType(), altName)} as {@link
+     * #expandIndexedChoiceCollections} first did therefore built a selection
+     * nobody ever looked up, and every alternative silently fell back to the
+     * first one - caught by generating against the real MMTel schema and
+     * finding {@code tEL-URI} missing where {@code sIP-URI} was expected
+     * twice.</p>
+     *
+     * <p>Reuses {@link #extractSequenceOfInnerType}, the SAME "SEQUENCE OF X"
+     * pattern {@link #resolveRootTypeName} already uses for an unrelated
+     * purpose - not new parsing. Falls back to {@code field.getFieldType()}
+     * unchanged when it is not behind such an alias, which is the correct
+     * answer for a CHOICE declared directly (matching {@code
+     * rewriteChoiceAlternatives}'s scalar-CHOICE case above).</p>
+     */
+    private String choiceTypeNameFor(Map<String, AsnTypeDefinition> registry, AsnField field) {
+        AsnTypeDefinition definition = registry.get(field.getFieldType());
+        if (Objects.nonNull(definition) && definition.getKind() == AsnTypeKind.ALIAS) {
+            String innerType = extractSequenceOfInnerType(definition.getAliasTarget());
+            if (Objects.nonNull(innerType)) {
+                return innerType;
+            }
+        }
+        return field.getFieldType();
+    }
+
+    private void applyIndexedChoiceExpansion(Map<String, AsnTypeDefinition> registry,
+                                             List<AsnField> fields,
+                                             Map<String, String> selections,
+                                             Map<String, String> fieldValues,
+                                             AsnTaggingMode taggingMode) {
+        if (Objects.isNull(fields) || fields.isEmpty()
+                || Objects.isNull(fieldValues) || fieldValues.isEmpty()) {
+            return;
+        }
+        expandIndexedChoiceCollections(registry, fields, "", selections, fieldValues, taggingMode);
+    }
+
+    private void expandIndexedChoiceCollections(Map<String, AsnTypeDefinition> registry,
+                                                List<AsnField> fields, String prefix,
+                                                Map<String, String> selections,
+                                                Map<String, String> fieldValues,
+                                                AsnTaggingMode taggingMode) {
+        for (AsnField field : fields) {
+            String path = prefix.isEmpty()
+                    ? field.getFieldName()
+                    : prefix + PATH_SEPARATOR + field.getFieldName();
+            if (field.isRepeated() && field.isChoice() && Objects.nonNull(field.getFieldType())) {
+                List<String> wantedAlternatives = indexedAlternativeNames(fieldValues, path);
+                if (wantedAlternatives.size() > 1) {
+                    String choiceTypeName = choiceTypeNameFor(registry, field);
+                    List<AsnField> union = new ArrayList<>();
+                    for (String altName : wantedAlternatives) {
+                        // Preserves the request's broader choiceSelections (KN-3's
+                        // own discipline in rewriteChoiceAlternatives above) so an
+                        // alternative that itself contains a nested CHOICE still
+                        // resolves using the caller's other picks, not just this
+                        // one override.
+                        Map<String, String> forThisAlternative =
+                                Objects.isNull(selections) ? new LinkedHashMap<>() : new LinkedHashMap<>(selections);
+                        forThisAlternative.put(choiceTypeName, altName);
+                        List<AsnField> resolved = fieldTreeResolver.resolveRootFields(
+                                registry, field.getFieldType(), forThisAlternative, taggingMode);
+                        // Same discipline as rewriteChoiceAlternatives: an
+                        // unresolvable name is dropped rather than silently
+                        // substituting the resolver's fallback-to-first-alternative.
+                        if (!resolved.isEmpty() && altName.equals(resolved.get(0).getFieldName())) {
+                            union.add(resolved.get(0));
+                        } else {
+                            log.warn("Indexed CHOICE expansion at '{}': '{}' does not name an "
+                                    + "alternative of {}; instances naming it will be skipped at "
+                                    + "generation time", path, altName, field.getFieldType());
+                        }
+                    }
+                    if (union.size() > 1) {
+                        field.setChildren(union);
+                        log.debug("Indexed CHOICE expansion at '{}': {} now carries {} alternatives {}",
+                                path, field.getFieldType(), union.size(), wantedAlternatives);
+                    }
+                }
+            }
+            if (Objects.nonNull(field.getChildren()) && !field.getChildren().isEmpty()) {
+                expandIndexedChoiceCollections(registry, field.getChildren(), path, selections, fieldValues, taggingMode);
+            }
+        }
+    }
+
+    /**
+     * Distinct alternative names found at {@code <fieldPath>[i].<name>} for
+     * CONTIGUOUS indices starting at zero - the same "a gap ends the series"
+     * rule {@code CdrRecordBuilder}'s indexed-repeated helpers already use, so
+     * a caller's numbering and this expansion never disagree about which
+     * instances exist. Order is first-seen by increasing index.
+     */
+    private List<String> indexedAlternativeNames(Map<String, String> fieldValues, String fieldPath) {
+        List<String> names = new ArrayList<>();
+        for (int index = 0; ; index++) {
+            String indexPrefix = fieldPath + INDEX_OPEN + index + INDEX_CLOSE + PATH_SEPARATOR;
+            String altName = fieldValues.keySet().stream()
+                    .filter(key -> key.startsWith(indexPrefix))
+                    .map(key -> key.substring(indexPrefix.length()))
+                    .map(rest -> {
+                        int dot = rest.indexOf(PATH_SEPARATOR.charAt(0));
+                        return dot < 0 ? rest : rest.substring(0, dot);
+                    })
+                    .findFirst()
+                    .orElse(null);
+            if (Objects.isNull(altName)) {
+                return names;
+            }
+            if (!names.contains(altName)) {
+                names.add(altName);
+            }
+        }
     }
 
     /**
@@ -712,8 +909,31 @@ public class StructureParserService {
      */
     public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections,
                                            String rootType) {
+        return getStructureByName(name, choiceSelections, rootType, null, false);
+    }
+
+    /**
+     * As above, but also able to expand a repeated CHOICE field for reference
+     * mode - P2, see {@link #applyIndexedChoiceExpansion}.
+     *
+     * <p>{@code narrowed} is widened to force the fresh-resolve path whenever
+     * {@code referenceMode} is on with non-empty {@code fieldValues}, even if
+     * {@code choiceSelections} and {@code rootType} are both empty. Without
+     * this, a reference-mode caller who only sets {@code fieldValues} (no
+     * other narrowing) would receive {@code parsedStructures.get(name)} - the
+     * SAME {@link AsnStructure} object every other caller of the plain,
+     * no-selection lookup shares - and {@link #applyIndexedChoiceExpansion}'s
+     * {@code field.setChildren(...)} would mutate that shared object,
+     * corrupting it for every concurrent and future request. Forcing the
+     * fresh path guarantees the tree reached here is always this one call's
+     * own.</p>
+     */
+    public AsnStructure getStructureByName(String name, Map<String, String> choiceSelections,
+                                           String rootType, Map<String, String> fieldValues,
+                                           boolean referenceMode) {
         boolean narrowed = (Objects.nonNull(choiceSelections) && !choiceSelections.isEmpty())
-                || (Objects.nonNull(rootType) && !rootType.isBlank());
+                || (Objects.nonNull(rootType) && !rootType.isBlank())
+                || (referenceMode && Objects.nonNull(fieldValues) && !fieldValues.isEmpty());
         if (!narrowed) {
             return parsedStructures.get(name);
         }
@@ -721,7 +941,7 @@ public class StructureParserService {
         if (Objects.isNull(contents)) {
             return parsedStructures.get(name);
         }
-        return buildStructure(name, contents, choiceSelections, rootType);
+        return buildStructure(name, contents, choiceSelections, rootType, fieldValues, referenceMode);
     }
 
     public List<String> getAllStructureNames() {

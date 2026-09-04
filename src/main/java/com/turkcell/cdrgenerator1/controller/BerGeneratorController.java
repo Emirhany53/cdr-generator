@@ -239,7 +239,7 @@ public class BerGeneratorController {
             AsnStructure structure =
                     structureParserService.parseFromContents(request.getStructureName(),
                             request.getContents(), request.getChoiceSelections(),
-                            request.getRootType());
+                            request.getRootType(), request.getFieldValues(), request.isReferenceMode());
             if (Objects.isNull(structure) || Objects.isNull(structure.getFields())
                     || structure.getFields().isEmpty()) {
                 throw new IllegalArgumentException(
@@ -251,7 +251,8 @@ public class BerGeneratorController {
             throw new IllegalArgumentException("structureName is required when no content is provided");
         }
         AsnStructure structure = structureParserService.getStructureByName(
-                request.getStructureName(), request.getChoiceSelections(), request.getRootType());
+                request.getStructureName(), request.getChoiceSelections(), request.getRootType(),
+                request.getFieldValues(), request.isReferenceMode());
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }

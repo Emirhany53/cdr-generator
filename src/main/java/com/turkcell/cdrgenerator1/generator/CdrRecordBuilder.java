@@ -187,6 +187,25 @@ public class CdrRecordBuilder {
                 continue;
             }
 
+            // P2-C: inside an expanded repeated-CHOICE instance (parentIsChoice,
+            // more than one sibling alternative present - see buildRepeatedGroup's
+            // expandedChoiceCollection gate), an alternative the caller did not
+            // describe FOR THIS SPECIFIC INSTANCE is never encoded, regardless of
+            // its own optional flag. Without this, every sibling alternative
+            // would fall through to RandomValueSource for whichever instance
+            // didn't name it, writing that alternative's tag with a fabricated
+            // value right next to the one the caller actually asked for - the
+            // literal duplicate/conflicting-CHOICE shape this whole feature
+            // exists to avoid producing. Deliberately NOT gated on
+            // context.isReferenceMode(): fields.size()>1 can only be true here
+            // because applyIndexedChoiceExpansion already ran (which IS gated on
+            // reference mode), so this check is a structural safety net, not a
+            // second copy of that gate - and "never emit two alternatives in one
+            // instance" is correct in every mode, not only reference mode.
+            if (parentIsChoice && fields.size() > 1 && !describedByCaller(context, field, fieldPath)) {
+                continue;
+            }
+
             // Reference-driven generation: an OPTIONAL field the caller never
             // described is left out entirely, the same way an unfilled OPTIONAL
             // already leaves the record - the key is absent, so the encoder's
@@ -224,10 +243,22 @@ public class CdrRecordBuilder {
 
     private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
-        // A CHOICE collection keeps its capped count untouched - see
+        // A CHOICE collection keeps its capped count untouched by default - see
         // CHOICE_ELEMENT_COUNT: two elements there mean the SAME alternative
-        // written twice, which is the duplicate tag EMM rejected.
-        int described = field.isChoice() ? 0 : indexedGroupCount(context, fieldPath);
+        // written twice, which is the duplicate tag EMM rejected. The single
+        // narrow exception (P2): reference mode, AND StructureParserService's
+        // applyIndexedChoiceExpansion already widened field.getChildren() to
+        // more than one alternative for THIS field - which itself only ever
+        // happens when the caller indexed two or more DISTINCT alternatives at
+        // this same path. Gating on children().size()>1 rather than
+        // re-deriving that condition here ties this branch structurally to
+        // whether expansion actually ran, so a CHOICE field nobody expanded -
+        // every field in every EMM-passed module today - takes the untouched
+        // path exactly as before; CHOICE_ELEMENT_COUNT itself never changes.
+        boolean expandedChoiceCollection = field.isChoice() && context.isReferenceMode()
+                && Objects.nonNull(field.getChildren()) && field.getChildren().size() > 1;
+        int described = (!field.isChoice() || expandedChoiceCollection)
+                ? indexedGroupCount(context, fieldPath) : 0;
         int repeatCount = described > 0 ? described : repeatCountFor(field);
         List<Map<String, Object>> items = new ArrayList<>(repeatCount);
         for (int index = 0; index < repeatCount; index++) {
