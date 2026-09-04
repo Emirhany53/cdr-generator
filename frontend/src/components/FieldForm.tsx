@@ -178,24 +178,27 @@ function FieldEntry({
                     <label className="field-label" htmlFor={altValuePath}>
                       Değer <span className="field-type">{altField.fieldType}</span>
                     </label>
-                    <input
-                      id={altValuePath}
-                      type="text"
-                      placeholder="boş = otomatik üret"
+                    <LeafControl
+                      field={altField}
+                      path={altValuePath}
                       value={values[altValuePath] ?? ""}
-                      onChange={(e) => onValueChange(altValuePath, e.target.value)}
+                      onChange={onValueChange}
                     />
                   </>
                 )}
               </div>
             );
           }
+          const hasBody = !!field.children && field.children.length > 0;
           return (
             <div className="repeated-item" key={itemPath}>
-              <div className="repeated-item-label">#{idx + 1}</div>
-              {field.children && field.children.length > 0 ? (
+              {/* Index, not ordinal - a repeated LEAF writes its element as
+                  "<path>[idx]", so "#1" named the same element the payload
+                  called [0]. Same labelling as a repeated CHOICE instance. */}
+              <div className="repeated-item-label">Instance [{idx}]</div>
+              {hasBody ? (
                 <FieldForm
-                  fields={field.children}
+                  fields={field.children!}
                   pathPrefix={itemPath}
                   depth={depth + 1}
                   values={values}
@@ -208,7 +211,17 @@ function FieldEntry({
                   choiceUpdating={choiceUpdating}
                 />
               ) : (
-                <LeafInput field={field} path={itemPath} value={values[itemPath] ?? ""} onChange={onValueChange} />
+                <>
+                  <label className="field-label" htmlFor={itemPath}>
+                    Değer <span className="field-type">{field.fieldType}</span>
+                  </label>
+                  <LeafControl
+                    field={field}
+                    path={itemPath}
+                    value={values[itemPath] ?? ""}
+                    onChange={onValueChange}
+                  />
+                </>
               )}
             </div>
           );
@@ -324,8 +337,6 @@ function LeafInput({
   value: string;
   onChange: (path: string, value: string) => void;
 }) {
-  const kind = classifyType(field.fieldType);
-
   return (
     <details className="leaf-field">
       <summary>
@@ -335,6 +346,27 @@ function LeafInput({
         {value !== "" && <span className="badge badge-filled">{value}</span>}
       </summary>
       <div className="leaf-field-body">
+        <LeafControl field={field} path={path} value={value} onChange={onChange} />
+      </div>
+    </details>
+  );
+}
+
+/** Just the input for one leaf, its kind chosen from the field's ASN.1 type.
+ * Split out of LeafInput so a repeated instance - which shows its value
+ * without the click-to-expand wrapper - keeps the same hex/number/boolean
+ * handling instead of falling back to a plain text box. */
+function LeafControl({
+  field, path, value, onChange,
+}: {
+  field: AsnField;
+  path: string;
+  value: string;
+  onChange: (path: string, value: string) => void;
+}) {
+  const kind = classifyType(field.fieldType);
+  return (
+    <>
         {kind === "boolean" ? (
           <select value={value} onChange={(e) => onChange(path, e.target.value)}>
             <option value="">— otomatik üret —</option>
@@ -364,7 +396,6 @@ function LeafInput({
             onChange={(e) => onChange(path, e.target.value)}
           />
         )}
-      </div>
-    </details>
+    </>
   );
 }
