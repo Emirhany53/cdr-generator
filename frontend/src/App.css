@@ -67,6 +67,14 @@ textarea {
   margin: 8px 0 0;
 }
 
+.hint-warning {
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
 .hint-inline {
   font-size: 0.78rem;
   color: var(--color-text-muted);
@@ -284,6 +292,35 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* --- CHOICE alternative pickers (on a single field, not the structure root) --- */
+.inline-choice-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-info-bg);
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.inline-choice-picker select {
+  width: auto;
+  padding: 1px 4px;
+  font-size: 0.78rem;
+}
+
+.choice-instance {
+  background: var(--color-info-bg);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.choice-instance .repeated-item-label select {
+  width: auto;
+  display: inline-block;
+  padding: 1px 4px;
 }
 
 /* --- repeated fields --- */

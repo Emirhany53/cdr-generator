@@ -7,6 +7,21 @@ interface FieldFormProps {
   onValueChange: (path: string, value: string) => void;
   repeatCounts: Record<string, number>;
   onRepeatCountChange: (path: string, count: number) => void;
+  /** Alternative currently picked for each repeated-CHOICE instance, keyed by
+   * that instance's own path (e.g. "list-Of-Calling-Party-Address[1]"). An
+   * instance with no entry here uses the backend's resolved default
+   * (field.children[0]). Only consulted for a field with `repeated && choice`
+   * - an ordinary repeated SEQUENCE never reads this. */
+  repeatedChoiceAlt: Record<string, string>;
+  onRepeatedChoiceAltChange: (itemPath: string, alternativeName: string) => void;
+  /** Picks a different alternative for a non-repeated CHOICE field at `path`
+   * (e.g. "called-Party-Address"). Triggers a structure refetch in App.tsx
+   * via the existing path-scoped choiceSelections mechanism, so the field's
+   * OWN input(s) re-render for the new alternative. */
+  onScalarChoiceChange: (path: string, alternativeName: string) => void;
+  /** True while a scalar-CHOICE refetch is in flight; disables every
+   * alternative picker so a second pick can't race the first. */
+  choiceUpdating: boolean;
   /** 0 for the very first call (from App.tsx). A depth-0 group/repeated field
    * (e.g. the single CHOICE alternative wrapper like "refillRecordV2") is
    * rendered already expanded, with no click needed — there's nothing to
@@ -21,7 +36,8 @@ interface FieldFormProps {
  * expects on the backend. Fields left blank are simply omitted from the
  * fieldValues map that gets sent, so the backend auto-generates them. */
 export default function FieldForm({
-  fields, pathPrefix, values, onValueChange, repeatCounts, onRepeatCountChange, depth = 0,
+  fields, pathPrefix, values, onValueChange, repeatCounts, onRepeatCountChange,
+  repeatedChoiceAlt, onRepeatedChoiceAltChange, onScalarChoiceChange, choiceUpdating, depth = 0,
 }: FieldFormProps) {
   return (
     <div className="field-form">
@@ -37,6 +53,10 @@ export default function FieldForm({
             onValueChange={onValueChange}
             repeatCounts={repeatCounts}
             onRepeatCountChange={onRepeatCountChange}
+            repeatedChoiceAlt={repeatedChoiceAlt}
+            onRepeatedChoiceAltChange={onRepeatedChoiceAltChange}
+            onScalarChoiceChange={onScalarChoiceChange}
+            choiceUpdating={choiceUpdating}
           />
         );
       })}
@@ -46,13 +66,22 @@ export default function FieldForm({
 
 function FieldEntry({
   field, path, depth, values, onValueChange, repeatCounts, onRepeatCountChange,
+  repeatedChoiceAlt, onRepeatedChoiceAltChange, onScalarChoiceChange, choiceUpdating,
 }: {
   field: AsnField;
   path: string;
   depth: number;
-} & Pick<FieldFormProps, "values" | "onValueChange" | "repeatCounts" | "onRepeatCountChange">) {
+} & Pick<FieldFormProps, "values" | "onValueChange" | "repeatCounts" | "onRepeatCountChange"
+  | "repeatedChoiceAlt" | "onRepeatedChoiceAltChange" | "onScalarChoiceChange" | "choiceUpdating">) {
   if (field.repeated) {
     const count = repeatCounts[path] ?? 1;
+    // A repeated CHOICE (list-Of-Calling-Party-Address: SEQUENCE OF InvolvedParty)
+    // gets the per-instance alternative picker below. An ORDINARY repeated
+    // field (e.g. interOperatorIdentifiers: SEQUENCE OF InterOperatorIdentifiers,
+    // a SEQUENCE - not a CHOICE) must render exactly as it always has, so this
+    // is gated strictly on field.choice, never on field.repeated alone.
+    const isRepeatedChoice = field.choice && !!field.choiceAlternatives?.length;
+    const resolvedDefault = field.children?.[0] ?? null;
     const body = (
       <div className="repeated-field-body">
         <div className="repeated-controls">
@@ -72,8 +101,66 @@ function FieldEntry({
             +
           </button>
         </div>
+        {isRepeatedChoice && (
+          <p className="hint">
+            Bu, tekrarlı bir <strong>CHOICE</strong> alanı ({field.choiceTypeName}) — her örnek
+            kendi alternatifini (ör. {field.choiceAlternatives?.join(" / ")}) bağımsız olarak taşıyabilir.
+          </p>
+        )}
         {Array.from({ length: count }).map((_, idx) => {
           const itemPath = `${path}[${idx}]`;
+          if (isRepeatedChoice && field.choiceAlternatives) {
+            const chosenAlt = repeatedChoiceAlt[itemPath] ?? resolvedDefault?.fieldName ?? field.choiceAlternatives[0];
+            const altField: AsnField = chosenAlt === resolvedDefault?.fieldName && resolvedDefault
+              ? resolvedDefault
+              : {
+                  fieldName: chosenAlt,
+                  fieldType: "",
+                  optional: true,
+                  repeated: false,
+                  tagNumber: null,
+                  tagClass: null,
+                  explicit: false,
+                  choice: false,
+                  choiceTypeName: null,
+                  choiceAlternatives: null,
+                  decoderHoistsImplicitChoice: false,
+                  children: null,
+                };
+            const altValuePath = `${itemPath}.${chosenAlt}`;
+            return (
+              <div className="repeated-item choice-instance" key={itemPath}>
+                <div className="repeated-item-label">
+                  #{idx + 1} — alternatif:{" "}
+                  <select
+                    value={chosenAlt}
+                    onChange={(e) => onRepeatedChoiceAltChange(itemPath, e.target.value)}
+                  >
+                    {field.choiceAlternatives.map((alt) => (
+                      <option key={alt} value={alt}>{alt}</option>
+                    ))}
+                  </select>
+                </div>
+                {altField.children && altField.children.length > 0 ? (
+                  <FieldForm
+                    fields={altField.children}
+                    pathPrefix={itemPath}
+                    depth={depth + 1}
+                    values={values}
+                    onValueChange={onValueChange}
+                    repeatCounts={repeatCounts}
+                    onRepeatCountChange={onRepeatCountChange}
+                    repeatedChoiceAlt={repeatedChoiceAlt}
+                    onRepeatedChoiceAltChange={onRepeatedChoiceAltChange}
+                    onScalarChoiceChange={onScalarChoiceChange}
+                    choiceUpdating={choiceUpdating}
+                  />
+                ) : (
+                  <LeafInput field={altField} path={altValuePath} value={values[altValuePath] ?? ""} onChange={onValueChange} />
+                )}
+              </div>
+            );
+          }
           return (
             <div className="repeated-item" key={itemPath}>
               <div className="repeated-item-label">#{idx + 1}</div>
@@ -86,6 +173,10 @@ function FieldEntry({
                   onValueChange={onValueChange}
                   repeatCounts={repeatCounts}
                   onRepeatCountChange={onRepeatCountChange}
+                  repeatedChoiceAlt={repeatedChoiceAlt}
+                  onRepeatedChoiceAltChange={onRepeatedChoiceAltChange}
+                  onScalarChoiceChange={onScalarChoiceChange}
+                  choiceUpdating={choiceUpdating}
                 />
               ) : (
                 <LeafInput field={field} path={itemPath} value={values[itemPath] ?? ""} onChange={onValueChange} />
@@ -115,6 +206,23 @@ function FieldEntry({
   }
 
   if (field.children && field.children.length > 0) {
+    const isScalarChoice = field.choice && (field.choiceAlternatives?.length ?? 0) > 1;
+    const currentAlt = field.children[0]?.fieldName ?? "";
+    const choicePicker = isScalarChoice && field.choiceAlternatives && (
+      <span className="inline-choice-picker" onClick={(e) => e.stopPropagation()}>
+        <span className="hint-inline">alternatif ({field.choiceTypeName}):</span>{" "}
+        <select
+          value={currentAlt}
+          disabled={choiceUpdating}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onScalarChoiceChange(path, e.target.value)}
+        >
+          {field.choiceAlternatives.map((alt) => (
+            <option key={alt} value={alt}>{alt}</option>
+          ))}
+        </select>
+      </span>
+    );
     const body = (
       <div className="field-group-body">
         <FieldForm
@@ -125,6 +233,10 @@ function FieldEntry({
           onValueChange={onValueChange}
           repeatCounts={repeatCounts}
           onRepeatCountChange={onRepeatCountChange}
+          repeatedChoiceAlt={repeatedChoiceAlt}
+          onRepeatedChoiceAltChange={onRepeatedChoiceAltChange}
+          onScalarChoiceChange={onScalarChoiceChange}
+          choiceUpdating={choiceUpdating}
         />
       </div>
     );
@@ -132,6 +244,7 @@ function FieldEntry({
       <>
         <strong>{field.fieldName}</strong> <TagBadge field={field} />
         {field.optional && <span className="badge badge-optional">opsiyonel</span>}
+        {choicePicker}
       </>
     );
     // Depth 0: this is the only (or one of very few) top-level containers —

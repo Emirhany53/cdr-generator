@@ -113,6 +113,13 @@ export interface GenerateBerParams {
   fieldValues: Record<string, string>;
   choiceSelections: Record<string, string>;
   recordCount: number;
+  /** Reference-driven generation (backend-only feature, already supported by
+   * /generate-ber): required for a repeated CHOICE field's per-instance
+   * indexed fieldValues to take effect at all, and has a real side effect -
+   * any OTHER optional field left blank stops being auto-generated. The UI
+   * derives this from the field tree's own decoderHoistsImplicitChoice flag
+   * (see App.tsx's referenceModeRequiredPaths), never as a user toggle. */
+  referenceMode?: boolean;
 }
 
 export function generateBer(params: GenerateBerParams): Promise<DownloadedFile> {
