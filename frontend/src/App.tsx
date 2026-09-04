@@ -18,16 +18,10 @@ import OutputPanel from "./components/OutputPanel";
 import Banner from "./components/Banner";
 import "./App.css";
 
-/**
- * Every field path where CdrRecordBuilder.shouldSkipImplicitChoice would
- * otherwise silently drop a value the user enters - the EXACT structural
- * condition the backend itself uses (choice && !explicit && optional &&
- * decoderHoistsImplicitChoice), read straight off the field tree. Not a
- * heuristic ("multiple alternatives picked", "this looks repeated") - a
- * literal mirror of the backend rule, so it can never disagree with what the
- * backend actually does. A path here means: a value under it requires
- * referenceMode:true to survive generation at all.
- */
+/** referenceMode gerektiren alan yolları: backend'in shouldSkipImplicitChoice
+ * koşulunun aynısı (choice && !explicit && optional && decoderHoistsImplicitChoice),
+ * doğrudan alan ağacından okunur. Bu yollardan birine değer girilirse
+ * referenceMode açılmazsa değer sessizce üretilmez. */
 function collectReferenceModeRequiredPaths(fields: AsnField[], prefix: string, out: Set<string>) {
   for (const field of fields) {
     const path = prefix ? `${prefix}.${field.fieldName}` : field.fieldName;
@@ -40,14 +34,9 @@ function collectReferenceModeRequiredPaths(fields: AsnField[], prefix: string, o
   }
 }
 
-/**
- * Does `key` address an instance of `path` at or beyond `count` - i.e. one of
- * the instances a shrinking repeat count just removed from the form?
- *
- * <p>Matches the index form both value maps use: "path[i].leaf" and any deeper
- * key under it (a nested collection inside the removed instance), plus the bare
- * "path[i]" that keys a repeated-CHOICE instance's chosen alternative.</p>
- */
+/** `key`, `path`'in `count` ve sonrasındaki bir örneğini mi adresliyor —
+ * yani sayaç küçültülünce formdan kalkan örneklerden birini? "path[i].yaprak",
+ * altındaki daha derin anahtarlar ve çıplak "path[i]" kapsanır. */
 function addressesRemovedInstance(key: string, path: string, count: number): boolean {
   const prefix = `${path}[`;
   if (!key.startsWith(prefix)) return false;
@@ -57,8 +46,8 @@ function addressesRemovedInstance(key: string, path: string, count: number): boo
   return Number.isInteger(index) && index >= count;
 }
 
-/** Drops every entry addressing an instance the new repeat count removed.
- * Returns the SAME object when nothing matched, so React skips the re-render. */
+/** Kalkan örneklere ait girdileri atar. Eşleşme yoksa aynı nesneyi döndürür
+ * ki React gereksiz yere yeniden çizmesin. */
 function pruneRemovedInstances<T>(
   entries: Record<string, T>, path: string, count: number,
 ): Record<string, T> {
@@ -69,8 +58,7 @@ function pruneRemovedInstances<T>(
   return next;
 }
 
-/** True iff some fieldValues key falls under one of the required paths -
- * "<path>.<leaf>" (scalar) or "<path>[<idx>].<leaf>" (repeated). */
+/** fieldValues'ta bu yollardan birinin altında değer var mı? */
 function needsReferenceMode(fieldValues: Record<string, string>, requiredPaths: Set<string>): boolean {
   if (requiredPaths.size === 0) return false;
   for (const key of Object.keys(fieldValues)) {
@@ -92,31 +80,24 @@ export default function App() {
   const [inlineStructureName, setInlineStructureName] = useState("");
 
   const [structure, setStructure] = useState<AsnStructure | null>(null);
-  // Every CHOICE pick made so far - keyed by the root's CHOICE type name for
-  // the root picker, or by a nested SCALAR field's own PATH for a picker on
-  // that field. Both keys are sent to the backend in the same
-  // choiceSelections map: StructureParserService.rewriteChoiceAlternatives
-  // reads a path key for ONE call site and leaves every other key working as
-  // a type-name (global) pick, exactly like ChoicePicker already relied on
-  // for the root. Repeated CHOICE fields do NOT use this - see
-  // repeatedChoiceAlt below.
+  // Yapılan CHOICE seçimleri. Kök için CHOICE tipinin adı, iç içe SKALER bir
+  // alan için o alanın yolu anahtardır; backend ikisini de aynı haritada kabul
+  // eder (yol anahtarı tek çağrı yerini etkiler). Tekrarlı CHOICE bunu
+  // kullanmaz -> repeatedChoiceAlt.
   const [choiceSelections, setChoiceSelections] = useState<Record<string, string>>({});
   const [structureLoading, setStructureLoading] = useState(false);
   const [structureError, setStructureError] = useState<string | null>(null);
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [repeatCounts, setRepeatCounts] = useState<Record<string, number>>({});
-  // Alternative chosen for each repeated-CHOICE instance, keyed by that
-  // instance's own path (e.g. "list-Of-Calling-Party-Address[1]"). Unlike
-  // choiceSelections above, this never triggers a refetch - it only decides
-  // which alternative name the instance's value input is keyed under
-  // (itemPath + "." + altName), which the backend's indexed expansion reads.
+  // Tekrarlı CHOICE'ta her örneğin seçili alternatifi; anahtar örneğin yolu.
+  // Yeniden çekme yapmaz, yalnızca değerin hangi anahtara yazılacağını belirler
+  // (örnekYolu + "." + alternatifAdı).
   const [repeatedChoiceAlt, setRepeatedChoiceAlt] = useState<Record<string, string>>({});
 
-  // One generation per set of inputs, held so the .ber and .dat buttons hand out
-  // the SAME bytes. Re-requesting per button would produce different records -
-  // generation is random and unseeded - and the two files would stop being
-  // identical. Keyed on the request so changing an input starts a fresh one.
+  // Aynı girdi kümesi için tek üretim: .ber ve .dat düğmeleri AYNI baytları
+  // versin diye. Üretim tohumsuz/rastgele olduğundan düğme başına yeniden
+  // istek atmak iki dosyayı farklılaştırırdı. Anahtar isteğin kendisidir.
   const cache = useRef<{ key: string; ber?: DownloadedFile; text?: DownloadedFile }>({ key: "" });
   const [recordCount, setRecordCount] = useState(1);
   const [generatingType, setGeneratingType] = useState<GeneratingType>(null);
@@ -183,16 +164,10 @@ export default function App() {
     }
   }
 
-  /**
-   * Picks a different CHOICE alternative for a SCALAR (non-repeated) CHOICE
-   * field and refetches the structure with it. `key` is either the root's
-   * CHOICE type name (ChoicePicker) or a nested field's own path (FieldForm's
-   * inline picker) - StructureParserService accepts both in the same map.
-   * `resetPrefix` says which of the values the user already typed are now
-   * stale: undefined clears EVERYTHING (a root change can reshape the whole
-   * tree, matching the previous behaviour), a path clears only entries under
-   * that one field's subtree.
-   */
+  /** Skaler bir CHOICE'ın alternatifini değiştirir ve yapıyı yeniden çeker.
+   * `key` kökte tip adı, iç alanda alan yoludur. `resetPrefix` verilmezse tüm
+   * girilen değerler silinir (kök değişimi ağacı baştan kurar), verilirse
+   * yalnızca o alanın altındakiler. */
   async function handleChoiceSelectionChange(key: string, newAlternative: string, resetPrefix?: string) {
     if (!structure || choiceSelections[key] === newAlternative) return;
     setStructureLoading(true);
@@ -245,20 +220,10 @@ export default function App() {
     });
   }
 
-  /**
-   * Sets a repeated field's instance count AND forgets everything the removed
-   * instances held. Without the second half the values stayed in state, kept
-   * being sent, and the backend built instances the form no longer showed:
-   * filling [0] and [1] then pressing "−" still posted
-   * "...[1].tEL-URI", which indexedGroupCount reads as a second instance. The
-   * count is the user's statement of how many there are; state that outlives it
-   * is not data they can see, correct or delete.
-   *
-   * <p>Applies to EVERY repeated field, not only a repeated CHOICE: the same
-   * divergence was reproduced on interOperatorIdentifiers, an ordinary
-   * SEQUENCE OF. Nested collections inside a removed instance go with it, so
-   * re-adding the instance starts empty rather than resurrecting old values.</p>
-   */
+  /** Örnek sayısını ayarlar ve kalkan örneklerin değerlerini de siler. Aksi
+   * halde form 1 örnek gösterirken istek hâlâ [1], [2] anahtarlarını taşıyor,
+   * backend görünmeyen örnekleri üretiyordu. Tüm tekrarlı alanlar için geçerli;
+   * kalkan örneğin içindeki alt listeler de silinir. */
   function handleRepeatCountChange(path: string, count: number) {
     setRepeatCounts((prev) => pruneRemovedInstances({ ...prev, [path]: count }, path, count));
     setFieldValues((prev) => pruneRemovedInstances(prev, path, count));
@@ -267,9 +232,7 @@ export default function App() {
 
   function handleRepeatedChoiceAltChange(itemPath: string, alternativeName: string) {
     setRepeatedChoiceAlt((prev) => ({ ...prev, [itemPath]: alternativeName }));
-    // The value the user typed for the PREVIOUS alternative at this instance
-    // belongs to a key ("itemPath.oldAlt") the new alternative will never
-    // read - drop it so it doesn't linger unsent and confuse a re-check.
+    // Önceki alternatife girilen değer artık okunmayacak bir anahtarda kalır.
     setFieldValues((prev) => {
       const next = { ...prev };
       for (const path of Object.keys(next)) {
@@ -279,7 +242,7 @@ export default function App() {
     });
   }
 
-  /** The request the three buttons all describe; its JSON is the cache key. */
+  /** Üç indirme düğmesinin de tarif ettiği istek; JSON'u cache anahtarıdır. */
   function currentParams() {
     if (!structure) return null;
     const trimmedFieldValues = Object.fromEntries(
@@ -287,8 +250,8 @@ export default function App() {
         .map(([path, value]) => [path, value.trim()])
         .filter(([, value]) => value !== ""),
     );
-    // Both formats accept the same two input modes: a registered structureName,
-    // or inline ASN.1 contents (for a schema not in datastructure.json).
+    // İki format da aynı iki girdi biçimini kabul eder: kayıtlı structureName
+    // ya da inline ASN.1 metni.
     return {
       structureName: sourceMode === "existing" ? structure.structureName : inlineStructureName || structure.structureName,
       contents: sourceMode === "inline" ? inlineContents : undefined,
@@ -299,12 +262,8 @@ export default function App() {
     };
   }
 
-  /**
-   * Downloads one file. The BER bytes are generated once per set of inputs and
-   * reused, so pressing .ber and then .dat gives two files with identical
-   * content - which is the requirement. Generating again per button would not:
-   * generation is random and unseeded.
-   */
+  /** Tek dosya indirir. BER baytları girdi kümesi başına bir kez üretilip
+   * yeniden kullanılır; .ber ve .dat böylece birebir aynı içeriği taşır. */
   async function handleDownload(what: "ber" | "dat" | "txt") {
     const params = currentParams();
     if (!params) return;

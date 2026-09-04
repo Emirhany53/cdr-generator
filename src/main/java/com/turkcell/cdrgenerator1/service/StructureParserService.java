@@ -345,44 +345,37 @@ public class StructureParserService {
      *
      * <h4>Which keys trigger this</h4>
      *
-     * <p>A key shaped {@code <fieldPath>[<index>].<name>} names one instance's
-     * alternative. Every distinct name found for one field's path becomes an
-     * alternative in that field's children, and the swap is applied whenever
-     * that differs from what the resolver already produced - two shapes, not
-     * one:</p>
+     * <p>{@code <alanYolu>[<indeks>].<ad>} bicimindeki her anahtar bir instance'in
+     * alternatifini soyler. Bulunan farkli adlar alanin children'i olur; resolver'in
+     * urettiginden farkliysa degistirilir. Iki durum:</p>
      *
      * <ul>
-     *   <li><b>Several distinct names</b> widen the field to their union, so
-     *       each instance can carry its own alternative (the original P2
-     *       case).</li>
-     *   <li><b>One name that is not the resolver's default</b> swaps the single
-     *       alternative for the one the caller asked for. Without this,
-     *       {@code list-Of-Called-Asserted-Identity[0].tEL-URI} resolved to
-     *       {@code sIP-URI} and filled it from {@code RandomValueSource},
-     *       because no key matched the leaf actually in the tree - the caller's
-     *       value silently vanished. 26 of the 9827 records in the EMM-accepted
-     *       capture carry exactly that shape.</li>
+     *   <li><b>Birden fazla farkli ad</b> - alan hepsinin birlesimine genisletilir,
+     *       her instance kendi alternatifini tasiyabilir.</li>
+     *   <li><b>Varsayilan olmayan tek ad</b> - tek alternatif, cagiranin istedigiyle
+     *       degistirilir. Bu olmadan {@code [0].tEL-URI} {@code sIP-URI}'ye cozuluyor
+     *       ve deger {@code RandomValueSource}'tan doldurulup cagiranin degeri
+     *       sessizce kayboluyordu. EMM'in kabul ettigi yakalamada 9827 kaydin
+     *       26'si tam olarak bu sekilde.</li>
      * </ul>
      *
-     * <p>How MANY instances get built is deliberately NOT decided here: that is
-     * {@code CdrRecordBuilder.buildRepeatedGroup}'s job, and it counts the
-     * caller's contiguous indices whether or not the alternatives differ. The
-     * earlier rule tied the two together - expansion only on 2+ distinct names,
-     * count only when expansion ran - so a caller indexing the SAME alternative
-     * twice silently got one instance. Separating them is what makes
-     * {@code [0].sIP-URI + [1].sIP-URI} produce two elements.</p>
+     * <p>KAC instance uretilecegi burada kararlastirilmaz; o
+     * {@code CdrRecordBuilder.buildRepeatedGroup}'un isi ve alternatifler ayni olsa
+     * da cagiranin ardisik indekslerini sayar. Eski kural ikisini birbirine
+     * baglamisti (yalnizca 2+ farkli adda genisleme, yalnizca genisleme olunca
+     * sayim); bu yuzden ayni alternatifi iki kez indeksleyen cagiran tek instance
+     * aliyordu.</p>
      *
-     * <p>The reference captures never show one collection carrying the same
-     * alternative twice (9827 records: 7958 {@code (sIP,tEL)}, 1869
-     * {@code (sIP)}, never {@code (sIP,sIP)}), so nothing here makes that a
-     * DEFAULT: {@link CdrRecordBuilder#CHOICE_ELEMENT_COUNT} still caps every
-     * collection nobody indexed. It is reachable only by a caller who names the
-     * indices explicitly, and X.690 8.10 makes it legal - a SEQUENCE OF's
-     * elements are delimited by position, not by tag. The "Duplicate Tag"
-     * rejection behind {@code adbe2cc} was reported at
-     * {@code enhancedPhoneFeatures1.[0]}, inside a SET body, where X.680 does
-     * require distinct member tags; round 28 later confirmed that repeats
-     * inside SEQUENCE bodies are accepted ({@code SDPCCR} PASS).</p>
+     * <p>Referans yakalamalarda bir koleksiyon ayni alternatifi hic iki kez
+     * tasimiyor (7958 {@code (sIP,tEL)}, 1869 {@code (sIP)}), bu yuzden bu sekil
+     * VARSAYILAN yapilmadi: indekslenmemis her koleksiyonu
+     * {@link CdrRecordBuilder#CHOICE_ELEMENT_COUNT} hala tek elemanla sinirliyor.
+     * Yalnizca indeksleri acikca yazan cagiran ulasabilir ve X.690 8.10'a gore
+     * gecerlidir - SEQUENCE OF elemanlari tag ile degil konumla ayrilir.
+     * {@code adbe2cc}'nin dayandigi "Duplicate Tag" reddi
+     * {@code enhancedPhoneFeatures1.[0]} yolundaydi, yani X.680'in farkli uye
+     * tag'i zorunlu kildigi bir SET govdesi; 28. tur SEQUENCE govdelerindeki
+     * tekrarlarin kabul edildigini olcmustu ({@code SDPCCR} PASS).</p>
      *
      * <h4>Why this can only run on a freshly-resolved tree</h4>
      *
@@ -478,17 +471,8 @@ public class StructureParserService {
                                     + "generation time", path, altName, field.getFieldType());
                         }
                     }
-                    // Applied whenever the caller's names differ from what the
-                    // resolver already produced - which covers TWO shapes, not
-                    // one. Several distinct names widen the field to their union
-                    // (the original P2 case). A SINGLE name that is not the
-                    // resolver's default swaps the one alternative for the one
-                    // the caller asked for: without this, indexing
-                    // "list-Of-Called-Asserted-Identity[0].tEL-URI" resolved to
-                    // sIP-URI and filled it from RandomValueSource, because no
-                    // key matched the leaf actually in the tree. That shape is
-                    // not hypothetical - it is 26 of the 9827 records in the
-                    // EMM-accepted capture.
+                    // Cagiranin adlari resolver'in urettiginden farkliysa uygulanir:
+                    // ya birlesime genisletir ya da tek alternatifi degistirir.
                     List<String> currentNames = Objects.isNull(field.getChildren())
                             ? List.of()
                             : field.getChildren().stream().map(AsnField::getFieldName).toList();

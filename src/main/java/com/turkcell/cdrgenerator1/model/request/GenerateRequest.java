@@ -26,16 +26,11 @@ public class GenerateRequest {
     private Integer recordCount;
 
     /**
-     * Reference-driven generation - the same flag and the same meaning as
-     * {@code GenerateBerRequest#referenceMode}, which this endpoint was missing.
-     * Both formats resolve the structure through
-     * {@code StructureParserService.getStructureByName(..., fieldValues, referenceMode)}
-     * and build records through
-     * {@code CdrRecordBuilder.buildRecordFromFields(..., referenceMode)}; without
-     * the field here the text endpoint silently passed {@code false} to both, so
-     * a repeated CHOICE described as {@code path[0].sIP-URI} / {@code path[1].tEL-URI}
-     * came out of {@code .ber} with two instances and out of {@code .txt} with
-     * none. Defaults to false, which is what every existing caller already gets.
+     * Referans modu; {@code GenerateBerRequest#referenceMode} ile ayni anlam.
+     * Bu alan eksikken metin ucu her iki cagriya da {@code false} geciyordu:
+     * {@code path[0].sIP-URI} / {@code path[1].tEL-URI} seklinde tarif edilen
+     * tekrarli bir CHOICE {@code .ber}'de iki instance, {@code .txt}'de hic
+     * cikmiyordu. Varsayilan false - mevcut cagiranlarin davranisi degismez.
      */
     private boolean referenceMode;
 }

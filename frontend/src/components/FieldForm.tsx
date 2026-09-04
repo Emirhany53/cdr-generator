@@ -7,34 +7,24 @@ interface FieldFormProps {
   onValueChange: (path: string, value: string) => void;
   repeatCounts: Record<string, number>;
   onRepeatCountChange: (path: string, count: number) => void;
-  /** Alternative currently picked for each repeated-CHOICE instance, keyed by
-   * that instance's own path (e.g. "list-Of-Calling-Party-Address[1]"). An
-   * instance with no entry here uses the backend's resolved default
-   * (field.children[0]). Only consulted for a field with `repeated && choice`
-   * - an ordinary repeated SEQUENCE never reads this. */
+  /** Tekrarlı CHOICE'ta her örneğin seçili alternatifi; anahtar örneğin yolu
+   * (ör. "list-Of-Calling-Party-Address[1]"). Kaydı olmayan örnek backend'in
+   * varsayılanını kullanır. Yalnızca `repeated && choice` alanlarda okunur. */
   repeatedChoiceAlt: Record<string, string>;
   onRepeatedChoiceAltChange: (itemPath: string, alternativeName: string) => void;
-  /** Picks a different alternative for a non-repeated CHOICE field at `path`
-   * (e.g. "called-Party-Address"). Triggers a structure refetch in App.tsx
-   * via the existing path-scoped choiceSelections mechanism, so the field's
-   * OWN input(s) re-render for the new alternative. */
+  /** Tekrarsız (skaler) bir CHOICE alanının alternatifini değiştirir; App.tsx
+   * yapıyı yeniden çeker ve alanın girdileri yeni alternatife göre kurulur. */
   onScalarChoiceChange: (path: string, alternativeName: string) => void;
-  /** True while a scalar-CHOICE refetch is in flight; disables every
-   * alternative picker so a second pick can't race the first. */
+  /** Skaler CHOICE için yeniden çekme sürerken true; seçicileri kilitler. */
   choiceUpdating: boolean;
-  /** 0 for the very first call (from App.tsx). A depth-0 group/repeated field
-   * (e.g. the single CHOICE alternative wrapper like "refillRecordV2") is
-   * rendered already expanded, with no click needed — there's nothing to
-   * hide it FROM at that level. Only fields nested one level deeper or more
-   * start collapsed. Leaves are always click-to-expand regardless of depth. */
+  /** İlk çağrıda 0. Derinlik 0'daki grup/tekrarlı alan (kökteki tek CHOICE
+   * alternatifi gibi) açık gelir; daha derindekiler kapalı başlar. */
   depth?: number;
 }
 
-/** Recursively renders an AsnField tree as a value-entry form. Every leaf's
- * input is keyed by its dotted/indexed path (e.g. "adjustmentRecordV2.hostName",
- * "items[0].volume") — the exact convention CdrRecordBuilder.lookupUserValue
- * expects on the backend. Fields left blank are simply omitted from the
- * fieldValues map that gets sent, so the backend auto-generates them. */
+/** AsnField ağacını değer giriş formu olarak çizer. Her yaprağın anahtarı
+ * noktalı/indeksli yoludur (ör. "items[0].volume") — backend'in beklediği
+ * biçim. Boş bırakılan alanlar istekte yer almaz, backend onları üretir. */
 export default function FieldForm({
   fields, pathPrefix, values, onValueChange, repeatCounts, onRepeatCountChange,
   repeatedChoiceAlt, onRepeatedChoiceAltChange, onScalarChoiceChange, choiceUpdating, depth = 0,
@@ -75,16 +65,13 @@ function FieldEntry({
   | "repeatedChoiceAlt" | "onRepeatedChoiceAltChange" | "onScalarChoiceChange" | "choiceUpdating">) {
   if (field.repeated) {
     const count = repeatCounts[path] ?? 1;
-    // A repeated CHOICE (list-Of-Calling-Party-Address: SEQUENCE OF InvolvedParty)
-    // gets the per-instance alternative picker below. An ORDINARY repeated
-    // field (e.g. interOperatorIdentifiers: SEQUENCE OF InterOperatorIdentifiers,
-    // a SEQUENCE - not a CHOICE) must render exactly as it always has, so this
-    // is gated strictly on field.choice, never on field.repeated alone.
+    // Örnek başına alternatif seçici yalnızca tekrarlı CHOICE'a ait. Sıradan
+    // tekrarlı alanlar (SEQUENCE OF SEQUENCE) eski görünümünü korusun diye
+    // koşul field.repeated'a değil, field.choice'a bağlı.
     const isRepeatedChoice = field.choice && !!field.choiceAlternatives?.length;
     const resolvedDefault = field.children?.[0] ?? null;
-    // Left empty, is this field dropped from the record entirely? That is
-    // CdrRecordBuilder.shouldSkipImplicitChoice's own condition, read off the
-    // same flags rather than guessed at.
+    // Boş bırakılırsa alan kayda hiç yazılmaz mı? Backend'in
+    // shouldSkipImplicitChoice koşulunun aynısı, aynı bayraklardan okunuyor.
     const omittedWhenEmpty =
       field.choice && !field.explicit && field.optional && field.decoderHoistsImplicitChoice;
     const body = (
@@ -143,9 +130,7 @@ function FieldEntry({
             const altValuePath = `${itemPath}.${chosenAlt}`;
             return (
               <div className="repeated-item choice-instance" key={itemPath}>
-                {/* Index, not ordinal: the request key this instance writes is
-                    "<path>[idx].<alternative>", so showing #1 for [0] made the
-                    form and the payload disagree on the same instance. */}
+                {/* Sıra no değil indeks: istekteki anahtar "<yol>[i].<alternatif>". */}
                 <div className="repeated-item-label">Instance [{idx}]</div>
                 <label className="field-label" htmlFor={`${itemPath}-alt`}>
                   Alternatif
@@ -192,9 +177,7 @@ function FieldEntry({
           const hasBody = !!field.children && field.children.length > 0;
           return (
             <div className="repeated-item" key={itemPath}>
-              {/* Index, not ordinal - a repeated LEAF writes its element as
-                  "<path>[idx]", so "#1" named the same element the payload
-                  called [0]. Same labelling as a repeated CHOICE instance. */}
+              {/* Sıra no değil indeks: tekrarlı yaprak "<yol>[i]" anahtarını yazar. */}
               <div className="repeated-item-label">Instance [{idx}]</div>
               {hasBody ? (
                 <FieldForm
@@ -289,9 +272,8 @@ function FieldEntry({
         {choicePicker}
       </>
     );
-    // Depth 0: this is the only (or one of very few) top-level containers —
-    // e.g. the selected CHOICE alternative. Nothing to hide it from, so skip
-    // the extra click and show its fields right away.
+    // Derinlik 0: en üst kapsayıcı (ör. seçili CHOICE alternatifi); saklanacak
+    // bir şey yok, alanları doğrudan açık gösterilir.
     return depth === 0 ? (
       <div className="field-group field-group-top">
         <div className="field-group-top-header">{summaryContent}</div>
@@ -352,10 +334,8 @@ function LeafInput({
   );
 }
 
-/** Just the input for one leaf, its kind chosen from the field's ASN.1 type.
- * Split out of LeafInput so a repeated instance - which shows its value
- * without the click-to-expand wrapper - keeps the same hex/number/boolean
- * handling instead of falling back to a plain text box. */
+/** Tek bir yaprağın girdisi; türü ASN.1 tipinden seçilir. LeafInput'tan
+ * ayrıldı ki tekrarlı örnekler de aynı hex/sayı/boolean girdisini kullansın. */
 function LeafControl({
   field, path, value, onChange,
 }: {
@@ -367,35 +347,35 @@ function LeafControl({
   const kind = classifyType(field.fieldType);
   return (
     <>
-        {kind === "boolean" ? (
-          <select value={value} onChange={(e) => onChange(path, e.target.value)}>
-            <option value="">— otomatik üret —</option>
-            <option value="1">true</option>
-            <option value="0">false</option>
-          </select>
-        ) : kind === "integer" || kind === "enumerated" ? (
-          <input
-            type="number"
-            placeholder={kind === "enumerated" ? "sayısal enum değeri (ör. 0)" : "boş = otomatik üret"}
-            value={value}
-            onChange={(e) => onChange(path, e.target.value)}
-          />
-        ) : kind === "octet" ? (
-          <input
-            type="text"
-            className="mono"
-            placeholder="hex (ör. 1A2B3C4D), boş = otomatik üret"
-            value={value}
-            onChange={(e) => onChange(path, e.target.value)}
-          />
-        ) : (
-          <input
-            type="text"
-            placeholder="boş = otomatik üret"
-            value={value}
-            onChange={(e) => onChange(path, e.target.value)}
-          />
-        )}
+      {kind === "boolean" ? (
+        <select value={value} onChange={(e) => onChange(path, e.target.value)}>
+          <option value="">— otomatik üret —</option>
+          <option value="1">true</option>
+          <option value="0">false</option>
+        </select>
+      ) : kind === "integer" || kind === "enumerated" ? (
+        <input
+          type="number"
+          placeholder={kind === "enumerated" ? "sayısal enum değeri (ör. 0)" : "boş = otomatik üret"}
+          value={value}
+          onChange={(e) => onChange(path, e.target.value)}
+        />
+      ) : kind === "octet" ? (
+        <input
+          type="text"
+          className="mono"
+          placeholder="hex (ör. 1A2B3C4D), boş = otomatik üret"
+          value={value}
+          onChange={(e) => onChange(path, e.target.value)}
+        />
+      ) : (
+        <input
+          type="text"
+          placeholder="boş = otomatik üret"
+          value={value}
+          onChange={(e) => onChange(path, e.target.value)}
+        />
+      )}
     </>
   );
 }

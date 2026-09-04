@@ -243,25 +243,22 @@ public class CdrRecordBuilder {
 
     private List<Map<String, Object>> buildRepeatedGroup(AsnField field, ValueSourceContext context,
                                                          String fieldPath) {
-        // A CHOICE collection keeps its capped count untouched by DEFAULT - see
-        // CHOICE_ELEMENT_COUNT. The exception is reference mode: there the
-        // caller's own indexed keys are the authority on how many instances
-        // exist, exactly as they already are for a non-CHOICE collection.
+        // CHOICE koleksiyonu VARSAYILAN olarak CHOICE_ELEMENT_COUNT ile sinirli
+        // kalir. Istisna referans modu: orada instance sayisinin otoritesi,
+        // CHOICE olmayan koleksiyonlarda oldugu gibi, cagiranin indeksli
+        // anahtarlaridir.
         //
-        // This used to additionally require that applyIndexedChoiceExpansion
-        // had widened field.getChildren() past one alternative, which made the
-        // count depend on whether the caller's alternatives happened to DIFFER:
-        // "[0].sIP-URI + [1].sIP-URI" described two instances but produced one,
-        // silently dropping the second value, and "[0].tEL-URI + [1].tEL-URI"
-        // produced one instance of the WRONG alternative filled at random. How
-        // many instances there are and which alternative each carries are two
-        // separate questions; only the second one belongs to expansion.
+        // Eskiden ayrica applyIndexedChoiceExpansion'in children'i genisletmis
+        // olmasi araniyordu; bu da sayimi "alternatifler farkli mi" sorusuna
+        // baglıyordu: "[0].sIP + [1].sIP" iki instance tarif edip bir tane
+        // uretiyor, "[0].tEL + [1].tEL" ise YANLIS alternatifi rastgele degerle
+        // yaziyordu. Kac instance oldugu ile her birinin hangi alternatifi
+        // tasidigi ayri sorular; genisleme yalnizca ikincisine bakar.
         //
-        // referenceMode=false is untouched and short-circuits first, so every
-        // EMM-passed module keeps CHOICE_ELEMENT_COUNT's single element and the
-        // same-alternative repeat is reachable only by a caller who indexes it
-        // deliberately. X.690 8.10 makes that legal: a SEQUENCE OF's elements
-        // are delimited by position, not by tag.
+        // referenceMode=false yolu once kisa devre yapar ve degismedi: EMM'den
+        // gecmis her modul tek elemani korur, ayni alternatifin tekrari yalnizca
+        // indeksleri bilerek yazan cagirana acik. X.690 8.10 buna izin verir -
+        // SEQUENCE OF elemanlari tag ile degil konumla ayrilir.
         int described = (!field.isChoice() || context.isReferenceMode())
                 ? indexedGroupCount(context, fieldPath) : 0;
         int repeatCount = described > 0 ? described : repeatCountFor(field);

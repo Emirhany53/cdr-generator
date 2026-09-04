@@ -98,9 +98,8 @@ export interface GenerateTextParams {
   fieldValues: Record<string, string>;
   choiceSelections: Record<string, string>;
   recordCount: number;
-  /** Same flag, same meaning and same derivation as on GenerateBerParams -
-   * /generate accepts it too, so .txt and .ber describe the same record
-   * instead of the text output silently dropping a repeated CHOICE. */
+  /** GenerateBerParams'takiyle aynı; /generate de kabul ediyor, böylece .txt
+   * ile .ber aynı kaydı tarif eder. */
   referenceMode?: boolean;
 }
 
@@ -114,12 +113,9 @@ export interface GenerateBerParams {
   fieldValues: Record<string, string>;
   choiceSelections: Record<string, string>;
   recordCount: number;
-  /** Reference-driven generation (backend-only feature, already supported by
-   * /generate-ber): required for a repeated CHOICE field's per-instance
-   * indexed fieldValues to take effect at all, and has a real side effect -
-   * any OTHER optional field left blank stops being auto-generated. The UI
-   * derives this from the field tree's own decoderHoistsImplicitChoice flag
-   * (see App.tsx's referenceModeRequiredPaths), never as a user toggle. */
+  /** Referans modu. Tekrarlı CHOICE'un indeksli değerlerinin işlenmesi için
+   * şart; yan etkisi: doldurulmayan diğer opsiyonel alanlar da üretilmez.
+   * Kullanıcı seçmez, App.tsx alan ağacından türetir. */
   referenceMode?: boolean;
 }
 
