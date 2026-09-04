@@ -2195,3 +2195,31 @@ yazılacak; o zamana kadar satır "kanıtsız" sayılmalıdır.
   `0 error / 0 warning`
 - A/B/C/D senaryolarının dördü de canlı API'de doğru instance sayısı ve doğru
   tag'lerle üretildi
+
+#### `.txt` paritesi (04.09.2026, teslim turu)
+
+`/generate` (ASCII) uç noktası `referenceMode` alanını hiç taşımıyordu; hem yapı
+çözümlemesine hem kayıt üretimine `false` gidiyordu. Sonuç: aynı form, aynı
+değerler, iki farklı çıktı — `.ber` iki instance üretirken `.txt`'de alan hiç
+yoktu. `GenerateRequest`'e alan eklendi ve controller, BER yolunun zaten
+kullandığı **aynı** iki overload'a bağlandı (`getStructureByName(..., fieldValues,
+referenceMode)`, `buildRecordFromFields(..., referenceMode)`); üretim mantığı
+ikinci bir yere kopyalanmadı.
+
+| senaryo | `.ber` | `.txt` |
+|---|---|---|
+| `[0].sIP + [1].tEL` | 2 instance, tag 0/1 | `…\|sip:AAA@example.org\|tel:BBB` |
+| `[0].sIP + [1].sIP` | 2 instance, tag 0/0 | `…\|sip:AAA@example.org\|sip:BBB@example.org` |
+| `[0].tEL + [1].tEL` | 2 instance, tag 1/1 | `…\|tel:AAA\|tel:BBB` |
+| `[0]+[1]+[2]` | 3 instance | üç değer de |
+| Yasin referans kaydı | **168/168, 0 missing, 0 extra** | **168 kolon**, dört ayırt edici CHOICE değeri de yerinde |
+| `referenceMode=false` | alan üretilmiyor (eski davranış) | alan üretilmiyor (eski davranış) |
+
+Diğer regresyonlar (ikisi de her iki formatta): skaler CHOICE `sIP-URI` → `80`
+tag'i, `tEL-URI` → `81` tag'i; CHOICE olmayan `SEQUENCE OF`
+(`interOperatorIdentifiers[0]/[1]`) iki değeri de taşıyor. Maven: **572 test,
+0 hata**.
+
+⚠️ Bu bölümdeki hiçbir sonuç EMM'e gönderilmedi. "Aynı CHOICE alternatifinin iki
+kez geçmesi" için yukarıdaki uyarı aynen geçerli: **henüz EMM ile ölçülmemiş,
+ancak ASN.1/BER ve backend seviyesinde doğrulanmış.**
