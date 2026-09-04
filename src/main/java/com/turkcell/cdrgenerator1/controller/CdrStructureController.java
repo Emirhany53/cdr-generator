@@ -201,7 +201,8 @@ public class CdrStructureController {
         List<Map<String, Object>> records = new ArrayList<>(effectiveRecordCount);
         for (int index = 0; index < effectiveRecordCount; index++) {
             records.add(cdrRecordBuilder.buildRecordFromFields(
-                    structure.getFields(), index, request.getFieldValues(), aiRecords));
+                    structure.getFields(), index, request.getFieldValues(), aiRecords,
+                    request.isReferenceMode()));
         }
 
         log.info("Generated ASCII CDR for '{}': {} record(s)",
@@ -239,7 +240,7 @@ public class CdrStructureController {
         if (inlineMode) {
             AsnStructure structure = structureParserService.parseFromContents(
                     request.getStructureName(), request.getContents(), request.getChoiceSelections(),
-                    request.getRootType());
+                    request.getRootType(), request.getFieldValues(), request.isReferenceMode());
             if (hasNoFields(structure)) {
                 throw new IllegalArgumentException(
                         "Inline content could not be parsed into any ASN.1 structure");
@@ -250,7 +251,8 @@ public class CdrStructureController {
             throw new IllegalArgumentException("structureName is required when no content is provided");
         }
         AsnStructure structure = structureParserService.getStructureByName(
-                request.getStructureName(), request.getChoiceSelections(), request.getRootType());
+                request.getStructureName(), request.getChoiceSelections(), request.getRootType(),
+                request.getFieldValues(), request.isReferenceMode());
         if (Objects.isNull(structure)) {
             throw new StructureNotFoundException(request.getStructureName());
         }

@@ -28,7 +28,9 @@ import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -160,7 +162,8 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1), leaf("duration", "INTEGER", 4)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
+        when(parserService.getStructureByName(eq("SMSCBerCdr"), any(), any(), any(), anyBoolean()))
+                .thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 3 }
@@ -188,7 +191,8 @@ class CdrStructureControllerTest {
                         AsnField.builder().fieldName("msisdn").fieldType("IA5String").build(),
                         AsnField.builder().fieldName("duration").fieldType("INTEGER").build()))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
+        when(parserService.getStructureByName(eq("SMSCBerCdr"), any(), any(), any(), anyBoolean()))
+                .thenReturn(structure);
 
         String body = """
                 {
@@ -227,7 +231,8 @@ class CdrStructureControllerTest {
                 .structureName("SMSCBerCdr")
                 .fields(List.of(leaf("msisdn", "OCTET STRING", 1)))
                 .build();
-        when(parserService.getStructureByName("SMSCBerCdr", null, null)).thenReturn(structure);
+        when(parserService.getStructureByName(eq("SMSCBerCdr"), any(), any(), any(), anyBoolean()))
+                .thenReturn(structure);
 
         String body = """
                 { "structureName": "SMSCBerCdr", "recordCount": 5000 }
@@ -245,7 +250,7 @@ class CdrStructureControllerTest {
                 .structureName("DemoVoice")
                 .fields(List.of(leaf("msisdn", "IA5String", 0)))
                 .build();
-        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any(), any(), anyBoolean()))
                 .thenReturn(structure);
 
         String body = """
@@ -262,7 +267,7 @@ class CdrStructureControllerTest {
 
     @Test
     void generateAsciiWithUnparsableInlineContentsReturnsBadRequest() throws Exception {
-        when(parserService.parseFromContents(anyString(), anyString(), any(), any()))
+        when(parserService.parseFromContents(anyString(), anyString(), any(), any(), any(), anyBoolean()))
                 .thenReturn(null);
 
         String body = """

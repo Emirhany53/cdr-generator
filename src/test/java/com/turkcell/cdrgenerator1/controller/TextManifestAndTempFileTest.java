@@ -32,6 +32,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -102,7 +105,7 @@ class TextManifestAndTempFileTest {
                 .fields(List.of(leaf("msisdn", "IA5String"), leaf("duration", "INTEGER"),
                         leaf("cause", "INTEGER")))
                 .build();
-        when(parserService.getStructureByName("Demo", null, null)).thenReturn(structure);
+        when(parserService.getStructureByName(eq("Demo"), any(), any(), any(), anyBoolean())).thenReturn(structure);
     }
 
     private String request(int recordCount) {
@@ -251,7 +254,7 @@ class TextManifestAndTempFileTest {
     void aRefusedRequestLeavesNothingBehindEither() throws Exception {
         AsnStructure noFields = AsnStructure.builder()
                 .structureName("Demo").fields(List.of()).build();
-        when(parserService.getStructureByName("Demo", null, null)).thenReturn(noFields);
+        when(parserService.getStructureByName(eq("Demo"), any(), any(), any(), anyBoolean())).thenReturn(noFields);
 
         long before = temporaryFileCount();
         mockMvc.perform(post("/api/cdr/generate")
