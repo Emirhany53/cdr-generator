@@ -6,8 +6,6 @@ const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
   "http://localhost:8080/cdr-generator/api/cdr";
 
-console.log("API URL:", API_BASE_URL);
-
 
 export class ApiError extends Error {
   status: number;
@@ -29,7 +27,6 @@ async function readErrorMessage(response: Response): Promise<string> {
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-  console.log("İstek atılıyor:", `${API_BASE_URL}${path}`);
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     ...init,
@@ -101,6 +98,10 @@ export interface GenerateTextParams {
   fieldValues: Record<string, string>;
   choiceSelections: Record<string, string>;
   recordCount: number;
+  /** Same flag, same meaning and same derivation as on GenerateBerParams -
+   * /generate accepts it too, so .txt and .ber describe the same record
+   * instead of the text output silently dropping a repeated CHOICE. */
+  referenceMode?: boolean;
 }
 
 export function generateText(params: GenerateTextParams): Promise<DownloadedFile> {

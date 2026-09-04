@@ -82,6 +82,11 @@ function FieldEntry({
     // is gated strictly on field.choice, never on field.repeated alone.
     const isRepeatedChoice = field.choice && !!field.choiceAlternatives?.length;
     const resolvedDefault = field.children?.[0] ?? null;
+    // Left empty, is this field dropped from the record entirely? That is
+    // CdrRecordBuilder.shouldSkipImplicitChoice's own condition, read off the
+    // same flags rather than guessed at.
+    const omittedWhenEmpty =
+      field.choice && !field.explicit && field.optional && field.decoderHoistsImplicitChoice;
     const body = (
       <div className="repeated-field-body">
         <div className="repeated-controls">
@@ -107,6 +112,14 @@ function FieldEntry({
             kendi alternatifini (ör. {field.choiceAlternatives?.join(" / ")}) bağımsız olarak taşıyabilir.
           </p>
         )}
+        {count === 0 && (
+          <p className="hint">
+            Örnek eklenmedi
+            {omittedWhenEmpty
+              ? " — bu alan kayda hiç yazılmayacak."
+              : " — bu alan için değer girilmeyecek."}
+          </p>
+        )}
         {Array.from({ length: count }).map((_, idx) => {
           const itemPath = `${path}[${idx}]`;
           if (isRepeatedChoice && field.choiceAlternatives) {
@@ -130,17 +143,22 @@ function FieldEntry({
             const altValuePath = `${itemPath}.${chosenAlt}`;
             return (
               <div className="repeated-item choice-instance" key={itemPath}>
-                <div className="repeated-item-label">
-                  #{idx + 1} — alternatif:{" "}
-                  <select
-                    value={chosenAlt}
-                    onChange={(e) => onRepeatedChoiceAltChange(itemPath, e.target.value)}
-                  >
-                    {field.choiceAlternatives.map((alt) => (
-                      <option key={alt} value={alt}>{alt}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Index, not ordinal: the request key this instance writes is
+                    "<path>[idx].<alternative>", so showing #1 for [0] made the
+                    form and the payload disagree on the same instance. */}
+                <div className="repeated-item-label">Instance [{idx}]</div>
+                <label className="field-label" htmlFor={`${itemPath}-alt`}>
+                  Alternatif
+                </label>
+                <select
+                  id={`${itemPath}-alt`}
+                  value={chosenAlt}
+                  onChange={(e) => onRepeatedChoiceAltChange(itemPath, e.target.value)}
+                >
+                  {field.choiceAlternatives.map((alt) => (
+                    <option key={alt} value={alt}>{alt}</option>
+                  ))}
+                </select>
                 {altField.children && altField.children.length > 0 ? (
                   <FieldForm
                     fields={altField.children}
@@ -156,7 +174,18 @@ function FieldEntry({
                     choiceUpdating={choiceUpdating}
                   />
                 ) : (
-                  <LeafInput field={altField} path={altValuePath} value={values[altValuePath] ?? ""} onChange={onValueChange} />
+                  <>
+                    <label className="field-label" htmlFor={altValuePath}>
+                      Değer <span className="field-type">{altField.fieldType}</span>
+                    </label>
+                    <input
+                      id={altValuePath}
+                      type="text"
+                      placeholder="boş = otomatik üret"
+                      value={values[altValuePath] ?? ""}
+                      onChange={(e) => onValueChange(altValuePath, e.target.value)}
+                    />
+                  </>
                 )}
               </div>
             );
