@@ -178,13 +178,14 @@ public class CdrRecordBuilder {
             // CHOICE'un SECILI ALTERNATIFI oldugunda onu atlamak, ust katmani
             // (ornek: uELocalIPAddress [0] EXPLICIT IPAddress) bos birakip bozar.
             // Alternatif atlanmaz; yalnizca SEQUENCE/SET uyeleri atlanir.
-            if (!parentIsChoice && shouldSkipImplicitChoice(field)) {
-                continue;
-            }
             String recordKey = keys.get(index);
             // The PATH stays name-based: it addresses user-supplied and
             // AI-supplied values, which are keyed by the schema's own names.
             String fieldPath = buildPath(pathPrefix, field.getFieldName());
+
+            if (!parentIsChoice && shouldSkipImplicitChoice(field, context, fieldPath)) {
+                continue;
+            }
 
             // Reference-driven generation: an OPTIONAL field the caller never
             // described is left out entirely, the same way an unfilled OPTIONAL
@@ -524,13 +525,55 @@ public class CdrRecordBuilder {
      * olan {@code callEventDetails} demekti - orada hic gozlenmemis bir hata
      * icin bos bir TAP dosyasi.</p>
      */
-    private boolean shouldSkipImplicitChoice(AsnField field) {
-        return cdrConfigProperties != null
+    private boolean shouldSkipImplicitChoice(AsnField field, ValueSourceContext context, String fieldPath) {
+        boolean structurallyAffected = cdrConfigProperties != null
                 && cdrConfigProperties.isSkipImplicitChoiceFields()
                 && field.isDecoderHoistsImplicitChoice()
                 && field.isChoice()
                 && !field.isExplicit()
                 && field.isOptional();
+        if (!structurallyAffected) {
+            return false;
+        }
+        return !bypassedByCallerInReferenceMode(context, field, fieldPath);
+    }
+
+    /**
+     * P1: a caller can reclaim ONE call site of the workaround above, but only
+     * in reference mode and only by naming that exact site.
+     *
+     * <p>The global rule ({@link #shouldSkipImplicitChoice}'s four structural
+     * conditions) exists because the resolver cannot tell, from shape alone,
+     * which {CHOICE, IMPLICIT, OPTIONAL} field is the one EMM's decoder
+     * mis-reads and which is an ordinary field that happens to have the same
+     * shape - {@code skip-implicit-choice-fields} is deliberately blunt because
+     * the alternative, at the time it was added, was worse: every module
+     * carrying that shape lost the field, workaround or not (see
+     * {@link ImplicitChoiceSkipScopeTest} for the family gate that already
+     * narrows this once). Widening the rule globally would be exactly that
+     * same blunt trade in the other direction - it stays {@code true} in
+     * {@code application.yml} and this method never reads it as anything
+     * else.</p>
+     *
+     * <p>Reference mode changes what evidence is available: a caller who names
+     * {@code list-Of-Calling-Party-Address[0].sIP-URI} has already done the
+     * thing skip-implicit-choice-fields' blunt rule cannot do for itself -
+     * pointed at one exact field and said "this one is really there, for this
+     * one record". That is narrower than the global rule can be and doesn't
+     * need the global rule to change: {@link #describedByCaller} already
+     * answers "did the caller name this field or anything under it", built for
+     * KN-4's same reference-mode reasoning, so reusing it here rather than
+     * writing a second description rule keeps both aligned rather than letting
+     * them drift.</p>
+     *
+     * <p>Gated on {@code referenceMode} first and short-circuited: ordinary
+     * generation ({@code referenceMode=false}) never reaches
+     * {@link #describedByCaller}, so a caller who happens to supply a value at
+     * this path outside reference mode gets exactly the old behaviour - the
+     * field is still dropped, evidence or not.</p>
+     */
+    private boolean bypassedByCallerInReferenceMode(ValueSourceContext context, AsnField field, String fieldPath) {
+        return context.isReferenceMode() && describedByCaller(context, field, fieldPath);
     }
 
     /**
