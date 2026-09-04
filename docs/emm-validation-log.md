@@ -2223,3 +2223,30 @@ tag'i, `tEL-URI` → `81` tag'i; CHOICE olmayan `SEQUENCE OF`
 ⚠️ Bu bölümdeki hiçbir sonuç EMM'e gönderilmedi. "Aynı CHOICE alternatifinin iki
 kez geçmesi" için yukarıdaki uyarı aynen geçerli: **henüz EMM ile ölçülmemiş,
 ancak ASN.1/BER ve backend seviyesinde doğrulanmış.**
+
+#### Tekrarlı yaprak listeler — 31. turun 1. sınırı zaten kapalıymış (04.09.2026)
+
+31. tur "tekrarlı yaprak listeler tek değere düşüyor" diye yazmıştı ve teslim
+raporuna da kalan risk olarak taşınmıştı. **Bu doğru değil**: `aec330b`
+(`fix(generator): a repeated leaf can carry a value per element`) bunu zaten
+kapatmış, `CdrRecordBuilder.indexedUserValues` `path[0]`, `path[1]`, … anahtarlarını
+okuyor ve web formu da tam olarak o anahtarları üretiyor. Kodlamadan önce ölçüldü:
+
+| yol | sonuç |
+|---|---|
+| `mMTelRecord.listOfReasonHeader[0..2]` (API) | BER'de 3 değer, TXT `…\|LEAF-A\|LEAF-B\|LEAF-C` |
+| `…list-Of-SDP-Media-Components[0].sDP-Media-Components[0].sDP-Media-Descriptions[0..2]` (API) | BER'de 3 değer, TXT'de 3 değer, self-check temiz |
+| aynı alan, **gerçek tarayıcı** (3 instance A/B/C) | istek `listOfReasonHeader[0]=A, [1]=B, [2]=C`; BER ve TXT'de üçü de |
+| 1 / 2 / 3 instance (API) | sırasıyla 1 / 2 / 3 değer, iki formatta da |
+| 3→1 azaltma, sonra 1→3 artırma (tarayıcı) | istekte yalnız `[0]`; geri eklenen instance'lar boş |
+
+Değişen tek şey sunum oldu (`FieldForm.tsx`): instance etiketi `#1` yerine
+`Instance [0]` — istekteki anahtarla aynı numara — ve değer artık tıklayarak
+açılan sarmalayıcının içinde değil. `LeafControl`, `LeafInput`'tan ayrıldığı için
+tekrarlı bir OCTET STRING alanı hex girişini koruyor.
+
+Bu turun kapanış ölçümleri: Maven **572 test / 0 hata**; referans kaydı BER
+**168/168, 0 missing, 0 extra**, TXT **168 kolon**; skaler CHOICE `80`/`81`
+tag'leri; tekrarlı CHOICE 2×sIP / 2×tEL / sIP+tEL / sIP+tEL+sIP hepsi doğru
+instance sayısı ve tag'iyle; `referenceMode=false` her iki formatta da eski
+davranışta.
