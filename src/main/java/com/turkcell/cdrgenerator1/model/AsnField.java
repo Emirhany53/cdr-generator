@@ -34,6 +34,27 @@ public class AsnField {
     private boolean choice;
 
     /**
+     * For a CHOICE field ({@link #choice} true), the CHOICE type's own name -
+     * e.g. {@code "InvolvedParty"} for {@code called-Party-Address}. Mirrors
+     * {@code AsnStructure#choiceTypeName}, which only ever covers the ROOT.
+     * Lets a caller (the frontend's per-field alternative picker) address this
+     * exact site through {@code StructureParserService}'s existing path-scoped
+     * {@code choiceSelections} override without knowing the type name up
+     * front. Null whenever {@link #choice} is false.
+     */
+    private String choiceTypeName;
+
+    /**
+     * For a CHOICE field ({@link #choice} true), its alternative field names
+     * in declaration order - e.g. {@code ["sIP-URI", "tEL-URI"]}. Mirrors
+     * {@code AsnStructure#choiceAlternatives} the same way
+     * {@link #choiceTypeName} mirrors {@code choiceTypeName}: this is the
+     * per-FIELD counterpart of a value that previously existed only for the
+     * structure's root. Null whenever {@link #choice} is false.
+     */
+    private List<String> choiceAlternatives;
+
+    /**
      * True when this field's type (or, for a repeated field, its ELEMENT type)
      * resolves to an ASN.1 SET rather than a SEQUENCE.
      *

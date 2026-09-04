@@ -529,6 +529,8 @@ public class AsnFieldTreeResolver {
         EffectiveTag effectiveTag = resolveEffectiveTag(registry, field, innerType, taggingMode);
         boolean choiceElement = isChoiceType(registry, innerType);
         boolean setElement = isSetType(registry, innerType);
+        ChoiceAlternatives choiceAltsForField = choiceElement
+                ? listRootChoiceAlternatives(registry, innerType) : null;
 
         // 'choice' means "this field's TYPE is a CHOICE", independent of
         // 'repeated'. A SEQUENCE OF <Choice> still has CHOICE-typed elements;
@@ -542,6 +544,8 @@ public class AsnFieldTreeResolver {
                 .optional(field.isOptional())
                 .repeated(repeated)
                 .choice(choiceElement)
+                .choiceTypeName(choiceAltsForField != null ? choiceAltsForField.choiceTypeName() : null)
+                .choiceAlternatives(choiceAltsForField != null ? choiceAltsForField.alternativeNames() : null)
                 .set(setElement)
                 .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                 .choiceTagImplicit(choiceTagImplicit(effectiveTag, repeated, choiceElement, taggingMode))
@@ -944,12 +948,16 @@ public class AsnFieldTreeResolver {
 
             boolean choiceElement = isChoiceType(registry, innerType);
             boolean setElement = isSetType(registry, innerType);
+            ChoiceAlternatives choiceAltsForParsedField = choiceElement
+                    ? listRootChoiceAlternatives(registry, innerType) : null;
             AsnField resolved = AsnField.builder()
                     .fieldName(parsed.getFieldName())
                     .fieldType(resolveFieldType(registry, parsed.getFieldType(), innerType, children))
                     .optional(parsed.isOptional())
                     .repeated(repeated)
                     .choice(choiceElement)
+                    .choiceTypeName(choiceAltsForParsedField != null ? choiceAltsForParsedField.choiceTypeName() : null)
+                    .choiceAlternatives(choiceAltsForParsedField != null ? choiceAltsForParsedField.alternativeNames() : null)
                     .set(setElement)
                     .decoderHoistsImplicitChoice(isMmtelPartyAddressingFamily(registry))
                     .choiceTagImplicit(choiceTagImplicit(fieldTag, repeated, choiceElement, taggingMode))
