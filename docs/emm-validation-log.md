@@ -2127,3 +2127,71 @@ Alan adı çakışmaları (`sIP-URI`, `sDP-Media-Name`, `sDP-Type`,
 çözüldü — `UserProvidedValueSource` önce yolu, sonra çıplak adı deniyor, ve
 tekrarlı grup yolları `alan[i].altAlan` biçiminde. Çıplak ad kullanıldığında
 `called-Party-Address` arayan tarafın URI'sini alıyordu.
+
+### 32. tur öncesi — tekrarlı CHOICE instance sayısı (04.09.2026, EMM'e gönderilmedi)
+
+31. turun üç sınırından ikincisi ve üçüncüsü kapandı, ama **bu değişiklik henüz
+EMM'e gönderilmedi**; aşağıdaki kanıtların tamamı ASN.1/BER standardı, gerçek
+yakalama ve kendi test paketimiz seviyesindedir.
+
+#### Ne değişti
+
+`CdrRecordBuilder.buildRepeatedGroup` bir tekrarlı CHOICE'ın eleman sayısını,
+`StructureParserService.applyIndexedChoiceExpansion`'ın `children`'ı birden
+fazla alternatife genişletmiş olmasına bağlıyordu; o genişleme de yalnızca
+**2+ FARKLI** alternatif adı görüldüğünde çalışıyordu. Sonuç, iki sessiz hata:
+
+| çağıranın verdiği | eskiden üretilen | şimdi üretilen |
+|---|---|---|
+| `[0].sIP-URI + [1].tEL-URI` | 2 instance (doğru) | 2 instance |
+| `[0].sIP-URI + [1].sIP-URI` | **1 instance**, ikinci değer kayıp | 2 instance, iki değer de |
+| `[0].tEL-URI + [1].tEL-URI` | **1 instance, `sIP-URI` + RASTGELE değer** | 2 instance, iki değer de |
+| `[0].sIP + [1].tEL + [2].sIP` | 2 instance | 3 instance |
+
+Sayım artık `indexedGroupCount`'tan geliyor (alternatiflerin farklı olup
+olmamasından bağımsız); genişleme yalnızca **hangi** alternatiflerin taşınacağına
+karar veriyor ve artık tek ama varsayılan-olmayan bir ada da uygulanıyor.
+
+#### `referenceMode=false` için kanıt: değişiklik matematiksel olarak no-op
+
+Eski kapı `(!field.isChoice() || expandedChoiceCollection)` idi ve
+`expandedChoiceCollection` zaten `context.isReferenceMode()` gerektiriyordu.
+`referenceMode=false` iken eski ifade `!field.isChoice()`'a indirgeniyor — yeni
+ifadenin (`!field.isChoice() || context.isReferenceMode()`) aynı koşulda
+indirgendiği şeyin harfi harfine aynısı. Yani EMM'den geçmiş 36 modülün üretim
+yolu bu değişiklikten etkilenemez; `CHOICE_ELEMENT_COUNT` sabiti de değişmedi.
+
+#### Aynı alternatifin iki kez geçmesi — ölçüm durumu
+
+⚠️ **Henüz EMM ile ölçülmemiş, ancak ASN.1/BER ve backend seviyesinde
+doğrulanmış.** Elimizde, aynı CHOICE alternatifinin bir koleksiyonda iki kez
+geçtiği **gerçek bir EMM-kabullü CDR örneği yok**. Dayanaklar:
+
+- **X.690 8.10** — `SEQUENCE OF`'un içeriği eleman kodlamalarının ardışık
+  birleşimidir; elemanlar konumla ayrılır, tag ile değil. Aynı tag'in tekrarı
+  orada geçerlidir. (Buna karşılık X.680 bir **SET**'in üyelerinin farklı tag
+  taşımasını zorunlu kılar.)
+- **`adbe2cc`'nin dayandığı red bu şekil değildi:** EMM'in mesajı
+  `...enhancedPhoneFeatures1.[0]` yolundaydı, yani `Epf1Service ::= SET` gövdesi
+  içindeki tekrar. O commit'in "hiç (0,0) yok" kanıtı ise gerçek verinin
+  *dağılımı*dır, EMM'in reddettiğinin kanıtı değil.
+- **28. tur** SEQUENCE gövdelerinde tekrarlanan alternatif tag'lerinin kabul
+  edildiğini ölçtü (`SDPCCR` PASS); reddedilen SET kökleriydi.
+- **Gerçek yakalama (9827 kayıt, dedup'suz tarama):**
+  `list-Of-Calling-Party-Address` 7958 × `(sIP,tEL)`, 1869 × `(sIP)`;
+  `list-Of-Called-Asserted-Identity` 3964 × `(sIP,tEL)`, 633 × `(sIP)`,
+  **26 × `(tEL)`**. Aynı alternatif iki kez hiç geçmiyor — bu yüzden varsayılan
+  davranış değiştirilmedi, şekil yalnızca çağıran index'i açıkça yazarsa üretiliyor.
+  Buna karşılık tek başına `(tEL)` gerçek bir şekil ve eskiden hiç üretilemiyordu.
+
+Bir sonraki EMM turunda bu şekli taşıyan bir dosya gönderilirse sonucu buraya
+yazılacak; o zamana kadar satır "kanıtsız" sayılmalıdır.
+
+#### Ölçülen sonuçlar (04.09.2026)
+
+- Maven: **572 test, 0 hata** (pinlenmiş
+  `referenceModeFalseKeepsOneInstanceEvenAgainstATwoAlternativeTree` dahil)
+- Yasin'in referans kaydı: **168/168 correct, 0 missing, 0 extra**, self-check
+  `0 error / 0 warning`
+- A/B/C/D senaryolarının dördü de canlı API'de doğru instance sayısı ve doğru
+  tag'lerle üretildi
